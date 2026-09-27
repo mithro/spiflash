@@ -178,6 +178,10 @@ def _record(
             ext = f"{model & 0xFFFF:04x}"
             model >>= 16
         id_hex = _hex_bytes(mfr) + f"{model:04x}"
+    elif method == "res1":
+        # RES (0xab) answers the one-byte electronic signature and nothing
+        # else; flashrom gives these parts a manufacturer id of 0.
+        id_hex = _hex_bytes(model)
     else:
         id_hex = _hex_bytes(mfr) + _hex_bytes(model)
 
