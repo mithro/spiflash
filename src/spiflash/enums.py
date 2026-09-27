@@ -156,3 +156,23 @@ class OperationKind(StrEnum):
     ERASE = "erase"
     REGISTER = "register"
     MODE = "mode"
+
+
+class DataPhase(StrEnum):
+    """Which way an operation's data goes, if it has any."""
+
+    READ = "read"  # the flash drives the data lines
+    WRITE = "write"  # the host does
+
+
+class TimingSource(StrEnum):
+    """Where an operation's timing (address size, dummy clocks, bytes moved)
+    comes from. The documentation turns each into a linked explanation."""
+
+    LINUX_DEFAULT = "linux-default"
+    LINUX_NO_SFDP = "linux-no-sfdp"
+    LINUX_4B = "linux-4b"
+    FLASHPROG_FEATURES = "flashprog-features"
+    FLASHROM_SIZES = "flashrom-sizes"
+    JESD216 = "jesd216"
+    PART = "part"
