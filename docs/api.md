@@ -1,64 +1,33 @@
-# Python API
+# API reference
+
+Everything in the package, generated from its docstrings. The library's front
+door is the `spiflash` module itself:
 
 ```python
 import spiflash
 
-(chip,) = spiflash.lookup("ef4018")
-chip.manufacturer, chip.names, chip.size
-chip.supports("READ_1_1_4")
+(chip,) = spiflash.lookup("ef4018")      # by JEDEC id: b"\xef\x40\x18", 0xef4018, ... too
+spiflash.find("W25Q128JV")               # by part name
+chip.manufacturer, chip.names, chip.size, chip.features
+chip.supports("READ_1_1_4"), chip.opcodes["SE"].opcode
+spiflash.database().link(chip.records[0])   # the upstream line it came from
 ```
 
-## Looking things up
+`spiflash.db` loads the data and answers queries, `spiflash.model` holds the
+types (`Record` is one upstream entry, `Flash` everything known about one
+chip id), `spiflash.opcodes` the named SPI operations, `spiflash.vendors` the
+vendor spellings, and `spiflash.cli` the `spiflash` command.
+
+The extraction tools, `spiflash_extract` (in `tools/`, shipped in the sdist,
+not the wheel), are documented too: they are how the data is built, and what
+to read when an upstream changes its format.
 
 ```{eval-rst}
-.. autofunction:: spiflash.lookup
-.. autofunction:: spiflash.find
-.. autofunction:: spiflash.flashes
-.. autofunction:: spiflash.records
-.. autofunction:: spiflash.jep106
-.. autofunction:: spiflash.sources
-.. autofunction:: spiflash.database
-```
+.. autosummary::
+   :toctree: _autosummary
+   :recursive:
 
-## The database
-
-```{eval-rst}
-.. autoclass:: spiflash.Database
-   :members: lookup, find, by_manufacturer, jep106, link, load
-```
-
-## Chips and records
-
-```{eval-rst}
-.. autoclass:: spiflash.Flash
-   :members:
-
-.. autoclass:: spiflash.model.SupportedOperation
-   :members:
-
-.. autoclass:: spiflash.Record
-   :members: manufacturer, id_hex, is_jedec, url, part_names
-
-.. autoclass:: spiflash.model.OpcodeUse
-
-.. autoclass:: spiflash.Manufacturer
-```
-
-## Operations
-
-```{eval-rst}
-.. automodule:: spiflash.opcodes
-   :members: Operation, get, sort_key
-
-.. autodata:: spiflash.opcodes.OPERATIONS
-   :no-value:
-```
-
-## Helpers
-
-```{eval-rst}
-.. autofunction:: spiflash.parse_id
-.. autofunction:: spiflash.model.part_names
-.. autofunction:: spiflash.model.name_matches
-.. autofunction:: spiflash.vendors.canonical
+   spiflash
+   spiflash_extract
+   update_db
 ```
