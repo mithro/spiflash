@@ -1,0 +1,52 @@
+# The upstream trees the spiflash database is extracted from.
+#
+# `uv run tools/update_db.py` rebuilds src/spiflash/data/ from exactly these
+# commits, so the committed data is reproducible; `--latest` first moves every
+# pin to the head of its branch. Only `paths` are fetched (a sparse, blobless,
+# depth-1 fetch of one commit), into upstream/<name>/.
+#
+# `license` is the upstream's licence for the files read. The database holds
+# facts about chips (ids, sizes, opcodes) taken from them, not their code; see
+# docs/SOURCES.md.
+
+[linux]
+url = "https://github.com/torvalds/linux"
+branch = "master"
+commit = "fd179f8a05be3ccae366b9b96e176b51fbe54aab"
+paths = ["drivers/mtd/spi-nor/", "drivers/mtd/nand/spi/"]
+license = "GPL-2.0-only"
+
+[u-boot]
+url = "https://github.com/u-boot/u-boot"
+branch = "main"
+commit = "a06e89ab05eaa2b8344d521319399333cd760ae5"
+paths = ["drivers/mtd/spi/spi-nor-ids.c", "drivers/mtd/spi/sf_internal.h"]
+license = "GPL-2.0-or-later"
+
+[flashrom]
+url = "https://github.com/flashrom/flashrom"
+branch = "main"
+commit = "a1de15b26bfd2c9759378f835fe3b9a2d9ac08e1"
+paths = ["flashchips/", "flashchips.c", "include/flashchips.h", "include/flash.h"]
+license = "GPL-2.0-or-later"
+
+[flashprog]
+url = "https://review.sourcearcade.org/flashprog.git"
+branch = "main"
+commit = "bbe7393f16b710d7e5ddfb1d01c6dadd8c0a5aa7"
+paths = ["flashchips.c", "include/flashchips.h", "include/flash.h"]
+license = "GPL-2.0-or-later"
+
+[openocd]
+url = "https://github.com/openocd-org/openocd"
+branch = "master"
+commit = "21f88d7815edfb7632548090934c51017604f450"
+paths = ["src/flash/nor/spi.c", "src/helper/jep106.inc"]
+license = "GPL-2.0-or-later"
+
+[openfpgaloader]
+url = "https://github.com/trabucayre/openFPGALoader"
+branch = "master"
+commit = "676e53ec73d2261c974d610b7cf0693117c8d2ef"
+paths = ["src/spiFlashdb.hpp"]
+license = "Apache-2.0"
