@@ -515,6 +515,13 @@ def test_openocd(tmp_path: Path) -> None:
     assert f["notes"] == ["exists ?", "FRAM"] and f["page_size"] is None
 
 
+def test_openocd_part_prefixes() -> None:
+    assert openocd.part_name("mac", "25l12845") == "mx25l12845"
+    assert openocd.part_name("mac", "mx25l12845") == "mx25l12845"
+    assert openocd.part_name("adesto", "xp032") == "atxp032"
+    assert openocd.part_name("win", "w25q128fv/jv") == "w25q128fv/jv"
+
+
 def test_openocd_device_id() -> None:
     assert openocd.device_id_hex(0x001840EF) == "ef4018"
     assert openocd.device_id_hex(0x060822C2) == "7f7f7f7f7f7fc22208"

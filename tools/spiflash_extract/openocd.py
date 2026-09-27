@@ -21,6 +21,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 SPI_C = "src/flash/nor/spi.c"
+
+# OpenOCD leaves the family prefix off some part numbers ("mac 25l12845" is
+# the MX25L12845, "adesto xp032" the ATXP032). LiteSPI's generator patched
+# OpenOCD's table to put them back; this does the same to the names.
+_PART_PREFIX = {"mac": "mx", "atmel": "at", "adesto": "at"}
+
+
+def part_name(vendor: str, name: str) -> str:
+    prefix = _PART_PREFIX.get(vendor)
+    if prefix and not name.lower().startswith(prefix):
+        return prefix + name
+    return name
 JEP106 = "src/helper/jep106.inc"
 
 
@@ -43,6 +55,7 @@ def extract(root: Path) -> list[Record]:
             continue  # the table's terminator
         full = cparse.c_string(args[0])
         vendor, _, name = full.partition(" ")
+        name = part_name(vendor, name)
         nums = [cparse.evaluate(a) for a in args[1:]]
         eol = raw.find("\n", end)
         notes = cparse.comments(raw[end:eol])
