@@ -21,6 +21,11 @@ from, and where the sources disagree (60 ids do) both answers are kept.
 `spiflash sources` (or `spiflash.sources()`) names the exact upstream commits
 the shipped data was extracted from.
 
+Browse it at **https://spiflash.readthedocs.io/**: a page per vendor with a
+table of all its parts, and a page per chip.
+
+<!-- usage-start: docs/usage.md includes from here -->
+
 ## Install
 
 ```sh
@@ -119,7 +124,7 @@ chip.names                               # ('W25Q128', 'W25Q128.V', 'W25Q128FV',
 chip.size, chip.page_size, chip.sector_size   # (16777216, 256, 65536)
 chip.voltage                             # (2700, 3600), in mV
 "quad_read" in chip.features             # True
-chip.feature_sources("quad_read")        # ('flashprog', 'linux', 'openocd', 'u-boot')
+chip.feature_sources("quad_read")        # ('flashprog', 'linux', 'u-boot', 'openocd')
 chip.conflicts                           # {} -- or {"page_size": {256: (...), 512: (...)}}
 
 for r in chip.records:                   # every upstream entry, as extracted
@@ -182,6 +187,8 @@ every part, and parts that Linux reads from SFDP get their read, program and
 erase opcodes from the chip at run time, so Linux lists only its defaults for
 them. Parts sharing an id can differ too; `because` says who vouches for what.
 SPI NAND parts have no opcodes listed.
+
+<!-- usage-end -->
 
 ## Updating the data
 
