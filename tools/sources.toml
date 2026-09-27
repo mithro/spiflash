@@ -5,6 +5,7 @@
 # pin to the head of its branch. Only `paths` are fetched (a sparse, blobless,
 # depth-1 fetch of one commit), into upstream/<name>/.
 #
+# `browse` (optional) is where to link to a file when `url` is not GitHub.
 # `license` is the upstream's licence for the files read. The database holds
 # facts about chips (ids, sizes, opcodes) taken from them, not their code; see
 # docs/SOURCES.md.
@@ -32,6 +33,8 @@ license = "GPL-2.0-or-later"
 
 [flashprog]
 url = "https://review.sourcearcade.org/flashprog.git"
+# Where to link to a file in it: the official GitHub mirror.
+browse = "https://github.com/SourceArcade/flashprog"
 branch = "main"
 commit = "bbe7393f16b710d7e5ddfb1d01c6dadd8c0a5aa7"
 paths = ["flashchips.c", "include/flashchips.h", "include/flash.h", "include/spi.h"]

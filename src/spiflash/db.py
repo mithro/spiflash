@@ -150,6 +150,17 @@ class Database:
         ranked.sort(key=lambda t: (t[0], t[1]))
         return [f for _, _, f in ranked]
 
+    def link(self, record: Record) -> str | None:
+        """A web link to the upstream line a record came from, at the commit
+        the data was extracted from (GitHub and its mirrors only)."""
+        src = self.sources.get(record.source)
+        if not src:
+            return None
+        base = str(src.get("browse") or src["url"]).rstrip("/")
+        if not base.startswith("https://github.com/"):
+            return None
+        return f"{base}/blob/{src['commit']}/{record.file}#L{record.line}"
+
     def jep106(self, manufacturer_id: int, bank: int = 0) -> str | None:
         """The JEP106 name of a manufacturer id byte (with its parity bit)."""
         return self._jep106.get((bank, manufacturer_id))
