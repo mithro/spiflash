@@ -68,6 +68,13 @@ extend-exclude = ["src/spiflash/_version.py", "upstream"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PT", "TC", "C4", "PIE", "RET", "N"]
 
+[tool.ruff.lint.per-file-ignores]
+# Tests assert several facts about one record at a time; splitting each into
+# its own statement buries what is being checked.
+"tests/*" = ["PT018"]
+# The fixtures are the upstream formats verbatim, tabs and long lines included.
+"tests/test_extract.py" = ["PT018", "E101", "E501", "W191"]
+
 [tool.mypy]
 files = ["src/spiflash", "tools/spiflash_extract", "tools/update_db.py"]
 mypy_path = ["src", "tools"]

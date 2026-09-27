@@ -106,20 +106,3 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     rec["features"] = sorted(set(rec["features"]))
     rec["flags"] = sorted(set(rec["flags"]))
     return rec
-
-
-def id_hex(*values: int, widths: tuple[int, ...] | None = None) -> str:
-    """Hex of id byte groups: ``id_hex(0xef, 0x4018)`` is ``"ef4018"``.
-
-    Each value is written in as many whole bytes as it needs, unless
-    ``widths`` gives its byte count (so a model id of ``0x0015`` stays two
-    bytes)."""
-    out = []
-    for i, v in enumerate(values):
-        n = widths[i] if widths else max(1, (v.bit_length() + 7) // 8)
-        out.append(f"{v:0{2 * n}x}")
-    return "".join(out)
-
-
-def sort_key(rec: Record) -> tuple[str, str, str, int]:
-    return (rec["source"], rec["file"], f"{rec['line']:08d}", 0)
