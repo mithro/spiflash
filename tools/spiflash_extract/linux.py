@@ -21,6 +21,7 @@ import re
 from typing import TYPE_CHECKING
 
 from . import cparse
+from .ops import Opcodes, add_4b_variants, add_spinor
 from .record import Record, make
 
 if TYPE_CHECKING:
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
 
 NOR_DIR = "drivers/mtd/spi-nor"
 NAND_DIR = "drivers/mtd/nand/spi"
+SPINOR_H = "include/linux/mtd/spi-nor.h"  # the SPINOR_OP_* opcodes
 
 # Files in NOR_DIR that hold no part tables.
 _NOT_TABLES = {"core.c", "sfdp.c", "swp.c", "otp.c", "sysfs.c", "debugfs.c"}
@@ -84,7 +86,8 @@ def _entry_name(fields: dict[str, str], raw_body: str) -> tuple[str | None, list
 
 def extract_nor(root: Path) -> list[Record]:
     core_h = cparse.strip_comments((root / NOR_DIR / "core.h").read_text())
-    symbols: dict[str, str | int] = dict(cparse.defines(core_h))
+    spinor_h = cparse.strip_comments((root / SPINOR_H).read_text())
+    symbols: dict[str, str | int] = {**cparse.defines(spinor_h), **cparse.defines(core_h)}
     records = []
     for path in sorted((root / NOR_DIR).glob("*.c")):
         if path.name in _NOT_TABLES:
@@ -147,6 +150,7 @@ def _nor_record(
     page = cparse.evaluate(fields.get("page_size", "256"), symbols)
     if "no_erase" not in features and sector == 64 * 1024:
         features.add("erase_64k")
+    opcodes = _nor_opcodes(fields, symbols, id_hex is not None, size is not None, features)
     return make(
         "linux",
         rel,
@@ -161,8 +165,61 @@ def _nor_record(
         sector_size=sector,
         features=sorted(features),
         flags=flags,
+        opcodes=opcodes,
         notes=notes,
     )
+
+
+# no_sfdp_flags -> the operation spi_nor_no_sfdp_init_params() sets up for it.
+_NO_SFDP_OPS = {
+    "SPI_NOR_DUAL_READ": "READ_1_1_2",
+    "SPI_NOR_QUAD_READ": "READ_1_1_4",
+    "SPI_NOR_OCTAL_READ": "READ_1_1_8",
+    "SPI_NOR_OCTAL_DTR_READ": "READ_8D_8D_8D",
+    "SPI_NOR_OCTAL_DTR_PP": "PP_8D_8D_8D",
+    "SECT_4K": "BE_4K",
+}
+
+
+def _nor_opcodes(
+    fields: dict[str, str],
+    symbols: dict[str, str | int],
+    has_id: bool,
+    legacy: bool,
+    features: set[str],
+) -> list[dict[str, object]]:
+    """The operations the kernel sets up for a part, following
+    drivers/mtd/spi-nor/core.c: spi_nor_init_default_params() (read, fast
+    read and page program for every part; quad page program for
+    SPI_NOR_QUAD_PP), spi_nor_no_sfdp_init_params() (the no_sfdp_flags, and
+    sector erase), chip erase unless a fixup opts out, and the 4-byte
+    conversion for SPI_NOR_4B_OPCODES. A part whose size is left to SFDP
+    (``legacy`` false) gets its read, program and erase set from its SFDP
+    tables at run time, so only the defaults and RDSFDP are listed."""
+    ops = Opcodes(symbols)
+    if has_id:
+        add_spinor(ops, "RDID", "JEDEC id match (spi_nor_match_id)")
+    add_spinor(ops, "READ_1_1_1", "default (spi_nor_init_default_params)")
+    add_spinor(ops, "READ_1_1_1_FAST", "default (spi_nor_init_default_params)")
+    add_spinor(ops, "PP_1_1_1", "default (spi_nor_init_default_params)")
+    flags = cparse.flag_names(fields.get("flags", "0"))
+    no_sfdp = cparse.flag_names(fields.get("no_sfdp_flags", "0"))
+    fixup = cparse.flag_names(fields.get("fixup_flags", "0"))
+    if "SPI_NOR_QUAD_PP" in flags:
+        add_spinor(ops, "PP_1_1_4", "SPI_NOR_QUAD_PP")
+    if not legacy:
+        add_spinor(ops, "RDSFDP", "size from SFDP")
+    else:
+        for flag in no_sfdp:
+            if flag in _NO_SFDP_OPS:
+                add_spinor(ops, _NO_SFDP_OPS[flag], flag)
+        if "no_erase" not in features:
+            add_spinor(ops, "SE", "default sector erase (spi_nor_no_sfdp_init_params)")
+    if "no_erase" not in features:
+        add_spinor(ops, "CHIP_ERASE", "default (spi_nor_erase)")
+    if "SPI_NOR_4B_OPCODES" in fixup:
+        add_4b_variants(ops, "SPI_NOR_4B_OPCODES")
+    return ops.to_json()
 
 
 def extract_nand(root: Path) -> list[Record]:

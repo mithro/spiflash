@@ -1,5 +1,5 @@
 {
- "format": 1,
+ "format": 2,
  "sources": {
   "flashprog": {
    "branch": "main",
@@ -9,7 +9,8 @@
    "paths": [
     "flashchips.c",
     "include/flashchips.h",
-    "include/flash.h"
+    "include/flash.h",
+    "include/spi.h"
    ],
    "records": 480,
    "url": "https://review.sourcearcade.org/flashprog.git"
@@ -23,7 +24,8 @@
     "flashchips/",
     "flashchips.c",
     "include/flashchips.h",
-    "include/flash.h"
+    "include/flash.h",
+    "include/spi.h"
    ],
    "records": 512,
    "url": "https://github.com/flashrom/flashrom"
@@ -46,7 +48,8 @@
    "license": "GPL-2.0-only",
    "paths": [
     "drivers/mtd/spi-nor/",
-    "drivers/mtd/nand/spi/"
+    "drivers/mtd/nand/spi/",
+    "include/linux/mtd/spi-nor.h"
    ],
    "records": 377,
    "url": "https://github.com/torvalds/linux"
@@ -57,7 +60,8 @@
    "date": "2026-09-23T15:09:30+02:00",
    "license": "Apache-2.0",
    "paths": [
-    "src/spiFlashdb.hpp"
+    "src/spiFlashdb.hpp",
+    "src/spiFlash.cpp"
    ],
    "records": 53,
    "url": "https://github.com/trabucayre/openFPGALoader"
@@ -69,6 +73,7 @@
    "license": "GPL-2.0-or-later",
    "paths": [
     "src/flash/nor/spi.c",
+    "src/flash/nor/spi.h",
     "src/helper/jep106.inc"
    ],
    "records": 190,
@@ -81,7 +86,8 @@
    "license": "GPL-2.0-or-later",
    "paths": [
     "drivers/mtd/spi/spi-nor-ids.c",
-    "drivers/mtd/spi/sf_internal.h"
+    "drivers/mtd/spi/sf_internal.h",
+    "include/linux/mtd/spi-nor.h"
    ],
    "records": 334,
    "url": "https://github.com/u-boot/u-boot"

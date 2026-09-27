@@ -31,7 +31,7 @@ SOURCES = REPO / "tools" / "sources.toml"
 DATA = REPO / "src" / "spiflash" / "data"
 UPSTREAM = REPO / "upstream"
 
-FORMAT = 1
+FORMAT = 2
 
 EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
     "linux": linux.extract,

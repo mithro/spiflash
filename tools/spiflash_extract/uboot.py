@@ -16,6 +16,7 @@ import re
 from typing import TYPE_CHECKING
 
 from . import cparse
+from .ops import Opcodes, add_4b_variants, add_spinor
 from .record import Record, make
 
 if TYPE_CHECKING:
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 IDS = "drivers/mtd/spi/spi-nor-ids.c"
 FLAGS_H = "drivers/mtd/spi/sf_internal.h"
+SPINOR_H = "include/linux/mtd/spi-nor.h"  # the SPINOR_OP_* opcodes
 
 _FEATURES = {
     "SECT_4K": "erase_4k",
@@ -51,6 +53,7 @@ def extract(root: Path) -> list[Record]:
     raw = (root / IDS).read_text()
     stripped = cparse.strip_comments(raw)
     symbols: dict[str, str | int] = {
+        **cparse.defines(cparse.strip_comments((root / SPINOR_H).read_text())),
         **cparse.defines(cparse.strip_comments((root / FLAGS_H).read_text())),
         **cparse.defines(stripped),
     }
@@ -135,5 +138,46 @@ def _record(
         sector_size=sector,
         features=sorted(features),
         flags=flags,
+        opcodes=_opcodes(flags, symbols, id_hex is not None, features),
         notes=notes,
     )
+
+
+# flags -> the operation drivers/mtd/spi/spi-nor-core.c sets up for it.
+_FLAG_OPS = {
+    "SPI_NOR_DUAL_READ": ["READ_1_1_2"],
+    "SPI_NOR_QUAD_READ": ["READ_1_1_4", "PP_1_1_4"],  # spi_nor_init_params: PP_1_1_4 too
+    "SPI_NOR_OCTAL_READ": ["READ_1_1_8"],
+    "SECT_4K": ["BE_4K"],
+    "SECT_4K_PMC": ["BE_4K_PMC"],
+    "SST_WRITE": ["AAI_WP", "BP"],  # sst_write(): AAI words, a byte at the ends
+    "USE_FSR": ["RDFSR"],
+    "USE_CLSR": ["CLSR"],
+}
+
+
+def _opcodes(
+    flags: list[str], symbols: dict[str, str | int], has_id: bool, features: set[str]
+) -> list[dict[str, object]]:
+    """The operations U-Boot's spi-nor-core.c sets up for an entry: read,
+    fast read unless SPI_NOR_NO_FR, page program, the erase opcode (SECT_4K,
+    SECT_4K_PMC, else sector erase), chip erase unless NO_CHIP_ERASE, the
+    flag-implied operations above, and the 4-byte forms for
+    SPI_NOR_4B_OPCODES."""
+    ops = Opcodes(symbols)
+    if has_id:
+        add_spinor(ops, "RDID", "JEDEC id match (spi_nor_read_id)")
+    add_spinor(ops, "READ_1_1_1", "default (spi_nor_init_params)")
+    if "SPI_NOR_NO_FR" not in flags:
+        add_spinor(ops, "READ_1_1_1_FAST", "default unless SPI_NOR_NO_FR")
+    add_spinor(ops, "PP_1_1_1", "default (spi_nor_init_params)")
+    for flag in flags:
+        for op in _FLAG_OPS.get(flag, []):
+            add_spinor(ops, op, flag)
+    if "no_erase" not in features:
+        add_spinor(ops, "SE", "sector erase (the INFO sector size)")
+        if "NO_CHIP_ERASE" not in flags:
+            add_spinor(ops, "CHIP_ERASE", "default unless NO_CHIP_ERASE")
+    if "SPI_NOR_4B_OPCODES" in flags:
+        add_4b_variants(ops, "SPI_NOR_4B_OPCODES")
+    return ops.to_json()

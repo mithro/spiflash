@@ -34,6 +34,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from . import cparse
+from .ops import ERASE_BY_OPCODE, Opcodes
 from .record import Record, make
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
 
 HEADER = "include/flashchips.h"
 FLASH_H = "include/flash.h"  # the FEATURE_* bits
+SPI_H = "include/spi.h"  # the JEDEC_* opcodes
 
 # The probe (flashrom .probe / flashprog .id.type) says how the id is read.
 _METHODS = {
@@ -94,6 +96,7 @@ def extract(root: Path, source: str) -> list[Record]:
     header_raw = (root / HEADER).read_text()
     header = cparse.strip_comments(header_raw)
     symbols: dict[str, str | int] = {
+        **cparse.defines(cparse.strip_comments((root / SPI_H).read_text())),
         **cparse.defines(cparse.strip_comments((root / FLASH_H).read_text())),
         **cparse.defines(header),
     }
@@ -224,5 +227,113 @@ def _record(
         flags=flags,
         voltage=voltage,
         tested=tested,
+        opcodes=_opcodes(f, method, flags, erasers, "sfdp" in features, symbols),
         notes=notes,
     )
+
+
+# How flashrom reads an id -> the operation (probe_spi_rdid, probe_spi_rems,
+# probe_spi_res1/2, probe_spi_at25f, probe_spi_st95).
+_PROBE_OPS = {
+    "rdid": ("RDID", "JEDEC_RDID"),
+    "rems": ("REMS", "JEDEC_REMS"),
+    "res1": ("RES", "JEDEC_RES"),
+    "res2": ("RES", "JEDEC_RES"),
+    "at25f": ("RDID_ATMEL", "AT25F_RDID"),
+    "st95": ("RDID_M95", "ST_M95_RDID"),
+}
+
+# .read / .write functions -> the operation they issue.
+_IO_OPS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "spi_chip_read": ("READ_1_1_1", ("JEDEC_READ",)),
+    "spi_chip_write256": ("PP_1_1_1", ("JEDEC_BYTE_PROGRAM",)),
+    "spi_chip_write_256": ("PP_1_1_1", ("JEDEC_BYTE_PROGRAM",)),
+    "spi_chip_write1": ("BP", ("JEDEC_BYTE_PROGRAM",)),
+    "spi_chip_write_1": ("BP", ("JEDEC_BYTE_PROGRAM",)),
+    "spi_aai_write": ("AAI_WP", ("JEDEC_AAI_WORD_PROGRAM",)),
+    "spi_write_aai": ("AAI_WP", ("JEDEC_AAI_WORD_PROGRAM",)),
+}
+
+# Single FEATURE_* bits -> the operations they say the chip has, with the
+# spi.h names of their opcodes (flashprog defines more of them than flashrom;
+# where neither does, the value is the one flash.h's comment gives, which is
+# the table's).
+_FEATURE_OPS: dict[str, list[tuple[str, tuple[str, ...]]]] = {
+    "FEATURE_FAST_READ": [("READ_1_1_1_FAST", ("JEDEC_FAST_READ", "JEDEC_READ_FAST"))],
+    "FEATURE_FAST_READ_DOUT": [("READ_1_1_2", ("JEDEC_FAST_READ_DOUT",))],
+    "FEATURE_FAST_READ_DIO": [("READ_1_2_2", ("JEDEC_FAST_READ_DIO",))],
+    "FEATURE_FAST_READ_QOUT": [("READ_1_1_4", ("JEDEC_FAST_READ_QOUT",))],
+    "FEATURE_FAST_READ_QIO": [("READ_1_4_4", ("JEDEC_FAST_READ_QIO",))],
+    "FEATURE_FAST_READ_QPI4B": [("READ_4_4_4_4B", ("JEDEC_FAST_READ_QIO_4BA",))],
+    "FEATURE_4BA_READ": [("READ_1_1_1_4B", ("JEDEC_READ_4BA",))],
+    "FEATURE_4BA_FAST_READ": [
+        ("READ_1_1_1_FAST_4B", ("JEDEC_FAST_READ_4BA", "JEDEC_READ_4BA_FAST"))
+    ],
+    "FEATURE_4BA_WRITE": [("PP_1_1_1_4B", ("JEDEC_BYTE_PROGRAM_4BA",))],
+    "FEATURE_4BA_ENTER": [
+        ("EN4B", ("JEDEC_ENTER_4_BYTE_ADDR_MODE",)),
+        ("EX4B", ("JEDEC_EXIT_4_BYTE_ADDR_MODE",)),
+    ],
+    "FEATURE_4BA_ENTER_WREN": [
+        ("EN4B", ("JEDEC_ENTER_4_BYTE_ADDR_MODE",)),
+        ("EX4B", ("JEDEC_EXIT_4_BYTE_ADDR_MODE",)),
+    ],
+    "FEATURE_4BA_ENTER_EAR7": [
+        ("WREAR", ("JEDEC_WRITE_EXT_ADDR_REG",)),
+        ("RDEAR", ("JEDEC_READ_EXT_ADDR_REG",)),
+    ],
+    "FEATURE_4BA_EAR_C5C8": [
+        ("WREAR", ("JEDEC_WRITE_EXT_ADDR_REG",)),
+        ("RDEAR", ("JEDEC_READ_EXT_ADDR_REG",)),
+    ],
+    "FEATURE_4BA_EAR_1716": [
+        ("BRWR", ("ALT_WRITE_EXT_ADDR_REG_17",)),
+        ("BRRD", ("ALT_READ_EXT_ADDR_REG_16",)),
+    ],
+    "FEATURE_WRSR_WREN": [("WRSR", ("JEDEC_WRSR",))],
+    "FEATURE_WRSR_EWSR": [("EWSR", ("JEDEC_EWSR",)), ("WRSR", ("JEDEC_WRSR",))],
+    "FEATURE_WRSR2": [("WRSR2", ("JEDEC_WRSR2",))],
+    "FEATURE_WRSR3": [("WRSR3", ("JEDEC_WRSR3",))],
+    "FEATURE_QPI_35_F5": [("EQPI_35", ()), ("RSTQIO_F5", ())],
+    "FEATURE_QPI_38_FF": [("EQPI_38", ()), ("RSTQIO_FF", ())],
+    "FEATURE_SET_READ_PARAMS": [("SET_READ_PARAMS", ())],
+}
+
+
+def _opcodes(
+    f: dict[str, str],
+    method: str | None,
+    flags: list[str],
+    erasers: list[dict[str, Any]],
+    sfdp: bool,
+    symbols: dict[str, str | int],
+) -> list[dict[str, object]]:
+    """The operations a flashrom entry says the chip has: its probe, its
+    read and write functions, each eraser (flashrom's spi_block_erase_<xx>
+    sends 0x<xx>), the feature bits, and SFDP where a comment says so."""
+    ops = Opcodes(symbols)
+    if method in _PROBE_OPS:
+        op, sym = _PROBE_OPS[method]
+        ops.add(op, f"probe ({method})", sym)
+    for field in ("read", "write"):
+        func = f.get(field, "").strip().lower()
+        if func in _IO_OPS:
+            op, syms = _IO_OPS[func]
+            ops.add(op, f".{field} = {func}", *syms)
+            if op == "AAI_WP":
+                ops.add("BP", f".{field} = {func}", "JEDEC_BYTE_PROGRAM")
+    for e in erasers:
+        if e["opcode"] is None:
+            continue
+        erase_op = ERASE_BY_OPCODE.get(e["opcode"])
+        if erase_op is None:
+            raise ValueError(f"no operation for erase opcode 0x{e['opcode']:02x}")
+        size, count = e["blocks"][0]
+        layout = f"{count} x {size}" if len(e["blocks"]) == 1 else "non-uniform"
+        ops.add(erase_op, f"block_erasers ({layout})", value=e["opcode"])
+    for flag in flags:
+        for feature_op, feature_syms in _FEATURE_OPS.get(flag, []):
+            ops.add(feature_op, flag, *feature_syms)
+    if sfdp:
+        ops.add("RDSFDP", "comment: supports SFDP", "JEDEC_SFDP")
+    return ops.to_json()
