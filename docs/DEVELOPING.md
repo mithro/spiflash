@@ -1,7 +1,24 @@
 # Developing spiflash
 
-Contributor notes. For what the package does, see the [README](../README.md);
-for how versions reach PyPI and apt, see [RELEASING.md](../RELEASING.md).
+Contributor notes. For what the package does, see the
+[README](https://github.com/mithro/spiflash/blob/main/README.md); for how
+versions reach PyPI and apt, see
+[RELEASING.md](https://github.com/mithro/spiflash/blob/main/RELEASING.md).
+
+## The documentation site
+
+https://spiflash.readthedocs.io/ is built from `docs/` by Sphinx (Furo theme,
+MyST Markdown). The vendor and chip pages are not in git:
+`docs/_ext/spiflash_pages.py` writes them from the installed package's data
+at the start of every build, so the site always matches the release.
+
+```sh
+uv sync --group docs
+uv run sphinx-build -W -b html docs docs/_build/html   # what CI runs
+```
+
+`.readthedocs.yaml` builds it on Read the Docs, and `.github/workflows/docs.yml`
+builds it (warnings are errors) on every push and pull request.
 
 ## Setup and gates
 

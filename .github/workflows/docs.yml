@@ -1,0 +1,53 @@
+name: Documentation
+
+# Builds the Sphinx site (docs/) with warnings as errors, the same build Read
+# the Docs does, so a broken page fails the pull request rather than the
+# published site. Read the Docs itself builds and hosts
+# https://spiflash.readthedocs.io/ from main.
+#
+# Not part of deb.yml: a documentation problem should not hold up a release.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sphinx:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # hatch-vcs derives the version from the tags
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install the docs group
+        run: uv sync --group docs
+
+      - name: Build (warnings are errors)
+        run: uv run sphinx-build -W --keep-going -b html -j auto docs docs/_build/html
+
+      - name: Every chip and vendor has a page
+        run: |
+          chips=$(find docs/_build/html/chips -name '*.html' ! -name index.html | wc -l)
+          vendors=$(find docs/_build/html/vendors -name '*.html' ! -name index.html | wc -l)
+          echo "$chips chip pages, $vendors vendor pages"
+          test "$chips" -gt 500
+          test "$vendors" -gt 20
+
+      - name: Upload the built site
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-html
+          path: docs/_build/html
+          retention-days: 7

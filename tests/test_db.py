@@ -347,3 +347,18 @@ def test_operations_table() -> None:
     order = sorted(["SE", "READ_1_1_1", "RDID", "EN4B", "PP_1_1_1", "WRSR"], key=opcodes.sort_key)
     assert order == ["RDID", "READ_1_1_1", "PP_1_1_1", "SE", "WRSR", "EN4B"]
     assert {op.kind for op in opcodes.OPERATIONS.values()} == set(opcodes.KINDS)
+
+
+def test_link_to_the_upstream_line() -> None:
+    db = spiflash.database()
+    (f,) = db.lookup("ef4018")
+    by_source = {r.source: r for r in f.records}
+    linux = by_source["linux"]
+    commit = db.sources["linux"]["commit"]
+    assert db.link(linux) == (
+        f"https://github.com/torvalds/linux/blob/{commit}/{linux.file}#L{linux.line}")
+    # flashprog lives on Gerrit; links go to its GitHub mirror.
+    assert db.link(by_source["flashprog"]).startswith("https://github.com/SourceArcade/flashprog/blob/")
+    assert Database([rec(source="nowhere")]).link(rec(source="nowhere")) is None
+    other = Database([rec()], sources={"linux": {"url": "https://example.org/x", "commit": "c"}})
+    assert other.link(rec()) is None

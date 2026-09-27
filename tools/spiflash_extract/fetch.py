@@ -23,6 +23,7 @@ class Upstream:
     commit: str
     paths: list[str]
     license: str
+    browse: str | None = None  # where to link to its files, if not `url`
 
 
 def load(path: Path) -> list[Upstream]:

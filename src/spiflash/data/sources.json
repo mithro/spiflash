@@ -3,6 +3,7 @@
  "sources": {
   "flashprog": {
    "branch": "main",
+   "browse": "https://github.com/SourceArcade/flashprog",
    "commit": "bbe7393f16b710d7e5ddfb1d01c6dadd8c0a5aa7",
    "date": "2026-09-25T14:22:05Z",
    "license": "GPL-2.0-or-later",
@@ -17,6 +18,7 @@
   },
   "flashrom": {
    "branch": "main",
+   "browse": "https://github.com/flashrom/flashrom",
    "commit": "a1de15b26bfd2c9759378f835fe3b9a2d9ac08e1",
    "date": "2026-09-25T12:41:15Z",
    "license": "GPL-2.0-or-later",
@@ -32,6 +34,7 @@
   },
   "jep106": {
    "branch": "master",
+   "browse": "https://github.com/openocd-org/openocd",
    "commit": "21f88d7815edfb7632548090934c51017604f450",
    "date": "2026-09-26T16:33:58Z",
    "license": "GPL-2.0-or-later",
@@ -43,6 +46,7 @@
   },
   "linux": {
    "branch": "master",
+   "browse": "https://github.com/torvalds/linux",
    "commit": "fd179f8a05be3ccae366b9b96e176b51fbe54aab",
    "date": "2026-09-26T11:14:35-07:00",
    "license": "GPL-2.0-only",
@@ -56,6 +60,7 @@
   },
   "openfpgaloader": {
    "branch": "master",
+   "browse": "https://github.com/trabucayre/openFPGALoader",
    "commit": "676e53ec73d2261c974d610b7cf0693117c8d2ef",
    "date": "2026-09-23T15:09:30+02:00",
    "license": "Apache-2.0",
@@ -68,6 +73,7 @@
   },
   "openocd": {
    "branch": "master",
+   "browse": "https://github.com/openocd-org/openocd",
    "commit": "21f88d7815edfb7632548090934c51017604f450",
    "date": "2026-09-26T16:33:58Z",
    "license": "GPL-2.0-or-later",
@@ -81,6 +87,7 @@
   },
   "u-boot": {
    "branch": "main",
+   "browse": "https://github.com/u-boot/u-boot",
    "commit": "a06e89ab05eaa2b8344d521319399333cd760ae5",
    "date": "2026-09-21T16:12:01-06:00",
    "license": "GPL-2.0-or-later",

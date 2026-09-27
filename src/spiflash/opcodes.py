@@ -104,6 +104,7 @@ _ALL = [
     _op("RSTQIO_F5", 0xF5, "mode", "Exit QPI mode (0xf5)"),
 ]
 
+#: Every operation spiflash knows, by name.
 OPERATIONS: dict[str, Operation] = {op.name: op for op in _ALL}
 
 KINDS = ("id", "read", "program", "erase", "register", "mode")

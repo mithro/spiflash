@@ -63,6 +63,7 @@ def build(ups: list[fetch.Upstream]) -> dict[str, str]:
         records += recs
         sources[up.name] = {
             "url": up.url,
+            "browse": up.browse or up.url,
             "branch": up.branch,
             "commit": up.commit,
             "date": fetch.commit_date(tree),

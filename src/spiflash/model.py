@@ -313,7 +313,10 @@ class Flash:
         return operation in self.opcodes
 
     def feature_sources(self, feature: str) -> tuple[str, ...]:
-        return tuple(sorted({r.source for r in self.records if feature in r.features}))
+        """The sources claiming ``feature``, in source priority order."""
+        return tuple(
+            sorted({r.source for r in self.records if feature in r.features}, key=_priority)
+        )
 
     def values(self, attribute: str) -> dict[Any, tuple[str, ...]]:
         """Each value of a :class:`Record` attribute, and the sources giving it:
