@@ -22,7 +22,8 @@ from, and where the sources disagree (60 ids do) both answers are kept.
 the shipped data was extracted from.
 
 Browse it at **<https://spiflash.readthedocs.io/>**: a page per vendor with a
-table of all its parts, and a page per chip.
+table of all its parts, a page per chip, and a page per SPI operation (what
+it does, a WaveDrom timing diagram, and every part that supports it).
 
 <!-- usage-start: docs/usage.md includes from here -->
 
@@ -166,7 +167,9 @@ op.because                               # (('flashprog', 'FEATURE_FAST_READ_QIO
 Operations are named as LiteSPI's `SpiNorFlashOpCodes` names them (`READ_1_1_4`:
 command on 1 line, address on 1, data on 4; `_4B` for the 4-byte-address form),
 so a list can be used there directly; `spiflash.opcodes.OPERATIONS` has them all,
-with their kind (id, read, program, erase, register, mode) and description.
+with their kind (id, read, program, erase, register, mode), description, and
+transaction shape: `protocol` (`"1-4-4"`), `address_bytes`, `dummy_clocks` and
+the `data` phase's direction.
 
 Each source's list is what that source says, from what it says it:
 
