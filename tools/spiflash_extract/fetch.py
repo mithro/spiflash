@@ -63,14 +63,17 @@ def remote_head(up: Upstream) -> str:
 def fetch(up: Upstream, dest: Path) -> Path:
     """Check out ``up.paths`` of ``up.commit`` into ``dest / up.name``."""
     tree = dest / up.name
+    sparse = ["sparse-checkout", "set", "--no-cone", *[f"/{p}" for p in up.paths]]
     if (tree / ".git").exists():
         if _git("rev-parse", "HEAD", cwd=tree) == up.commit:
+            # Same commit, but `paths` may have grown since it was fetched.
+            _git(*sparse, cwd=tree)
             return tree
     else:
         tree.mkdir(parents=True, exist_ok=True)
         _git("init", "-q", cwd=tree)
         _git("remote", "add", "origin", up.url, cwd=tree)
-    _git("sparse-checkout", "set", "--no-cone", *[f"/{p}" for p in up.paths], cwd=tree)
+    _git(*sparse, cwd=tree)
     _git("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", up.commit, cwd=tree)
     _git("checkout", "-q", "--force", up.commit, cwd=tree)
     return tree
