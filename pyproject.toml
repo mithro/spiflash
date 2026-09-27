@@ -60,7 +60,7 @@ include = ["src/", "tools/", "tests/", "README.md", "LICENSE", "docs/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tools"]
+pythonpath = ["tools", "docs", "docs/_ext"]
 addopts = "-ra --cov=spiflash --cov=spiflash_extract --cov-report=term-missing --cov-fail-under=85"
 
 [tool.ruff]
@@ -96,7 +96,8 @@ select = [
 [tool.mypy]
 files = [
     "src/spiflash", "tools/spiflash_extract", "tools/update_db.py",
-    "docs/conf.py", "docs/_ext/spiflash_pages.py",
+    "docs/conf.py", "docs/_ext/spiflash_pages.py", "docs/check_links.py",
+    "docs/check_link_targets.py",
 ]
 mypy_path = ["src", "tools", "docs/_ext"]
 strict = true

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from docutils import nodes
 from sphinx.util.docutils import SphinxRole
+from sphinx.util.nodes import split_explicit_title
 
 import spiflash
 from spiflash.cli import human_size
@@ -80,9 +81,34 @@ _KIND_TITLE = {
 # --- small helpers -----------------------------------------------------------
 
 
-def esc(text: str) -> str:
-    """Text safe to put in MyST: Markdown's inline markup escaped."""
+URL = re.compile(r"https?://[^\s<>]+")
+
+
+def trim_url(url: str) -> str:
+    """A URL matched by :data:`URL`, less what follows it in the prose:
+    trailing punctuation, and closing brackets it did not open
+    (``IS25LP(WP)256D.pdf`` keeps its brackets; ``(see https://x.org).``
+    loses ``).``)."""
+    url = url.rstrip(".,;:!?'\"")
+    while url.endswith(")") and url.count(")") > url.count("("):
+        url = url[:-1].rstrip(".,;:!?'\"")
+    return url
+
+
+def _escape_markup(text: str) -> str:
     return re.sub(r"([\\`*_{}\[\]<>|#])", r"\\\1", text)
+
+
+def esc(text: str) -> str:
+    """Text safe to put in MyST: Markdown's inline markup escaped, and any
+    URL in it made a link (an autolink, ``<https://...>``)."""
+    out, pos = [], 0
+    for m in URL.finditer(text):
+        url = trim_url(m.group(0))
+        out += [_escape_markup(text[pos : m.start()]), f"<{url}>"]
+        pos = m.start() + len(url)
+    out.append(_escape_markup(text[pos:]))
+    return "".join(out)
 
 
 def slug(text: str) -> str:
@@ -507,6 +533,17 @@ def sources_table(db: Database) -> str:
     return list_table(["Source", "Commit", "Date", "Entries", "Licence"], rows, "sf-table")
 
 
+def files_read_table(db: Database) -> str:
+    """Each upstream's files, linked at the pinned commit, with its licence."""
+    rows = []
+    for name, s in sorted(db.sources.items()):
+        if name == "jep106":
+            continue  # the same OpenOCD checkout; its file is in OpenOCD's row
+        files = ", ".join(f"{{upstream}}`{name}:{path}`" for path in s["paths"])
+        rows.append([SOURCE_LABEL.get(name, name), files, esc(s["license"])])
+    return list_table(["Source", "Files read", "Licence of those files"], rows, "sf-table")
+
+
 def stats(db: Database) -> dict[str, int]:
     fl = db.flashes
     return {
@@ -560,6 +597,7 @@ def generate(srcdir: Path) -> None:
     # from the build as pages of its own).
     _write(srcdir / "_generated" / "opcodes-table.md", opcodes_table(list(db.flashes)))
     _write(srcdir / "_generated" / "sources-table.md", sources_table(db))
+    _write(srcdir / "_generated" / "files-read.md", files_read_table(db))
     # A chip id that left the database leaves no stale page behind.
     for d in (chips_dir, vendors_dir):
         for old in d.glob("*.md"):
@@ -587,6 +625,82 @@ class SourceRole(SphinxRole):
         return [nodes.inline(self.rawtext, label, classes=classes)], []
 
 
+REPO_URL = "https://github.com/mithro/spiflash"
+
+
+def _is_dir(path: str) -> bool:
+    return path.endswith("/") or "." not in path.rsplit("/", 1)[-1]
+
+
+def repo_url(path: str) -> str:
+    """This repository's page for ``path`` (a file or a directory) on main."""
+    kind = "tree" if _is_dir(path) else "blob"
+    return f"{REPO_URL}/{kind}/main/{path.rstrip('/')}"
+
+
+def upstream_url(source: str, path: str) -> str:
+    """An upstream's page for ``path`` at the commit the data came from. A
+    glob (``drivers/mtd/spi-nor/*.c``) links to its directory."""
+    info = spiflash.sources()[source]
+    base = str(info.get("browse") or info["url"]).rstrip("/")
+    if "*" in path:
+        path = path.rsplit("/", 1)[0] + "/"
+    kind = "tree" if _is_dir(path) else "blob"
+    return f"{base}/{kind}/{info['commit']}/{path.rstrip('/')}"
+
+
+class _LinkRole(SphinxRole):
+    """A role whose text, ``target`` or ``title <target>``, becomes a link
+    shown as code (or as ``title``)."""
+
+    def url(self, target: str) -> str:
+        raise NotImplementedError
+
+    def display(self, target: str) -> str:
+        """The code shown for ``target`` when no title is given."""
+        return target
+
+    def run(self) -> tuple[list[nodes.Node], list[nodes.system_message]]:
+        has_title, title, target = split_explicit_title(self.text)
+        try:
+            url = self.url(target)
+        except (KeyError, ValueError) as e:
+            msg = self.inliner.reporter.error(f"{self.name}: {e}", line=self.lineno)
+            return [nodes.problematic(self.rawtext, self.rawtext)], [msg]
+        shown = self.display(target)
+        text: nodes.Node = nodes.Text(title) if has_title else nodes.literal(shown, shown)
+        return [nodes.reference(self.rawtext, "", text, refuri=url)], []
+
+
+class RepoRole(_LinkRole):
+    """``{repo}`tools/sources.toml``` links to the file in this repository."""
+
+    def url(self, target: str) -> str:
+        return repo_url(target)
+
+
+class UpstreamRole(_LinkRole):
+    """``{upstream}`linux:drivers/mtd/spi-nor/core.c``` links to the file in
+    that upstream, at the pinned commit; shown without the ``linux:``."""
+
+    def url(self, target: str) -> str:
+        source, sep, path = target.partition(":")
+        if not sep:
+            msg = f"expected <source>:<path>, not {target!r}"
+            raise ValueError(msg)
+        return upstream_url(source, path)
+
+    def display(self, target: str) -> str:
+        return target.partition(":")[2]
+
+
+class GithubRole(_LinkRole):
+    """``{github}`mithro/apt-repo-action``` links to a GitHub repository."""
+
+    def url(self, target: str) -> str:
+        return f"https://github.com/{target}"
+
+
 def _substitutions(app: Sphinx, config: Config) -> None:
     """The numbers the home page quotes ({{chips}}, {{vendors}}, ...)."""
     numbers = {k: f"{v:,}" for k, v in stats(spiflash.database()).items()}
@@ -601,4 +715,7 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_role("sfyes", SpanRole("sf-yes"))
     app.add_role("sfkind", SpanRole("sf-kind"))
     app.add_role("sfsrc", SourceRole())
+    app.add_role("repo", RepoRole())
+    app.add_role("upstream", UpstreamRole())
+    app.add_role("github", GithubRole())
     return {"version": "1", "parallel_read_safe": True, "parallel_write_safe": True}

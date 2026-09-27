@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Rebuild src/spiflash/data/ from the upstream trees in tools/sources.toml.
+"""Rebuild :repo:`src/spiflash/data/` from the upstream trees in
+:repo:`tools/sources.toml`::
 
     uv run tools/update_db.py            # rebuild from the pinned commits
     uv run tools/update_db.py --latest   # move the pins to upstream HEAD first
     uv run tools/update_db.py --check    # fail if the committed data differs
     uv run tools/update_db.py --latest --check   # has anything upstream changed?
 
-The upstream files are fetched into upstream/ (git-ignored).
+The upstream files are fetched into ``upstream`` (git-ignored) in the
+repository root.
 """
 
 from __future__ import annotations

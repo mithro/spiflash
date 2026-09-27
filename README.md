@@ -6,12 +6,12 @@ merged from the flash tables of every project that keeps one:
 
 | source | what is read | records |
 |---|---|---|
-| [Linux](https://github.com/torvalds/linux) | `drivers/mtd/spi-nor/*.c`, `drivers/mtd/nand/spi/*.c` | 377 (127 SPI NAND) |
-| [U-Boot](https://github.com/u-boot/u-boot) | `drivers/mtd/spi/spi-nor-ids.c` | 334 |
-| [flashrom](https://github.com/flashrom/flashrom) | `flashchips/*.c` (SPI chips only) | 512 |
-| [flashprog](https://review.sourcearcade.org/flashprog.git) | `flashchips.c` (SPI chips only) | 480 |
-| [OpenOCD](https://github.com/openocd-org/openocd) | `src/flash/nor/spi.c`, and `src/helper/jep106.inc` for manufacturer names | 190 |
-| [openFPGALoader](https://github.com/trabucayre/openFPGALoader) | `src/spiFlashdb.hpp` | 53 |
+| [Linux](https://github.com/torvalds/linux) | [`drivers/mtd/spi-nor/*.c`](https://github.com/torvalds/linux/tree/master/drivers/mtd/spi-nor), [`drivers/mtd/nand/spi/*.c`](https://github.com/torvalds/linux/tree/master/drivers/mtd/nand/spi) | 377 (127 SPI NAND) |
+| [U-Boot](https://github.com/u-boot/u-boot) | [`drivers/mtd/spi/spi-nor-ids.c`](https://github.com/u-boot/u-boot/blob/master/drivers/mtd/spi/spi-nor-ids.c) | 334 |
+| [flashrom](https://github.com/flashrom/flashrom) | [`flashchips/*.c`](https://github.com/flashrom/flashrom/tree/main/flashchips) (SPI chips only) | 512 |
+| [flashprog](https://review.sourcearcade.org/flashprog.git) | [`flashchips.c`](https://github.com/SourceArcade/flashprog/blob/main/flashchips.c) (SPI chips only) | 480 |
+| [OpenOCD](https://github.com/openocd-org/openocd) | [`src/flash/nor/spi.c`](https://github.com/openocd-org/openocd/blob/master/src/flash/nor/spi.c), and [`src/helper/jep106.inc`](https://github.com/openocd-org/openocd/blob/master/src/helper/jep106.inc) for manufacturer names | 190 |
+| [openFPGALoader](https://github.com/trabucayre/openFPGALoader) | [`src/spiFlashdb.hpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlashdb.hpp) | 53 |
 
 Together that is 778 distinct chip ids (651 SPI NOR, 127 SPI NAND) from 37
 manufacturers, 459 of them described by more than one source, plus the full
@@ -21,7 +21,7 @@ from, and where the sources disagree (60 ids do) both answers are kept.
 `spiflash sources` (or `spiflash.sources()`) names the exact upstream commits
 the shipped data was extracted from.
 
-Browse it at **https://spiflash.readthedocs.io/**: a page per vendor with a
+Browse it at **<https://spiflash.readthedocs.io/>**: a page per vendor with a
 table of all its parts, and a page per chip.
 
 <!-- usage-start: docs/usage.md includes from here -->
@@ -33,7 +33,7 @@ pip install spiflash          # or: uv tool install spiflash
 ```
 
 It has no dependencies. Or, as a Debian package, from the signed apt
-repository at https://mith.ro/spiflash/. There is one per suite (bookworm,
+repository at <https://mith.ro/spiflash/>. There is one per suite (bookworm,
 trixie, forky and sid), and the package is `Architecture: all`, so it installs
 on any architecture. Put your suite's name in place of `trixie` below
 (Raspberry Pi OS uses Debian's codenames):
@@ -173,10 +173,10 @@ Each source's list is what that source says, from what it says it:
 | source | where the opcodes come from |
 |---|---|
 | flashrom, flashprog | the probe, the `.read`/`.write` functions, each block eraser, and the feature bits (`FEATURE_FAST_READ_QIO`, `FEATURE_4BA_ENTER`, `FEATURE_QPI_38_FF`, ...) |
-| Linux | what `drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default, the `no_sfdp_flags` (dual/quad/octal read, 4 KiB erase), sector and chip erase, and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
-| U-Boot | the same from its `spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
+| Linux | what [`drivers/mtd/spi-nor/core.c`](https://github.com/torvalds/linux/blob/master/drivers/mtd/spi-nor/core.c) sets up for the entry: read, fast read and page program by default, the `no_sfdp_flags` (dual/quad/octal read, 4 KiB erase), sector and chip erase, and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
+| U-Boot | the same from its [`spi-nor-core.c`](https://github.com/u-boot/u-boot/blob/master/drivers/mtd/spi/spi-nor-core.c) (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | OpenOCD | the table's own opcode columns: read, fastest read, page program, sector and chip erase |
-| openFPGALoader | what its `spiFlash.cpp` sends: read, page program, and the erases its table allows |
+| openFPGALoader | what its [`spiFlash.cpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlash.cpp) sends: read, page program, and the erases its table allows |
 
 The opcode values are read from each upstream's own headers (`SPINOR_OP_*`,
 `JEDEC_*`, `FLASH_*`) and checked against the table when the data is built.
@@ -192,7 +192,7 @@ SPI NAND parts have no opcodes listed.
 
 ## Updating the data
 
-The data is generated, never edited: `tools/sources.toml` pins each upstream to
+The data is generated, never edited: [`tools/sources.toml`](https://github.com/mithro/spiflash/blob/main/tools/sources.toml) pins each upstream to
 a commit, and
 
 ```sh

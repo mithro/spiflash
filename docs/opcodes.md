@@ -14,10 +14,10 @@ and `8D` marks double transfer rate.
 | Source | Where the opcodes come from |
 |---|---|
 | flashrom, flashprog | the probe, the `.read`/`.write` functions, each block eraser (`spi_block_erase_20` sends 0x20), and the feature bits (`FEATURE_FAST_READ_QIO`, `FEATURE_4BA_ENTER`, `FEATURE_QPI_38_FF`, ...) |
-| Linux | what `drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default; the `no_sfdp_flags` (dual, quad and octal read, 4 KiB erase); sector and chip erase; and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
-| U-Boot | the same from its `drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
+| Linux | what {upstream}`linux:drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default; the `no_sfdp_flags` (dual, quad and octal read, 4 KiB erase); sector and chip erase; and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
+| U-Boot | the same from its {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | OpenOCD | the columns of its table: read, fastest read, page program, sector erase and chip erase |
-| openFPGALoader | what its `src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
+| openFPGALoader | what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
 
 The opcode values themselves are read from each upstream's own headers
 (`SPINOR_OP_*`, `JEDEC_*`, `SPIFLASH_READ_ID`, `FLASH_*`) and checked against

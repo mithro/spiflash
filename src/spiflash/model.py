@@ -95,7 +95,7 @@ class SupportedOperation:
 class Record:
     """One entry of one upstream's flash table, as that upstream has it.
 
-    See ``tools/spiflash_extract/record.py`` for what each field means."""
+    See :mod:`spiflash_extract.record` for what each field means."""
 
     source: str
     file: str
