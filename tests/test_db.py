@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from importlib import resources
 
 import pytest
@@ -57,9 +58,7 @@ def test_every_source_is_present() -> None:
     for name, s in spiflash.sources().items():
         assert len(s["commit"]) == 40, name
         assert s["records"] > 0, name
-    by_source: dict[str, int] = {}
-    for r in spiflash.records():
-        by_source[r.source] = by_source.get(r.source, 0) + 1
+    by_source = Counter(r.source for r in spiflash.records())
     for name, n in by_source.items():
         assert spiflash.sources()[name]["records"] == n
 
@@ -159,10 +158,7 @@ def test_nand() -> None:
 
 
 def test_find() -> None:
-    found = spiflash.find("w25q128jv")
-    assert [f.id_hex for f in found][:2] == ["ef4018", "ef7018"] or "ef4018" in [
-        f.id_hex for f in found
-    ]
+    assert "ef4018" in [f.id_hex for f in spiflash.find("w25q128jv")]
     # A family prefix finds the parts; a full order code finds the family.
     assert "ef4018" in [f.id_hex for f in spiflash.find("W25Q128")]
     assert "ef4018" in [f.id_hex for f in spiflash.find("W25Q128JVSIQ")]

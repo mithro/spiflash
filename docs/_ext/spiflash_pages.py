@@ -64,6 +64,9 @@ _FEATURE_TEXT = {
     "no_erase": ("no erase (FRAM/MRAM)", "warning"),
 }
 
+# The features worth a badge in the parts tables.
+_HIGHLIGHTS = frozenset({"dual_read", "quad_read", "octal_read", "qpi", "4byte_addr", "sfdp"})
+
 _KIND_TITLE = {
     "id": "Identification",
     "read": "Read",
@@ -109,11 +112,7 @@ def badge(text: str, colour: str = "secondary") -> str:
 
 
 def feature_badges(features: frozenset[str] | set[str]) -> str:
-    out = []
-    for feat in sorted(features, key=lambda x: list(_FEATURE_TEXT).index(x)):
-        text, colour = _FEATURE_TEXT[feat]
-        out.append(badge(text, colour))
-    return " ".join(out)
+    return " ".join(badge(*_FEATURE_TEXT[x]) for x in _FEATURE_TEXT if x in features)
 
 
 def volts(v: tuple[int, int] | None) -> str:
@@ -165,21 +164,32 @@ def chip_page(db: Database, f: Flash, vendor_slug: str) -> str:
     others = [n for n in f.names if n not in title_of(f).split(" / ")]
     if others:
         out.append(f"Also listed as: {', '.join(esc(n) for n in others)}.\n")
+    out += _summary_cards(f)
+    out += _identification(db, f, kind)
+    out += _capabilities(f)
+    out += _opcodes(f)
+    out += _erase_layouts(f)
+    out += _disagreements(f)
+    out += _sources(db, f)
+    out.append(f"\n[All {esc(vendor_of(f))} parts](../vendors/{vendor_slug}.md)\n")
+    return "\n".join(out)
 
-    # Summary cards.
+
+def _summary_cards(f: Flash) -> list[str]:
     cards = [
         ("Capacity", size_text(f.size)),
         ("Page", size_text(f.page_size)),
         ("Sector", size_text(f.sector_size)),
         ("Supply", volts(f.voltage)),
     ]
-    out.append("::::{grid} 2 2 4 4\n:gutter: 2\n:class-container: sf-cards\n")
+    out = ["::::{grid} 2 2 4 4\n:gutter: 2\n:class-container: sf-cards\n"]
     for label, value in cards:
         out.append(f":::{{grid-item-card}} {label}\n:class-card: sf-card\n\n{value}\n:::")
     out.append("::::\n")
+    return out
 
-    # Identification.
-    out.append("## Identification\n")
+
+def _identification(db: Database, f: Flash, kind: str) -> list[str]:
     rows = []
     if f.family == "jedec":
         rows.append(["Read id (0x9f) answers", f"{{sfid}}`{spaced(f.id_hex)}`"])
@@ -200,60 +210,65 @@ def chip_page(db: Database, f: Flash, vendor_slug: str) -> str:
             ]
         )
     rows.append(["Type", kind])
-    out.append(list_table(["", ""], rows, "sf-kv"))
-    out.append("")
+    return ["## Identification\n", list_table(["", ""], rows, "sf-kv"), ""]
 
-    # Capabilities.
-    if f.features:
-        out.append("## Capabilities\n")
-        out.append(feature_badges(f.features) + "\n")
-        rows = []
-        for feat in sorted(f.features, key=lambda x: list(_FEATURE_TEXT).index(x)):
-            rows.append(
-                [
-                    _FEATURE_TEXT[feat][0],
-                    " ".join(source_badge(s) for s in f.feature_sources(feat)),
-                ]
-            )
-        out.append(list_table(["Capability", "Listed by"], rows, "sf-table", "40 60"))
-        out.append("")
 
-    # Opcodes.
-    out.append("## Opcodes\n")
+def _capabilities(f: Flash) -> list[str]:
+    if not f.features:
+        return []
+    rows = [
+        [
+            _FEATURE_TEXT[feat][0],
+            " ".join(source_badge(s) for s in f.feature_sources(feat)),
+        ]
+        for feat in _FEATURE_TEXT
+        if feat in f.features
+    ]
+    return [
+        "## Capabilities\n",
+        feature_badges(f.features) + "\n",
+        list_table(["Capability", "Listed by"], rows, "sf-table", "40 60"),
+        "",
+    ]
+
+
+def _opcodes(f: Flash) -> list[str]:
+    out = ["## Opcodes\n"]
     if not f.opcodes:
         out.append("No source lists opcodes for this part.\n")
-    else:
-        srcs = [s for s in f.sources if any(s in o.sources for o in f.opcodes.values())]
-        out.append(
-            "Each opcode some source says this part has, and which sources say so. "
-            "A missing opcode may still be supported: see [](../opcodes.md).\n"
+        return out
+    srcs = [s for s in f.sources if any(s in o.sources for o in f.opcodes.values())]
+    out.append(
+        "Each opcode some source says this part has, and which sources say so. "
+        "A missing opcode may still be supported: see [](../opcodes.md).\n"
+    )
+    rows = [
+        [
+            f"{{sfop}}`0x{o.opcode:02x}`",
+            f"`{o.name}`",
+            f"{{sfkind}}`{o.operation.kind}` {esc(o.operation.description)}",
+        ]
+        + ["{sfyes}`✓`" if s in o.sources else " " for s in srcs]
+        for o in f.opcodes.values()
+    ]
+    out.append(
+        list_table(
+            ["Opcode", "Operation", "Description", *[SOURCE_LABEL.get(s, s) for s in srcs]],
+            rows,
+            "sf-table sf-opcodes",
         )
-        rows = []
-        for o in f.opcodes.values():
-            rows.append(
-                [
-                    f"{{sfop}}`0x{o.opcode:02x}`",
-                    f"`{o.name}`",
-                    f"{{sfkind}}`{o.operation.kind}` {esc(o.operation.description)}",
-                ]
-                + ["{sfyes}`✓`" if s in o.sources else " " for s in srcs]
-            )
-        out.append(
-            list_table(
-                ["Opcode", "Operation", "Description", *[SOURCE_LABEL.get(s, s) for s in srcs]],
-                rows,
-                "sf-table sf-opcodes",
-            )
-        )
-        out.append("")
-        out.append(":::{dropdown} Why each source lists each opcode\n:class-container: sf-why\n")
-        for o in f.opcodes.values():
-            reasons = "; ".join(f"{SOURCE_LABEL.get(s, s)}: {esc(via)}" for s, via in o.because)
-            out.append(f"- `{o.name}` (0x{o.opcode:02x}): {reasons}")
-        out.append(":::\n")
+    )
+    out.append("")
+    out.append(":::{dropdown} Why each source lists each opcode\n:class-container: sf-why\n")
+    for o in f.opcodes.values():
+        reasons = "; ".join(f"{SOURCE_LABEL.get(s, s)}: {esc(via)}" for s, via in o.because)
+        out.append(f"- `{o.name}` (0x{o.opcode:02x}): {reasons}")
+    out.append(":::\n")
+    return out
 
-    # Erase layouts.
-    erase_rows = []
+
+def _erase_layouts(f: Flash) -> list[str]:
+    rows = []
     for r in f.records:
         for e in r.erasers or ():
             blocks = ", ".join(f"{n} {TIMES} {human_size(s)}" for s, n in e["blocks"])
@@ -261,38 +276,48 @@ def chip_page(db: Database, f: Flash, vendor_slug: str) -> str:
             opname = next(
                 (n for n, o in OPERATIONS.items() if o.opcode == op and o.kind == "erase"), None
             )
-            erase_rows.append(
+            rows.append(
                 [
                     source_badge(r.source),
                     esc(r.name),
                     f"{{sfop}}`0x{op:02x}`" if op is not None else esc(e.get("function", "")),
-                    f"`{opname}`" if opname and op is not None else EM_DASH,
+                    f"`{opname}`" if opname else EM_DASH,
                     blocks,
                 ]
             )
-    if erase_rows:
-        out.append("## Erase layouts\n")
-        out.append(
-            list_table(["Source", "As", "Opcode", "Operation", "Blocks"], erase_rows, "sf-table")
-        )
-        out.append("")
+    if not rows:
+        return []
+    return [
+        "## Erase layouts\n",
+        list_table(["Source", "As", "Opcode", "Operation", "Blocks"], rows, "sf-table"),
+        "",
+    ]
 
-    # Disagreements.
-    if f.conflicts:
-        out.append(":::{warning}\nThe sources disagree:\n")
-        for attr, vals in f.conflicts.items():
-            said = "; ".join(
-                f"{_fmt(attr, v)} ({', '.join(SOURCE_LABEL.get(s, s) for s in ss)})"
-                for v, ss in vals.items()
-            )
-            out.append(f"- **{attr.replace('_', ' ')}**: {said}")
-        out.append(
-            "\nParts sharing an id often differ in these; the values above are what most "
-            "sources give.\n:::\n"
-        )
 
-    # Sources.
-    out.append("## What each source says\n")
+def _conflict_value(attr: str, value: Any) -> str:
+    if attr == "voltage":
+        return volts(value)
+    return size_text(value) if isinstance(value, int) else esc(str(value))
+
+
+def _disagreements(f: Flash) -> list[str]:
+    if not f.conflicts:
+        return []
+    out = [":::{warning}\nThe sources disagree:\n"]
+    for attr, vals in f.conflicts.items():
+        said = "; ".join(
+            f"{_conflict_value(attr, v)} ({', '.join(SOURCE_LABEL.get(s, s) for s in ss)})"
+            for v, ss in vals.items()
+        )
+        out.append(f"- **{attr.replace('_', ' ')}**: {said}")
+    out.append(
+        "\nParts sharing an id often differ in these; the values above are what most "
+        "sources give.\n:::\n"
+    )
+    return out
+
+
+def _sources(db: Database, f: Flash) -> list[str]:
     rows = []
     for r in f.records:
         link = db.link(r)
@@ -310,28 +335,22 @@ def chip_page(db: Database, f: Flash, vendor_slug: str) -> str:
                 where,
             ]
         )
-    out.append(
+    out = [
+        "## What each source says\n",
         list_table(
             ["Source", "Name", "Ext. id", "Size", "Page", "Sector", "Supply", "Tested", "Where"],
             rows,
             "sf-table sf-sources",
-        )
-    )
-    out.append("")
+        ),
+        "",
+    ]
     notes = [(r, n) for r in f.records for n in r.notes]
     if notes:
         out.append(":::{dropdown} Upstream comments\n:class-container: sf-why\n")
         for r, n in notes:
             out.append(f"- {SOURCE_LABEL.get(r.source, r.source)} ({esc(r.name)}): {esc(n)}")
         out.append(":::\n")
-    out.append(f"\n[All {esc(vendor_of(f))} parts](../vendors/{vendor_slug}.md)\n")
-    return "\n".join(out)
-
-
-def _fmt(attr: str, value: Any) -> str:
-    if attr == "voltage":
-        return volts(value)
-    return size_text(value) if isinstance(value, int) else esc(str(value))
+    return out
 
 
 def parts_table(
@@ -353,11 +372,7 @@ def parts_table(
             *([] if with_vendor else [size_text(f.page_size)]),
             size_text(f.sector_size),
             volts(f.voltage),
-            " ".join(
-                badge(_FEATURE_TEXT[x][0], _FEATURE_TEXT[x][1])
-                for x in sorted(f.features, key=lambda x: list(_FEATURE_TEXT).index(x))
-                if x in ("dual_read", "quad_read", "octal_read", "qpi", "4byte_addr", "sfdp")
-            ),
+            feature_badges(f.features & _HIGHLIGHTS),
             str(len(f.opcodes)),
             str(len(f.sources)),
         ]
@@ -530,20 +545,17 @@ def generate(srcdir: Path) -> None:
 
     chips_dir, vendors_dir = srcdir / "chips", srcdir / "vendors"
     wanted: set[Path] = set()
+
+    def page(path: Path, text: str) -> None:
+        _write(path, text)
+        wanted.add(path)
+
     for v, fl in vendors.items():
-        p = vendors_dir / f"{vslug[v]}.md"
-        _write(p, vendor_page(db, v, fl, slugs))
-        wanted.add(p)
+        page(vendors_dir / f"{vslug[v]}.md", vendor_page(db, v, fl, slugs))
         for f in fl:
-            p = chips_dir / f"{slugs[id(f)]}.md"
-            _write(p, chip_page(db, f, vslug[v]))
-            wanted.add(p)
-    p = vendors_dir / "index.md"
-    _write(p, vendors_index(vendors, vslug))
-    wanted.add(p)
-    p = chips_dir / "index.md"
-    _write(p, chips_index(list(db.flashes), slugs))
-    wanted.add(p)
+            page(chips_dir / f"{slugs[id(f)]}.md", chip_page(db, f, vslug[v]))
+    page(vendors_dir / "index.md", vendors_index(vendors, vslug))
+    page(chips_dir / "index.md", chips_index(list(db.flashes), slugs))
     # Fragments the hand-written pages include (docs/_generated is excluded
     # from the build as pages of its own).
     _write(srcdir / "_generated" / "opcodes-table.md", opcodes_table(list(db.flashes)))
