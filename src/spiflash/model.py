@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from .opcodes import OPERATIONS, Operation, sort_key
 from .vendors import canonical
 
 if TYPE_CHECKING:
@@ -58,6 +59,37 @@ def strip_continuation(data: bytes) -> tuple[int, bytes]:
 
 
 @dataclass(frozen=True)
+class OpcodeUse:
+    """One operation an upstream entry implies: its name in
+    :data:`spiflash.opcodes.OPERATIONS`, the opcode byte, and what in the
+    upstream implies it (a flag, a field, or the upstream's default)."""
+
+    op: str
+    opcode: int
+    via: str
+
+
+@dataclass(frozen=True)
+class SupportedOperation:
+    """An operation a chip supports, and which upstreams say so, why."""
+
+    operation: Operation
+    because: tuple[tuple[str, str], ...]  # (source, via), by source priority
+
+    @property
+    def name(self) -> str:
+        return self.operation.name
+
+    @property
+    def opcode(self) -> int:
+        return self.operation.opcode
+
+    @property
+    def sources(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(s for s, _ in self.because))
+
+
+@dataclass(frozen=True)
 class Record:
     """One entry of one upstream's flash table, as that upstream has it.
 
@@ -79,7 +111,7 @@ class Record:
     features: frozenset[str]
     flags: tuple[str, ...]
     voltage: tuple[int, int] | None
-    opcodes: dict[str, int] | None
+    opcodes: tuple[OpcodeUse, ...]
     tested: str | None
     notes: tuple[str, ...]
 
@@ -102,7 +134,7 @@ class Record:
             features=frozenset(d["features"]),
             flags=tuple(d["flags"]),
             voltage=(d["voltage"][0], d["voltage"][1]) if d["voltage"] else None,
-            opcodes=d["opcodes"],
+            opcodes=tuple(OpcodeUse(o["op"], o["opcode"], o["via"]) for o in d["opcodes"]),
             tested=d["tested"],
             notes=tuple(d["notes"]),
         )
@@ -259,6 +291,27 @@ class Flash:
         :meth:`feature_sources` before relying on one."""
         return frozenset().union(*(r.features for r in self.records))
 
+    @cached_property
+    def opcodes(self) -> dict[str, SupportedOperation]:
+        """Every operation any source says the chip has, by name, in the
+        order id, read, program, erase, register, mode. Parts sharing an id
+        can differ, and some sources only list what their own driver uses,
+        so :attr:`SupportedOperation.sources` says who vouches for each."""
+        because: dict[str, list[tuple[str, str]]] = {}
+        for r in sorted(self.records, key=lambda r: _priority(r.source)):
+            for use in r.opcodes:
+                pair = (r.source, use.via)
+                if pair not in because.setdefault(use.op, []):
+                    because[use.op].append(pair)
+        return {
+            name: SupportedOperation(OPERATIONS[name], tuple(because[name]))
+            for name in sorted(because, key=sort_key)
+        }
+
+    def supports(self, operation: str) -> bool:
+        """Whether any source says the chip has ``operation`` (``"READ_1_1_4"``)."""
+        return operation in self.opcodes
+
     def feature_sources(self, feature: str) -> tuple[str, ...]:
         return tuple(sorted({r.source for r in self.records if feature in r.features}))
 
@@ -308,6 +361,16 @@ class Flash:
             "sector_size": self.sector_size,
             "voltage": list(self.voltage) if self.voltage else None,
             "features": sorted(self.features),
+            "opcodes": [
+                {
+                    "op": o.name,
+                    "opcode": o.opcode,
+                    "kind": o.operation.kind,
+                    "description": o.operation.description,
+                    "sources": list(o.sources),
+                }
+                for o in self.opcodes.values()
+            ],
             "sources": list(self.sources),
             "conflicts": {
                 k: [{"value": list(v) if isinstance(v, tuple) else v, "sources": list(s)}

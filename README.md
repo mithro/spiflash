@@ -77,6 +77,29 @@ A family (`w25q128`), a part (`W25Q128JV`) or a full order code
 (`S25FL128SAGMFI001`) all work; flashrom's `.` wildcards (`W25Q128.V`) are
 understood.
 
+Which opcodes does a part support?
+
+```console
+$ spiflash opcodes W25Q128JV           # or by id: spiflash opcodes ef4018
+ef4018  Winbond  W25Q128, W25Q128.V, W25Q128FV, W25Q128JV  (nor)
+    0x9f  RDID             Read JEDEC id  [flashrom, flashprog, linux, u-boot, openocd, openfpgaloader]
+    0x5a  RDSFDP           Read SFDP (JESD216) parameters  [flashrom, flashprog]
+    0x03  READ_1_1_1       Read data (low frequency)  [flashrom, flashprog, linux, u-boot, openocd, openfpgaloader]
+    0x0b  READ_1_1_1_FAST  Fast read  [flashprog, linux, u-boot]
+    0x3b  READ_1_1_2       Dual output fast read  [flashprog, linux, u-boot]
+    0xbb  READ_1_2_2       Dual I/O fast read  [flashprog]
+    0x6b  READ_1_1_4       Quad output fast read  [flashprog, linux, u-boot]
+    0xeb  READ_1_4_4       Quad I/O fast read  [flashprog, openocd]
+    0x02  PP_1_1_1         Page program  [flashrom, flashprog, linux, u-boot, openocd, openfpgaloader]
+    0x32  PP_1_1_4         Quad input page program  [u-boot]
+    0x20  BE_4K            Erase a 4 KiB sector  [flashrom, flashprog, linux, u-boot, openfpgaloader]
+    ...
+```
+
+`-v` says why each source lists each one (`SPI_NOR_QUAD_READ`, `FEATURE_FAST_READ_QIO`,
+OpenOCD's `qread_cmd`, ...); `spiflash id --opcodes` adds the table to the usual
+description. See [Opcodes](#opcodes) for what the list does and does not promise.
+
 ```sh
 spiflash list --manufacturer winbond     # every Winbond id
 spiflash list --type nand
@@ -125,6 +148,40 @@ is everything any source claims, from this list:
 
 The upstream's own flags (`SPI_NOR_HAS_TB`, `FEATURE_WRSR2`, ...) are kept on
 each record's `flags` for anything this list does not capture.
+
+## Opcodes
+
+```python
+chip.supports("READ_1_1_4")              # True
+op = chip.opcodes["READ_1_4_4"]
+op.opcode, op.operation.description      # (235, 'Quad I/O fast read'): 0xeb
+op.because                               # (('flashprog', 'FEATURE_FAST_READ_QIO'), ('openocd', 'qread_cmd'))
+```
+
+Operations are named as LiteSPI's `SpiNorFlashOpCodes` names them (`READ_1_1_4`:
+command on 1 line, address on 1, data on 4; `_4B` for the 4-byte-address form),
+so a list can be used there directly; `spiflash.opcodes.OPERATIONS` has them all,
+with their kind (id, read, program, erase, register, mode) and description.
+
+Each source's list is what that source says, from what it says it:
+
+| source | where the opcodes come from |
+|---|---|
+| flashrom, flashprog | the probe, the `.read`/`.write` functions, each block eraser, and the feature bits (`FEATURE_FAST_READ_QIO`, `FEATURE_4BA_ENTER`, `FEATURE_QPI_38_FF`, ...) |
+| Linux | what `drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default, the `no_sfdp_flags` (dual/quad/octal read, 4 KiB erase), sector and chip erase, and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
+| U-Boot | the same from its `spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
+| OpenOCD | the table's own opcode columns: read, fastest read, page program, sector and chip erase |
+| openFPGALoader | what its `spiFlash.cpp` sends: read, page program, and the erases its table allows |
+
+The opcode values are read from each upstream's own headers (`SPINOR_OP_*`,
+`JEDEC_*`, `FLASH_*`) and checked against the table when the data is built.
+
+So a listed operation is one some source says the part has. An operation that
+is not listed may still be supported: no source here describes every opcode of
+every part, and parts that Linux reads from SFDP get their read, program and
+erase opcodes from the chip at run time, so Linux lists only its defaults for
+them. Parts sharing an id can differ too; `because` says who vouches for what.
+SPI NAND parts have no opcodes listed.
 
 ## Updating the data
 

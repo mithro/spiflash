@@ -9,7 +9,7 @@ import pytest
 
 import spiflash
 from spiflash import vendors
-from spiflash.db import Database
+from spiflash.db import FORMAT, Database
 from spiflash.model import Flash, Record, name_matches, parse_id, part_names, strip_continuation
 
 
@@ -31,7 +31,7 @@ def rec(**kw: object) -> Record:
         "features": [],
         "flags": [],
         "voltage": None,
-        "opcodes": None,
+        "opcodes": [],
         "tested": None,
         "notes": [],
     }
@@ -65,7 +65,7 @@ def test_every_source_is_present() -> None:
 def test_data_files_are_one_record_per_line() -> None:
     text = resources.files("spiflash").joinpath("data", "records.json").read_text()
     lines = text.splitlines()
-    assert lines[0] == '{"format": 1, "records": ['
+    assert lines[0] == f'{{"format": {FORMAT}, "records": ['
     assert lines[-1] == "]}"
     assert len(lines) - 2 == len(spiflash.records())
     json.loads(text)
@@ -294,3 +294,56 @@ def test_bad_format(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(db.json, "loads", lambda _text: {"format": 99})
     with pytest.raises(ValueError, match="unsupported format"):
         db.Database.load()
+
+
+# --- opcodes -----------------------------------------------------------------
+
+
+def test_opcodes_of_a_shipped_chip() -> None:
+    (f,) = spiflash.lookup("ef4018")
+    names = list(f.opcodes)
+    assert names[0] == "RDID"  # id first, then read, program, erase, ...
+    for op in ("READ_1_1_1", "READ_1_1_4", "PP_1_1_1", "BE_4K", "SE", "CHIP_ERASE"):
+        assert f.supports(op), op
+    assert not f.supports("READ_1_1_8")
+    se = f.opcodes["SE"]
+    assert se.opcode == 0xD8 and se.name == "SE" and se.operation.kind == "erase"
+    assert se.sources[0] == "flashrom"  # by source priority
+    assert ("openocd", "erase_cmd") in se.because
+    doc = f.to_json()["opcodes"]
+    assert {"op": "SE", "opcode": 0xD8, "kind": "erase",
+            "description": "Erase a sector (usually 64 KiB)"}.items() <= next(
+        o for o in doc if o["op"] == "SE").items()
+
+
+def test_every_record_opcode_matches_the_table() -> None:
+    from spiflash.opcodes import OPERATIONS
+
+    for r in spiflash.records():
+        for use in r.opcodes:
+            assert OPERATIONS[use.op].opcode == use.opcode, (r.source, r.name, use)
+            assert use.via, (r.source, r.name, use.op)
+
+
+def test_opcodes_merge_across_records() -> None:
+    db = Database([
+        rec(source="openocd", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "erase_cmd"}]),
+        rec(source="linux", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "default"},
+                                     {"op": "RDID", "opcode": 0x9F, "via": "id"}]),
+        rec(source="linux", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "default"}]),
+    ])
+    (f,) = db.flashes
+    assert list(f.opcodes) == ["RDID", "SE"]
+    assert f.opcodes["SE"].because == (("linux", "default"), ("openocd", "erase_cmd"))
+    assert f.opcodes["SE"].sources == ("linux", "openocd")
+
+
+def test_operations_table() -> None:
+    from spiflash import opcodes
+
+    assert opcodes.get("READ_1_1_4").opcode == 0x6B
+    with pytest.raises(KeyError):
+        opcodes.get("NOPE")
+    order = sorted(["SE", "READ_1_1_1", "RDID", "EN4B", "PP_1_1_1", "WRSR"], key=opcodes.sort_key)
+    assert order == ["RDID", "READ_1_1_1", "PP_1_1_1", "SE", "WRSR", "EN4B"]
+    assert {op.kind for op in opcodes.OPERATIONS.values()} == set(opcodes.KINDS)
