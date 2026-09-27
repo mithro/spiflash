@@ -54,6 +54,7 @@ tmp/
 # The Sphinx site's generated pages (docs/_ext/spiflash_pages.py) and build.
 /docs/chips/
 /docs/vendors/
+/docs/opcodes/
 /docs/_generated/
 /docs/_build/
 /docs/_autosummary/

@@ -5,13 +5,15 @@ At ``builder-inited`` this writes MyST pages into ``docs/vendors/`` and
 its parts, one page per chip id, and the index pages linking them. A page is
 only rewritten when its text changes, so incremental builds stay fast.
 
+It also writes a page per SPI operation into ``docs/opcodes/``
+(:mod:`opcode_pages`), with its WaveDrom timing diagram.
+
 The pages are Markdown, not raw HTML, so Sphinx's search indexes every part
 name and id.
 """
 
 from __future__ import annotations
 
-import re
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,8 +23,29 @@ from sphinx.util.docutils import SphinxRole
 from sphinx.util.nodes import split_explicit_title
 
 import spiflash
+from opcode_pages import generate_all as operation_pages
+from page_markup import (
+    EM_DASH,
+    FEATURE_TEXT,
+    HIGHLIGHTS,
+    KIND_TITLE,
+    TIMES,
+    badge,
+    chip_slug,
+    esc,
+    feature_badges,
+    list_table,
+    size_text,
+    slug,
+    source_badge,
+    source_label,
+    spaced,
+    title_of,
+    vendor_of,
+    volts,
+)
 from spiflash.cli import human_size
-from spiflash.enums import OperationKind, Source
+from spiflash.enums import OperationKind
 from spiflash.opcodes import OPERATIONS
 
 if TYPE_CHECKING:
@@ -30,145 +53,6 @@ if TYPE_CHECKING:
     from sphinx.config import Config
 
     from spiflash import Database, Flash
-
-EN_DASH = "\N{EN DASH}"
-EM_DASH = "\N{EM DASH}"
-TIMES = "\N{MULTIPLICATION SIGN}"
-
-
-def source_label(name: str) -> str:
-    """A source's name as its project writes it (``u-boot`` is U-Boot)."""
-    return Source(name).label if name in set(Source) else name
-
-
-# What each feature means, and the badge colour for its group.
-_FEATURE_TEXT = {
-    "erase_4k": ("4 KiB erase", "secondary"),
-    "erase_32k": ("32 KiB erase", "secondary"),
-    "erase_64k": ("64 KiB erase", "secondary"),
-    "sfdp": ("SFDP", "success"),
-    "fast_read": ("fast read", "info"),
-    "dual_read": ("dual read", "info"),
-    "quad_read": ("quad read", "info"),
-    "quad_pp": ("quad program", "info"),
-    "octal_read": ("octal read", "info"),
-    "octal_dtr_read": ("octal DTR read", "info"),
-    "octal_dtr_pp": ("octal DTR program", "info"),
-    "qpi": ("QPI", "info"),
-    "4byte_addr": ("4-byte address", "primary"),
-    "4byte_opcodes": ("4-byte opcodes", "primary"),
-    "otp": ("OTP", "success"),
-    "lock": ("block protection", "success"),
-    "rww": ("read-while-write", "success"),
-    "no_erase": ("no erase (FRAM/MRAM)", "warning"),
-}
-
-# The features worth a badge in the parts tables.
-_HIGHLIGHTS = frozenset({"dual_read", "quad_read", "octal_read", "qpi", "4byte_addr", "sfdp"})
-
-_KIND_TITLE = {
-    "id": "Identification",
-    "read": "Read",
-    "program": "Program",
-    "erase": "Erase",
-    "register": "Registers",
-    "mode": "Modes",
-}
-
-
-# --- small helpers -----------------------------------------------------------
-
-
-URL = re.compile(r"https?://[^\s<>]+")
-
-
-def trim_url(url: str) -> str:
-    """A URL matched by :data:`URL`, less what follows it in the prose:
-    trailing punctuation, and closing brackets it did not open
-    (``IS25LP(WP)256D.pdf`` keeps its brackets; ``(see https://x.org).``
-    loses ``).``)."""
-    url = url.rstrip(".,;:!?'\"")
-    while url.endswith(")") and url.count(")") > url.count("("):
-        url = url[:-1].rstrip(".,;:!?'\"")
-    return url
-
-
-def _escape_markup(text: str) -> str:
-    return re.sub(r"([\\`*_{}\[\]<>|#])", r"\\\1", text)
-
-
-def esc(text: str) -> str:
-    """Text safe to put in MyST: Markdown's inline markup escaped, and any
-    URL in it made a link (an autolink, ``<https://...>``)."""
-    out, pos = [], 0
-    for m in URL.finditer(text):
-        url = trim_url(m.group(0))
-        out += [_escape_markup(text[pos : m.start()]), f"<{url}>"]
-        pos = m.start() + len(url)
-    out.append(_escape_markup(text[pos:]))
-    return "".join(out)
-
-
-def slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "unknown"
-
-
-def chip_slug(f: Flash) -> str:
-    base = f.id_hex if f.family == "jedec" else f"{f.family}-{f.id_hex}"
-    return f"{base}-nand" if f.type == "nand" else base
-
-
-def spaced(hex_id: str) -> str:
-    return " ".join(hex_id[i : i + 2] for i in range(0, len(hex_id), 2))
-
-
-def vendor_of(f: Flash) -> str:
-    return f.manufacturer or "Unknown"
-
-
-def title_of(f: Flash) -> str:
-    names = [n for n in f.names if "." not in n][:3] or list(f.names[:3])
-    return " / ".join(names)
-
-
-def badge(text: str, colour: str = "secondary") -> str:
-    return f"{{bdg-{colour}}}`{esc(text)}`"
-
-
-def feature_badges(features: frozenset[str] | set[str]) -> str:
-    return " ".join(badge(*_FEATURE_TEXT[x]) for x in _FEATURE_TEXT if x in features)
-
-
-def volts(v: tuple[int, int] | None) -> str:
-    return f"{v[0] / 1000:g}{EN_DASH}{v[1] / 1000:g} V" if v else EM_DASH
-
-
-def size_text(n: int | None) -> str:
-    return human_size(n) if n else EM_DASH
-
-
-def list_table(
-    header: list[str], rows: list[list[str]], classes: str = "", widths: str | None = None
-) -> str:
-    """A MyST list-table."""
-    lines = [":::{list-table}", ":header-rows: 1"]
-    if classes:
-        lines.append(f":class: {classes}")
-    if widths:
-        lines.append(f":widths: {widths}")
-    lines.append("")
-    for row in [header, *rows]:
-        for i, cell in enumerate(row):
-            lines.append(("* - " if i == 0 else "  - ") + (cell if cell.strip() else " "))
-    lines.append(":::")
-    return "\n".join(lines)
-
-
-def source_badge(source: str) -> str:
-    return f"{{sfsrc}}`{source}`"
-
-
-# --- pages -------------------------------------------------------------------
 
 
 def chip_page(db: Database, f: Flash, vendor_slug: str) -> str:
@@ -242,10 +126,10 @@ def _capabilities(f: Flash) -> list[str]:
         return []
     rows = [
         [
-            _FEATURE_TEXT[feat][0],
+            FEATURE_TEXT[feat][0],
             " ".join(source_badge(s) for s in f.feature_sources(feat)),
         ]
-        for feat in _FEATURE_TEXT
+        for feat in FEATURE_TEXT
         if feat in f.features
     ]
     return [
@@ -269,7 +153,7 @@ def _opcodes(f: Flash) -> list[str]:
     rows = [
         [
             f"{{sfop}}`0x{o.opcode:02x}`",
-            f"`{o.name}`",
+            f"[`{o.name}`](../opcodes/{o.name}.md)",
             f"{{sfkind}}`{o.operation.kind}` {esc(o.operation.description)}",
         ]
         + ["{sfyes}`✓`" if s in o.sources else " " for s in srcs]
@@ -286,7 +170,7 @@ def _opcodes(f: Flash) -> list[str]:
     out.append(":::{dropdown} Why each source lists each opcode\n:class-container: sf-why\n")
     for o in f.opcodes.values():
         reasons = "; ".join(f"{source_label(s)}: {esc(via)}" for s, via in o.because)
-        out.append(f"- `{o.name}` (0x{o.opcode:02x}): {reasons}")
+        out.append(f"- [`{o.name}`](../opcodes/{o.name}.md) (0x{o.opcode:02x}): {reasons}")
     out.append(":::\n")
     return out
 
@@ -310,7 +194,7 @@ def _erase_layouts(f: Flash) -> list[str]:
                     source_badge(r.source),
                     esc(r.name),
                     f"{{sfop}}`0x{op:02x}`" if op is not None else esc(e.function or ""),
-                    f"`{opname}`" if opname else EM_DASH,
+                    f"[`{opname}`](../opcodes/{opname}.md)" if opname else EM_DASH,
                     blocks,
                 ]
             )
@@ -401,7 +285,7 @@ def parts_table(
             *([] if with_vendor else [size_text(f.page_size)]),
             size_text(f.sector_size),
             volts(f.voltage),
-            feature_badges(f.features & _HIGHLIGHTS),
+            feature_badges(f.features & HIGHLIGHTS),
             str(len(f.opcodes)),
             str(len(f.sources)),
         ]
@@ -503,14 +387,14 @@ def opcodes_table(flashes: list[Flash]) -> str:
         rows = [
             [
                 f"{{sfop}}`0x{op.opcode:02x}`",
-                f"`{op.name}`",
+                f"[`{op.name}`](opcodes/{op.name}.md)",
                 esc(op.description),
                 str(uses.get(op.name, 0)),
             ]
             for op in OPERATIONS.values()
             if op.kind == kind
         ]
-        out.append(f"### {_KIND_TITLE[kind]}\n")
+        out.append(f"### {KIND_TITLE[kind]}\n")
         out.append(
             list_table(
                 ["Opcode", "Operation", "Description", "Chips"], rows, "sf-table", "10 25 50 15"
@@ -583,7 +467,7 @@ def generate(srcdir: Path) -> None:
         msg = "two chips share a page name"
         raise ValueError(msg)
 
-    chips_dir, vendors_dir = srcdir / "chips", srcdir / "vendors"
+    chips_dir, vendors_dir, ops_dir = srcdir / "chips", srcdir / "vendors", srcdir / "opcodes"
     wanted: set[Path] = set()
 
     def page(path: Path, text: str) -> None:
@@ -596,13 +480,15 @@ def generate(srcdir: Path) -> None:
             page(chips_dir / f"{slugs[id(f)]}.md", chip_page(db, f, vslug[v]))
     page(vendors_dir / "index.md", vendors_index(vendors, vslug))
     page(chips_dir / "index.md", chips_index(list(db.flashes), slugs))
+    for name, text in operation_pages(db).items():
+        page(ops_dir / name, text)
     # Fragments the hand-written pages include (docs/_generated is excluded
     # from the build as pages of its own).
     _write(srcdir / "_generated" / "opcodes-table.md", opcodes_table(list(db.flashes)))
     _write(srcdir / "_generated" / "sources-table.md", sources_table(db))
     _write(srcdir / "_generated" / "files-read.md", files_read_table(db))
     # A chip id that left the database leaves no stale page behind.
-    for d in (chips_dir, vendors_dir):
+    for d in (chips_dir, vendors_dir, ops_dir):
         for old in d.glob("*.md"):
             if old not in wanted:
                 old.unlink()

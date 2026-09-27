@@ -19,7 +19,7 @@ from pathlib import Path
 # What counts as a URL is the page generator's own definition.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "_ext"))
 
-from spiflash_pages import URL, trim_url
+from page_markup import URL, trim_url
 
 # Text inside these is exempt: it is already a link, or it is code or markup
 # meant to be copied, not followed.

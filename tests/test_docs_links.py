@@ -7,7 +7,8 @@ import pytest
 
 import spiflash
 from check_links import bare_urls
-from spiflash_pages import esc, repo_url, trim_url, upstream_url
+from page_markup import esc, trim_url
+from spiflash_pages import repo_url, upstream_url
 
 
 @pytest.mark.parametrize(

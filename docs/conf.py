@@ -31,8 +31,14 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
+    "sphinxcontrib.wavedrom",
     "spiflash_pages",
 ]
+
+# Render the opcode pages' timing diagrams to SVG at build time, so the site
+# needs no JavaScript to show them.
+render_using_wavedrompy = True
+wavedrom_html_jsinline = False
 
 source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
 exclude_patterns = ["_build", "_generated", "superpowers", "Thumbs.db", ".DS_Store"]

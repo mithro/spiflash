@@ -170,3 +170,14 @@ table.sf-parts.sf-with-vendor td:nth-child(8) { white-space: normal; min-width: 
 table.sf-sources td { white-space: nowrap; }
 
 table.sf-parts { font-size: 0.86em; }
+
+/* Timing diagrams: WaveDrom SVGs, drawn black on transparent. A white card
+   keeps them readable in dark mode; wide ones shrink to the column. */
+img[src*="wavedrom-"] {
+  background: #fff;
+  border: 1px solid var(--sf-border);
+  border-radius: 0.4em;
+  padding: 0.5em;
+  max-width: 100%;
+  height: auto;
+}
