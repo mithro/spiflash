@@ -217,6 +217,13 @@ FLASH_H = fixture("flashrom/include/flash.h")
 
 FLASHROM_SPI_H = fixture("flashrom/include/spi.h")
 
+# The headers every flashrom and flashprog tree needs.
+FLASHROM_HEADERS = {
+    flashrom.HEADER: FLASHROM_H,
+    flashrom.FLASH_H: FLASH_H,
+    flashrom.SPI_H: FLASHROM_SPI_H,
+}
+
 FLASHROM_EON = fixture("flashrom/flashchips/eon.c")
 
 FLASHPROG_C = fixture("flashprog/flashchips.c")
@@ -226,9 +233,7 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
     write(
         tmp_path,
         {
-            flashrom.HEADER: FLASHROM_H,
-            flashrom.FLASH_H: FLASH_H,
-            flashrom.SPI_H: FLASHROM_SPI_H,
+            **FLASHROM_HEADERS,
             "flashchips/eon.c": FLASHROM_EON,
             "flashchips.c": '#include "flashchips/eon.c"',
         },
@@ -298,9 +303,7 @@ def test_flashprog_single_file(tmp_path: Path) -> None:
     write(
         tmp_path,
         {
-            flashrom.HEADER: FLASHROM_H,
-            flashrom.FLASH_H: FLASH_H,
-            flashrom.SPI_H: FLASHROM_SPI_H,
+            **FLASHROM_HEADERS,
             "flashchips.c": FLASHPROG_C,
         },
     )
@@ -312,16 +315,25 @@ def test_flashprog_single_file(tmp_path: Path) -> None:
 
 
 def test_flashrom_errors(tmp_path: Path) -> None:
-    write(
-        tmp_path,
-        {flashrom.HEADER: FLASHROM_H, flashrom.FLASH_H: FLASH_H, flashrom.SPI_H: FLASHROM_SPI_H},
-    )
+    write(tmp_path, FLASHROM_HEADERS)
     write(tmp_path, {"flashchips.c": "int nothing;"})
     with pytest.raises(ValueError, match=r"no flashchips\[\]"):
         flashrom.extract(tmp_path, "flashprog")
     bad = FLASHPROG_C.replace("ID_SPI_RDID", "ID_SOMETHING_NEW")
     write(tmp_path, {"flashchips.c": bad})
     with pytest.raises(ValueError, match="unknown probe 'SOMETHING_NEW'"):
+        flashrom.extract(tmp_path, "flashprog")
+
+
+def test_flashrom_erase_opcode_without_an_operation(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            **FLASHROM_HEADERS,
+            "flashchips.c": FLASHPROG_C.replace("spi_block_erase_d8", "spi_block_erase_99"),
+        },
+    )
+    with pytest.raises(ValueError, match="no operation for erase opcode 0x99"):
         flashrom.extract(tmp_path, "flashprog")
 
 
@@ -455,17 +467,3 @@ def test_opcodes_checks_values_against_the_table() -> None:
     o.discard("READ_1_1_1")
     o.discard("READ_1_1_1")
     assert o.to_json() == []
-
-
-def test_flashrom_erase_opcode_without_an_operation(tmp_path: Path) -> None:
-    write(
-        tmp_path,
-        {
-            flashrom.HEADER: FLASHROM_H,
-            flashrom.FLASH_H: FLASH_H,
-            flashrom.SPI_H: FLASHROM_SPI_H,
-            "flashchips.c": FLASHPROG_C.replace("spi_block_erase_d8", "spi_block_erase_99"),
-        },
-    )
-    with pytest.raises(ValueError, match="no operation for erase opcode 0x99"):
-        flashrom.extract(tmp_path, "flashprog")

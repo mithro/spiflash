@@ -102,7 +102,8 @@ def _resolve(db: Database, query: str) -> list[Flash]:
     return found or db.find(query)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _parser() -> argparse.ArgumentParser:
+    """The command line: one subcommand per question, sharing --json, -v and --opcodes."""
     ap = argparse.ArgumentParser(
         prog="spiflash",
         description="Look up SPI flash chips by JEDEC id or part name.",
@@ -135,8 +136,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("id", help="the id byte in hex, with any 7f continuation codes before it")
 
     sub.add_parser("sources", help="where the data came from")
+    return ap
 
-    args = ap.parse_args(argv)
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
     db = database()
     try:
         if args.command == "id":

@@ -56,16 +56,15 @@ def split_id(data: list[int]) -> tuple[str, str | None]:
     while n < len(data) and data[n] == 0x7F:
         n += 1
     head, ext = data[: n + 3], data[n + 3 :]
-    return "".join(f"{b:02x}" for b in head), ("".join(f"{b:02x}" for b in ext) or None)
+    return bytes(head).hex(), bytes(ext).hex() or None
 
 
 def _manufacturers(text: str) -> dict[str, str]:
     """``parts array name -> manufacturer name`` from the file's
     ``struct spi_nor_manufacturer`` initialisers."""
     out = {}
-    for m in re.finditer(r"struct\s+spi_nor_manufacturer\s+\w+\s*=\s*\{", text):
-        start = m.end() - 1
-        fields = cparse.designated(text[start + 1 : cparse.matching(text, start)])
+    for _, init in cparse.initialisers(text, r"struct\s+spi_nor_manufacturer\s+\w+"):
+        fields = cparse.designated(init.body)
         if "parts" in fields and "name" in fields:
             out[fields["parts"].strip()] = cparse.c_string(fields["name"])
     return out
@@ -93,14 +92,12 @@ def extract_nor(root: Path) -> list[Record]:
         if path.name in _NOT_TABLES:
             continue
         raw = path.read_text()
-        text = cparse.drop_preprocessor(cparse.strip_comments(raw))
-        local = {**symbols, **cparse.defines(cparse.strip_comments(raw))}
+        stripped = cparse.strip_comments(raw)
+        text = cparse.drop_preprocessor(stripped)
+        local = {**symbols, **cparse.defines(stripped)}
         vendors = _manufacturers(text)
         rel = f"{NOR_DIR}/{path.name}"
-        for m in re.finditer(r"struct\s+flash_info\s+(\w+)\s*\[\s*\]\s*=\s*\{", text):
-            start = m.end() - 1
-            end = cparse.matching(text, start)
-            table = cparse.Block(text[start + 1 : end], start + 1)
+        for m, table in cparse.initialisers(text, r"struct\s+flash_info\s+(\w+)\s*\[\s*\]"):
             vendor = vendors.get(m.group(1))
             for entry in cparse.braced_items(table.body, table.offset):
                 rec = _nor_record(entry, raw, rel, vendor, local)
@@ -166,7 +163,7 @@ def _nor_record(
         size=size,
         page_size=page,
         sector_size=sector,
-        features=sorted(features),
+        features=features,
         flags=flags,
         opcodes=opcodes,
         notes=notes,
@@ -241,15 +238,14 @@ def extract_nand(root: Path) -> list[Record]:
         text = cparse.drop_preprocessor(stripped)
         rel = f"{NAND_DIR}/{path.name}"
         vendor = None
-        mm = re.search(r"struct\s+spinand_manufacturer\s+\w+\s*=\s*\{", text)
         mfr_id = None
-        if mm:
-            start = mm.end() - 1
-            fields = cparse.designated(text[start + 1 : cparse.matching(text, start)])
+        for _, init in cparse.initialisers(text, r"struct\s+spinand_manufacturer\s+\w+"):
+            fields = cparse.designated(init.body)
             if "name" in fields:
                 vendor = cparse.c_string(fields["name"])
             if "id" in fields:
                 mfr_id = cparse.evaluate(fields["id"], symbols)
+            break  # one manufacturer per file
         for m in re.finditer(r"\bSPINAND_INFO\s*\(", text):
             start = m.end() - 1
             end = cparse.matching(text, start)
@@ -278,7 +274,7 @@ def extract_nand(root: Path) -> list[Record]:
                     name,
                     type="nand",
                     vendor=vendor,
-                    id="".join(f"{b:02x}" for b in [mfr_id, *dev]),
+                    id=bytes([mfr_id, *dev]).hex(),
                     id_method=f"rdid_{method}",
                     size=page * ppb * bpl * luns * targets,
                     page_size=page,

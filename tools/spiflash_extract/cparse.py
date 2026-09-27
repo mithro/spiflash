@@ -21,10 +21,14 @@ _COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
 _STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"')
 
 
-def _blank(match: re.Match[str]) -> str:
+_STRING_OR_COMMENT = re.compile(f"{_STRING.pattern}|{_COMMENT.pattern}", re.DOTALL)
+
+
+def _blank_comment(match: re.Match[str]) -> str:
     """A comment's replacement: spaces, keeping its newlines so offsets and
-    line numbers survive."""
-    return re.sub(r"[^\n]", " ", match.group(0))
+    line numbers survive. A string literal is returned unchanged."""
+    tok = match.group(0)
+    return tok if tok.startswith('"') else re.sub(r"[^\n]", " ", tok)
 
 
 def strip_comments(text: str) -> str:
@@ -32,15 +36,7 @@ def strip_comments(text: str) -> str:
 
     String literals are protected first, so a ``//`` inside a URL in a string
     is not taken for a comment."""
-    out = []
-    pos = 0
-    for m in re.finditer(r'"(?:[^"\\\n]|\\.)*"|/\*.*?\*/|//[^\n]*', text, re.DOTALL):
-        out.append(text[pos : m.start()])
-        tok = m.group(0)
-        out.append(tok if tok.startswith('"') else _blank(m))
-        pos = m.end()
-    out.append(text[pos:])
-    return "".join(out)
+    return _STRING_OR_COMMENT.sub(_blank_comment, text)
 
 
 def comments(text: str) -> list[str]:
@@ -142,15 +138,18 @@ def braced_items(text: str, offset: int = 0) -> Iterator[Block]:
         i = end + 1
 
 
+def initialisers(text: str, declaration: str) -> Iterator[tuple[re.Match[str], Block]]:
+    """Every ``declaration = { ... }`` in ``text``: the match of ``declaration``
+    (for its groups) and the initialiser's contents."""
+    for m in re.finditer(declaration + r"\s*=\s*\{", text):
+        start = m.end() - 1
+        yield m, Block(text[start + 1 : matching(text, start)], start + 1)
+
+
 def array_body(text: str, declaration: str) -> Block | None:
     """The contents of the array initialiser whose declaration matches the
     regular expression ``declaration`` (up to, not including, its ``=``)."""
-    m = re.search(declaration + r"\s*=\s*\{", text)
-    if m is None:
-        return None
-    start = m.end() - 1
-    end = matching(text, start)
-    return Block(text[start + 1 : end], start + 1)
+    return next((body for _, body in initialisers(text, declaration)), None)
 
 
 def designated(body: str) -> dict[str, str]:

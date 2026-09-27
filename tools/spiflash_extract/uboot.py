@@ -98,20 +98,18 @@ def _record(
         ext = f"{ext_val:0{2 * ext_bytes}x}" if ext_val else None
         break
     else:
-        args = cparse.macro_call(body, "INFO_NAME")
-        if args is None:
-            return None
-        name = cparse.c_string(args[0])
-        # INFO_NAME(...) is followed by designated fields with no comma.
         m = re.search(r"\bINFO_NAME\s*\(", body)
-        assert m is not None
-        rest = body[cparse.matching(body, m.end() - 1) + 1 :]
-        fields = cparse.designated(rest)
+        if m is None:
+            return None
+        end = cparse.matching(body, m.end() - 1)
+        name = cparse.c_string(body[m.end() : end])
+        # INFO_NAME(...) is followed by designated fields with no comma.
+        fields = cparse.designated(body[end + 1 :])
         if "id" in fields:
             id_bytes = cparse.split_top(fields["id"].strip("{} "))
             data = [cparse.evaluate(b, symbols) for b in id_bytes]
             n = cparse.evaluate(fields.get("id_len", str(len(data))), symbols)
-            id_hex = "".join(f"{b:02x}" for b in data[:n]) or None
+            id_hex = bytes(data[:n]).hex() or None
         sector = cparse.evaluate(fields.get("sector_size", "0"), symbols) or None
         n_sectors = cparse.evaluate(fields.get("n_sectors", "0"), symbols)
         size = sector * n_sectors if sector and n_sectors else None
@@ -137,7 +135,7 @@ def _record(
         size=size,
         page_size=page,
         sector_size=sector,
-        features=sorted(features),
+        features=features,
         flags=flags,
         opcodes=_opcodes(flags, symbols, features, has_id=id_hex is not None),
         notes=notes,

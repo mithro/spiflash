@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import cparse
 from .ops import ERASE_BY_OPCODE, Opcodes
-from .record import Record, make
+from .record import ERASE_FEATURES, Record, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,8 +71,6 @@ _FEATURES = [
     (re.compile(r"FEATURE_OTP"), "otp"),
     (re.compile(r"FEATURE_NO_ERASE"), "no_erase"),
 ]
-
-_ERASE_FEATURE = {4096: "erase_4k", 32 * 1024: "erase_32k", 64 * 1024: "erase_64k"}
 
 _SKIP_IDS = {"GENERIC_MANUF_ID", "PROGMANUF_ID", "GENERIC_DEVICE_ID", "SFDP_DEVICE_ID"}
 
@@ -118,9 +116,27 @@ def extract(root: Path, source: str) -> list[Record]:
     return records
 
 
-def _hex_bytes(value: int, min_bytes: int = 1) -> str:
-    n = max(min_bytes, (value.bit_length() + 7) // 8)
+def _hex_bytes(value: int) -> str:
+    """``value`` as hex, in as few whole bytes as hold it."""
+    n = max(1, (value.bit_length() + 7) // 8)
     return f"{value:0{2 * n}x}"
+
+
+def _id_bytes(method: str | None, mfr: int, model: int) -> tuple[str | None, str | None]:
+    """The id and extended id a chip answers, read the way its probe reads them."""
+    if method is None:
+        return None, None  # no probe: a part with no id command (the M95320 EEPROM)
+    if method == "res1":
+        # RES (0xab) answers the one-byte electronic signature and nothing
+        # else; flashrom gives these parts a manufacturer id of 0.
+        return _hex_bytes(model), None
+    if method != "rdid":
+        return _hex_bytes(mfr) + _hex_bytes(model), None
+    if model > 0xFFFF:
+        # PROBE_SPI_BIG_SPANSION: RDID bytes 1-2 are the device id, and
+        # bytes 4-5 (skipping 3, the id length) the extended id.
+        return _hex_bytes(mfr) + f"{model >> 16:04x}", f"{model & 0xFFFF:04x}"
+    return _hex_bytes(mfr) + f"{model:04x}", None
 
 
 def _erasers(expr: str, symbols: dict[str, str | int]) -> list[dict[str, Any]]:
@@ -173,30 +189,14 @@ def _record(
 
     mfr = cparse.evaluate(mfr_sym, symbols)
     model = cparse.evaluate(model_sym, symbols)
-    ext = None
-    id_hex: str | None
-    if method is None:
-        id_hex = None  # no probe: a part with no id command (the M95320 EEPROM)
-    elif method == "rdid":
-        if model > 0xFFFF:
-            # PROBE_SPI_BIG_SPANSION: RDID bytes 1-2 are the device id, and
-            # bytes 4-5 (skipping 3, the id length) the extended id.
-            ext = f"{model & 0xFFFF:04x}"
-            model >>= 16
-        id_hex = _hex_bytes(mfr) + f"{model:04x}"
-    elif method == "res1":
-        # RES (0xab) answers the one-byte electronic signature and nothing
-        # else; flashrom gives these parts a manufacturer id of 0.
-        id_hex = _hex_bytes(model)
-    else:
-        id_hex = _hex_bytes(mfr) + _hex_bytes(model)
+    id_hex, ext = _id_bytes(method, mfr, model)
 
     flags = cparse.bit_names(f.get("feature_bits", "0"), symbols, "FEATURE_")
     features = {feat for flag in flags for rx, feat in _FEATURES if rx.fullmatch(flag)}
     erasers = _erasers(f.get("block_erasers", "{}"), symbols)
     for e in erasers:
         if len(e["blocks"]) == 1 and e["opcode"] is not None:
-            feat = _ERASE_FEATURE.get(e["blocks"][0][0])
+            feat = ERASE_FEATURES.get(e["blocks"][0][0])
             if feat:
                 features.add(feat)
     if any(re.search(r"supports SFDP", n, re.IGNORECASE) for n in notes):
@@ -226,7 +226,7 @@ def _record(
         page_size=cparse.evaluate(f["page_size"], symbols) if "page_size" in f else None,
         sector_size=uniform[0] if uniform else None,
         erasers=erasers or None,
-        features=sorted(features),
+        features=features,
         flags=flags,
         voltage=voltage,
         tested=tested,
