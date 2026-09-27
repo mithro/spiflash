@@ -80,9 +80,34 @@ _KIND_TITLE = {
 # --- small helpers -----------------------------------------------------------
 
 
-def esc(text: str) -> str:
-    """Text safe to put in MyST: Markdown's inline markup escaped."""
+URL = re.compile(r"https?://[^\s<>]+")
+
+
+def trim_url(url: str) -> str:
+    """A URL matched by :data:`URL`, less what follows it in the prose:
+    trailing punctuation, and closing brackets it did not open
+    (``IS25LP(WP)256D.pdf`` keeps its brackets; ``(see https://x.org).``
+    loses ``).``)."""
+    url = url.rstrip(".,;:!?'\"")
+    while url.endswith(")") and url.count(")") > url.count("("):
+        url = url[:-1].rstrip(".,;:!?'\"")
+    return url
+
+
+def _escape_markup(text: str) -> str:
     return re.sub(r"([\\`*_{}\[\]<>|#])", r"\\\1", text)
+
+
+def esc(text: str) -> str:
+    """Text safe to put in MyST: Markdown's inline markup escaped, and any
+    URL in it made a link (an autolink, ``<https://...>``)."""
+    out, pos = [], 0
+    for m in URL.finditer(text):
+        url = trim_url(m.group(0))
+        out += [_escape_markup(text[pos : m.start()]), f"<{url}>"]
+        pos = m.start() + len(url)
+    out.append(_escape_markup(text[pos:]))
+    return "".join(out)
 
 
 def slug(text: str) -> str:

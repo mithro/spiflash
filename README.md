@@ -21,7 +21,7 @@ from, and where the sources disagree (60 ids do) both answers are kept.
 `spiflash sources` (or `spiflash.sources()`) names the exact upstream commits
 the shipped data was extracted from.
 
-Browse it at **https://spiflash.readthedocs.io/**: a page per vendor with a
+Browse it at **<https://spiflash.readthedocs.io/>**: a page per vendor with a
 table of all its parts, and a page per chip.
 
 <!-- usage-start: docs/usage.md includes from here -->
@@ -33,7 +33,7 @@ pip install spiflash          # or: uv tool install spiflash
 ```
 
 It has no dependencies. Or, as a Debian package, from the signed apt
-repository at https://mith.ro/spiflash/. There is one per suite (bookworm,
+repository at <https://mith.ro/spiflash/>. There is one per suite (bookworm,
 trixie, forky and sid), and the package is `Architecture: all`, so it installs
 on any architecture. Put your suite's name in place of `trixie` below
 (Raspberry Pi OS uses Debian's codenames):

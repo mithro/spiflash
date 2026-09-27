@@ -39,7 +39,7 @@ after it `X.Y.postN`. Never move or delete a tag that has been published from.
 
 ### 1. PyPI trusted publishing (OIDC)
 
-1. On https://pypi.org/manage/account/publishing/, add a **pending
+1. On <https://pypi.org/manage/account/publishing/>, add a **pending
    publisher** (the first upload creates the project):
    - PyPI project name: `spiflash`
    - Owner: `mithro`
@@ -78,6 +78,6 @@ environment limited to deployments from `main`.
 
 ## Verifying a release
 
-- PyPI: https://pypi.org/project/spiflash/ shows the new `X.Y.postN`.
+- PyPI: <https://pypi.org/project/spiflash/> shows the new `X.Y.postN`.
 - apt: `sudo apt update && apt-cache policy python3-spiflash` on a machine set
-  up per https://mith.ro/spiflash/ shows the same version.
+  up per <https://mith.ro/spiflash/> shows the same version.

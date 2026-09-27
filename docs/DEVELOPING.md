@@ -7,7 +7,7 @@ versions reach PyPI and apt, see
 
 ## The documentation site
 
-https://spiflash.readthedocs.io/ is built from `docs/` by Sphinx (Furo theme,
+<https://spiflash.readthedocs.io/> is built from `docs/` by Sphinx (Furo theme,
 MyST Markdown). The vendor and chip pages are not in git:
 `docs/_ext/spiflash_pages.py` writes them from the installed package's data
 at the start of every build, so the site always matches the release.
