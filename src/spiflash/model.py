@@ -157,11 +157,14 @@ def part_names(name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(out))
 
 
-def name_matches(pattern: str, query: str) -> bool:
+def name_matches(pattern: str, query: str, *, prefix: bool = False) -> bool:
     """Whether part name ``pattern`` (with flashrom's ``.`` wildcards) is the
-    part ``query``, ignoring case."""
+    part ``query``, ignoring case. With ``prefix``, ``query`` may run on past
+    the pattern, as an order code does (``S25FL128S......0`` covers
+    ``S25FL128SAGMFI001``: the extra characters are package and grade)."""
     rx = "".join("." if c == "." else re.escape(c) for c in pattern.upper())
-    return re.fullmatch(rx, query.upper()) is not None
+    match = re.match if prefix else re.fullmatch
+    return match(rx, query.upper()) is not None
 
 
 def _consensus(values: Iterable[tuple[T | None, str]]) -> T | None:

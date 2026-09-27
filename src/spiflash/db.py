@@ -126,7 +126,7 @@ class Database:
                     rank = 0
                 elif part.startswith(q):
                     rank = 1
-                elif q.startswith(part) and len(part) >= 4:
+                elif len(part) >= 4 and name_matches(part, q, prefix=True):
                     rank = 2
                 else:
                     continue
