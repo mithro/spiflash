@@ -1,0 +1,67 @@
+name: Upstream flash tables
+
+# Two questions about src/spiflash/data/, both needing the network:
+#
+# 1. "pinned": is the committed data exactly what the commits pinned in
+#    tools/sources.toml produce? A hand edit, or an extractor change committed
+#    without regenerating, fails here.
+# 2. "latest": have the upstreams (Linux, U-Boot, flashrom, flashprog, OpenOCD,
+#    openFPGALoader) changed their flash tables since? Weekly, since that is
+#    when drift arrives. A red run means: `uv run tools/update_db.py --latest`,
+#    review the diff of the data, commit.
+#
+# Deliberately NOT part of deb.yml. That workflow going green on main is what
+# publishes to PyPI and apt, and a release should not wait on
+# review.sourcearcade.org or github.com having a bad afternoon, nor on a
+# kernel commit that touched a flash table.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/spiflash/data/**"
+      - "tools/**"
+      - ".github/workflows/upstream.yml"
+  pull_request:
+    paths:
+      - "src/spiflash/data/**"
+      - "tools/**"
+      - ".github/workflows/upstream.yml"
+  schedule:
+    - cron: "23 5 * * 1"       # Mondays, 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Is the committed data what the pinned upstream commits give?
+        run: uv run --no-project tools/update_db.py --check
+
+  latest:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Have the upstream flash tables changed?
+        run: uv run --no-project tools/update_db.py --latest --check
+      - name: What to do when this fails
+        if: failure()
+        run: |
+          echo "::error::An upstream flash table changed (or its format did)."
+          echo "Run \`uv run tools/update_db.py --latest\`, check the diff of"
+          echo "src/spiflash/data/, and commit it with tools/sources.toml."
+          echo "If an extractor raised instead, the upstream changed its format:"
+          echo "fix the extractor in tools/spiflash_extract/ and add a test."

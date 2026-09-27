@@ -1,0 +1,148 @@
+name: Debian packages
+
+# Rolling release: every push to main tests, builds python3-spiflash for each
+# suite, and republishes a signed flat apt repository per suite on GitHub
+# Pages (https://mith.ro/spiflash/<suite>/) through mithro/apt-repo-action.
+# The package is Architecture: all (pure Python), so one build per suite
+# serves every architecture. A pull request runs the same tests and builds,
+# and publishes nothing.
+#
+# A green run of this workflow on main is also what publishes to PyPI:
+# publish-pypi.yml is triggered by it completing (workflow_run), so renaming
+# this workflow breaks that trigger.
+#
+# This follows mithro/apt-repo-action's docs/packaging.md; the differences
+# from its defaults are declared in .github/apt-packaging.toml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deb-${{ github.ref }}
+  # A newer push to a pull request cancels the older build. On the default
+  # branch a running publish is never cancelled: the newest push waits for it,
+  # and replaces any older push still waiting (it contains that one's commits).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The same gates as local development (ruff, mypy --strict, pytest with
+  # coverage), across the supported Pythons. Whether the data matches the
+  # upstreams is upstream.yml's job: it needs the network.
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # full history so hatch-vcs can derive the version
+
+      # The build generates debian/changelog: apt-repo-action's shared
+      # scripts/deb-version.py writes the build's entry, with the version
+      # derived from git. Committing a build's output would pin a stale
+      # version (and name a commit that may not exist), so it must not be
+      # tracked.
+      - name: debian/changelog is not committed
+        run: |
+          git rev-parse --is-inside-work-tree
+          if git ls-files --error-unmatch debian/changelog; then
+            echo "::error file=debian/changelog::debian/changelog is committed, but the build generates it: git rm it"
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install the matrix Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync the dev group
+        run: uv sync --dev --python ${{ matrix.python-version }}
+
+      - name: Lint (ruff)
+        run: uv run ruff check
+
+      - name: Type-check (mypy --strict)
+        run: uv run mypy
+
+      - name: Tests + coverage gate
+        run: uv run pytest
+
+  build-deb:
+    name: build-deb (${{ matrix.suite }} ${{ matrix.arch }})
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [bookworm, trixie, forky, sid]
+        arch: [all]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # full history + tags: the version is git describe's
+
+      # The shared build: debian:<suite>, build deps from debian/control, and
+      # the version from the shared deb-version.py (with ~deb<R>, and ~pr<P>
+      # on a pull request). Writes the .debs to built-debs/.
+      - name: Build
+        id: build
+        uses: mithro/apt-repo-action/build-deb@main
+        with:
+          suite: ${{ matrix.suite }}
+          arch: ${{ matrix.arch }}
+
+      # Install what was just built into a clean container of the same suite,
+      # with its dependencies from the Debian archive, and run it.
+      - name: Install test
+        env:
+          SUITE: ${{ matrix.suite }}
+          APT_SOURCES: ${{ steps.build.outputs.apt-sources }}
+        run: |
+          docker run --rm \
+            -v "$APT_SOURCES:/apt-sources:ro" \
+            -v "${PWD}/built-debs:/debs:ro" \
+            -v "${PWD}/packaging:/packaging:ro" \
+            "docker.io/library/debian:$SUITE" \
+            sh -ec 'sh /apt-sources/install.sh
+                    apt-get update -q
+                    apt-get install -y -q --no-install-recommends /debs/*.deb
+                    sh /packaging/install-test.sh'
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: debs-${{ matrix.suite }}-${{ matrix.arch }}
+          path: built-debs/*.deb
+          retention-days: 14
+
+  publish-apt:
+    # Build and install-test pull requests, but never publish from one (or
+    # from any branch but main): that would overwrite the live repository
+    # with unreviewed packages.
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    needs: build-deb
+    # Scoped to this job alone. A job calling a reusable workflow sets the
+    # maximum permissions available to it, so the elevated Pages scopes stay
+    # here rather than applying to the whole workflow.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@main
+    with:
+      suites: "bookworm trixie forky sid"
+      # Pure Python: one Architecture: all deb serves every architecture.
+      architectures: "all"
+      description: "spiflash: a database of SPI flash chips"
+    secrets:
+      gpg-private-key: ${{ secrets.APT_GPG_PRIVATE_KEY }}
