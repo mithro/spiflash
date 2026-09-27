@@ -1,4 +1,4 @@
-"""openFPGALoader: ``src/spiFlashdb.hpp``.
+"""openFPGALoader: :upstream:`openfpgaloader:src/spiFlashdb.hpp`.
 
 A C++ ``std::map<uint32_t, flash_t>`` keyed by the three RDID bytes::
 

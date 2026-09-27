@@ -1,0 +1,7 @@
+{#- Furo's "view this page" button, except on the pages the build generates
+    (docs/_ext/spiflash_pages.py and autosummary), which have no source in git
+    to view: the button would lead to a 404. -#}
+{% extends "!components/view-this-page.html" %}
+{%- set generated = pagename.startswith(("chips/", "vendors/", "opcodes/", "_autosummary/")) -%}
+{% block link_available -%}{% if not generated %}{{ super() }}{% endif %}{%- endblock %}
+{% block link_not_available -%}{% if not generated %}{{ super() }}{% endif %}{%- endblock %}

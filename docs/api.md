@@ -18,7 +18,7 @@ types (`Record` is one upstream entry, `Flash` everything known about one
 chip id), `spiflash.opcodes` the named SPI operations, `spiflash.vendors` the
 vendor spellings, and `spiflash.cli` the `spiflash` command.
 
-The extraction tools, `spiflash_extract` (in `tools/`, shipped in the sdist,
+The extraction tools, `spiflash_extract` (in {repo}`tools/`, shipped in the sdist,
 not the wheel), are documented too: they are how the data is built, and what
 to read when an upstream changes its format.
 

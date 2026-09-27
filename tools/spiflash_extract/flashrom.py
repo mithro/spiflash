@@ -1,7 +1,8 @@
 """flashrom and flashprog: ``struct flashchip`` initialisers.
 
-flashrom keeps one file per vendor under ``flashchips/``; its fork flashprog
-still has the single ``flashchips.c``. The entries look alike::
+flashrom keeps one file per vendor under :upstream:`flashrom:flashchips/`; its
+fork flashprog still has the single :upstream:`flashprog:flashchips.c`. The
+entries look alike::
 
     {
         .vendor         = "Winbond",
@@ -20,7 +21,7 @@ still has the single ``flashchips.c``. The entries look alike::
         .voltage        = {2700, 3600},
     },
 
-The ids are ``#define``\\ d in ``include/flashchips.h``, where a manufacturer
+The ids are ``#define``\\ d in :upstream:`flashrom:include/flashchips.h`, where a manufacturer
 in a later JEP106 bank carries its 0x7f continuation codes (``EON_ID
 0x7F1C``) and has a ``_NOPREFIX`` twin for chips that leave them out. Names
 use ``.`` as a wildcard (``W25Q128.V`` is the BV, FV and JV).

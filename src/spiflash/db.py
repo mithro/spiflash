@@ -27,7 +27,7 @@ class Manufacturer:
     name: str
 
 
-#: The data files' format; tools/update_db.py writes the same number.
+#: The data files' format; :repo:`tools/update_db.py` writes the same number.
 #: 2: records' ``opcodes`` became a list of {op, opcode, via}.
 FORMAT = 2
 

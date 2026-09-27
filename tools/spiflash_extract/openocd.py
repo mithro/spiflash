@@ -1,5 +1,5 @@
-"""OpenOCD: ``src/flash/nor/spi.c`` (the shared SPI flash table) and
-``src/helper/jep106.inc`` (the JEP106 manufacturer list).
+"""OpenOCD: :upstream:`openocd:src/flash/nor/spi.c` (the shared SPI flash table)
+and :upstream:`openocd:src/helper/jep106.inc` (the JEP106 manufacturer list).
 
 ``FLASH_ID(name, read_cmd, qread_cmd, pprog_cmd, erase_cmd, chip_erase_cmd,
 device_id, pagesize, sectorsize, size)`` and, for FRAM, ``FRAM_ID(name,

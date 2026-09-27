@@ -5,8 +5,9 @@ Names follow LiteSPI's ``SpiNorFlashOpCodes`` (``READ_1_1_4``, ``PP_1_1_1_4B``,
 number of data lines for command, address and data; ``_4B`` is the variant
 taking a 4-byte address; ``D`` marks double transfer rate.
 
-The opcode values are the ones in Linux's ``include/linux/mtd/spi-nor.h``
-(``SPINOR_OP_*``) and flashrom's ``include/spi.h`` (``JEDEC_*``); the
+The opcode values are the ones in Linux's
+:upstream:`linux:include/linux/mtd/spi-nor.h` (``SPINOR_OP_*``) and flashrom's
+:upstream:`flashrom:include/spi.h` (``JEDEC_*``); the
 extractors read them from those headers and check them against this table,
 so a disagreement fails the build of the data rather than shipping.
 """

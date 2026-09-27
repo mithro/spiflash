@@ -1,5 +1,5 @@
-"""Linux: ``drivers/mtd/spi-nor/*.c`` (SPI NOR) and ``drivers/mtd/nand/spi/*.c``
-(SPI NAND).
+"""Linux: :upstream:`linux:drivers/mtd/spi-nor/*.c` (SPI NOR) and
+:upstream:`linux:drivers/mtd/nand/spi/*.c` (SPI NAND).
 
 SPI NOR entries are ``struct flash_info`` designated initialisers (Linux 6.8+)::
 

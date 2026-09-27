@@ -1,4 +1,4 @@
-"""U-Boot: ``drivers/mtd/spi/spi-nor-ids.c``.
+"""U-Boot: :upstream:`u-boot:drivers/mtd/spi/spi-nor-ids.c`.
 
 U-Boot kept Linux's pre-6.8 table format::
 
