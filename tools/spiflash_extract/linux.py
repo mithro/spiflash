@@ -119,7 +119,8 @@ def _nor_record(
     if "id" in fields:
         args = cparse.macro_call(fields["id"], "SNOR_ID")
         if args is None:
-            raise ValueError(f"{rel}: unexpected .id {fields['id']!r}")
+            msg = f"{rel}: unexpected .id {fields['id']!r}"
+            raise ValueError(msg)
         id_hex, ext = split_id([cparse.evaluate(a, symbols) for a in args])
     if name is None and id_hex is None:
         return None
@@ -150,7 +151,9 @@ def _nor_record(
     page = cparse.evaluate(fields.get("page_size", "256"), symbols)
     if "no_erase" not in features and sector == 64 * 1024:
         features.add("erase_64k")
-    opcodes = _nor_opcodes(fields, symbols, id_hex is not None, size is not None, features)
+    opcodes = _nor_opcodes(
+        fields, symbols, features, has_id=id_hex is not None, legacy=size is not None
+    )
     return make(
         "linux",
         rel,
@@ -184,9 +187,10 @@ _NO_SFDP_OPS = {
 def _nor_opcodes(
     fields: dict[str, str],
     symbols: dict[str, str | int],
+    features: set[str],
+    *,
     has_id: bool,
     legacy: bool,
-    features: set[str],
 ) -> list[dict[str, object]]:
     """The operations the kernel sets up for a part, following
     drivers/mtd/spi-nor/core.c: spi_nor_init_default_params() (read, fast
@@ -254,13 +258,15 @@ def extract_nand(root: Path) -> list[Record]:
             id_args = cparse.macro_call(args[1], "SPINAND_ID")
             org = cparse.macro_call(args[2], "NAND_MEMORG")
             if id_args is None or org is None or mfr_id is None:
-                raise ValueError(f"{rel}: cannot read SPINAND_INFO for {name}")
+                msg = f"{rel}: cannot read SPINAND_INFO for {name}"
+                raise ValueError(msg)
             method = id_args[0].replace("SPINAND_READID_METHOD_", "").lower()
             dev = [cparse.evaluate(a, symbols) for a in id_args[1:]]
             bpc, page, oob, ppb, bpl, _bad, _planes, luns, targets = (
                 cparse.evaluate(a, symbols) for a in org
             )
-            # SPINAND_INFO(model, id, memorg, eccreq, op_variants, flags, ...)
+            # The flags are SPINAND_INFO's sixth argument, after the model, id,
+            # memory organisation, ECC requirement and op variants.
             flags = cparse.flag_names(args[5]) if len(args) > 5 else []
             features = ["quad_read"] if "SPINAND_HAS_QE_BIT" in flags else []
             notes = cparse.comments(raw[start:end])

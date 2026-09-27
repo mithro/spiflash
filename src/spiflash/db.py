@@ -10,6 +10,7 @@ from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from .model import Flash, Record, name_matches, parse_id, strip_continuation
+from .vendors import canonical
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -35,7 +36,8 @@ def _read(name: str) -> dict[str, Any]:
     text = resources.files("spiflash").joinpath("data", name).read_text(encoding="utf-8")
     data: dict[str, Any] = json.loads(text)
     if data.get("format") != FORMAT:
-        raise ValueError(f"{name}: unsupported format {data.get('format')!r}")
+        msg = f"{name}: unsupported format {data.get('format')!r}"
+        raise ValueError(msg)
     return data
 
 
@@ -89,7 +91,7 @@ class Database:
         self,
         chip_id: str | bytes | int | Iterable[int],
         *,
-        type: str | None = None,
+        flash_type: str | None = None,
         method: str = "jedec",
     ) -> list[Flash]:
         """The chips answering ``chip_id``.
@@ -103,12 +105,12 @@ class Database:
 
         Only the longest ids that fit come back, NOR before NAND: a SPI NAND
         id is two bytes, so a NOR id can start with one (``c22018`` also
-        fits the MX35LF2G14AC's ``c220``); pass ``type="nor"`` to rule that
+        fits the MX35LF2G14AC's ``c220``); pass ``flash_type="nor"`` to rule that
         out."""
         _bank, core = strip_continuation(parse_id(chip_id))
         found = []
         for f in self.flashes:
-            if f.family != method or (type is not None and f.type != type):
+            if f.family != method or (flash_type is not None and f.type != flash_type):
                 continue
             if core[: len(f.id)] == f.id:
                 ext = core[len(f.id) :]
@@ -167,8 +169,6 @@ class Database:
 
     def by_manufacturer(self, name: str) -> list[Flash]:
         """Every chip whose manufacturer is ``name`` (any upstream spelling)."""
-        from .vendors import canonical
-
         want = (canonical(name) or name).lower()
         return [f for f in self.flashes if (f.manufacturer or "").lower() == want]
 

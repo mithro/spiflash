@@ -87,7 +87,8 @@ def _entries(path: Path, text: str) -> list[cparse.Block]:
     if path.name == "flashchips.c" and path.parent.name != "flashchips":
         table = cparse.array_body(text, r"struct\s+flashchip\s+flashchips\s*\[\s*\]")
         if table is None:
-            raise ValueError(f"{path}: no flashchips[] table")
+            msg = f"{path}: no flashchips[] table"
+            raise ValueError(msg)
         return list(cparse.braced_items(table.body, table.offset))
     return list(cparse.braced_items(text))
 
@@ -110,7 +111,8 @@ def extract(root: Path, source: str) -> list[Record]:
             try:
                 rec = _record(entry, raw, rel, source, symbols, id_notes)
             except (ValueError, KeyError) as e:
-                raise ValueError(f"{rel}:{cparse.line_of(raw, entry.offset)}: {e}") from e
+                msg = f"{rel}:{cparse.line_of(raw, entry.offset)}: {e}"
+                raise ValueError(msg) from e
             if rec is not None:
                 records.append(rec)
     return records
@@ -161,7 +163,8 @@ def _record(
         return None  # no id at all: ENE's KB9012 EC, read over its own EDI protocol
     method = _METHODS.get(probe)
     if method is None and probe:
-        raise ValueError(f"{rel}: unknown probe {probe!r} for {f.get('name')}")
+        msg = f"{rel}: unknown probe {probe!r} for {f.get('name')}"
+        raise ValueError(msg)
     name = cparse.c_string(f["name"])
     notes = cparse.comments(raw[entry.offset : entry.offset + len(entry.body)])
     for sym in (mfr_sym, model_sym):
@@ -227,7 +230,7 @@ def _record(
         flags=flags,
         voltage=voltage,
         tested=tested,
-        opcodes=_opcodes(f, method, flags, erasers, "sfdp" in features, symbols),
+        opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp="sfdp" in features),
         notes=notes,
     )
 
@@ -305,8 +308,9 @@ def _opcodes(
     method: str | None,
     flags: list[str],
     erasers: list[dict[str, Any]],
-    sfdp: bool,
     symbols: dict[str, str | int],
+    *,
+    sfdp: bool,
 ) -> list[dict[str, object]]:
     """The operations a flashrom entry says the chip has: its probe, its
     read and write functions, each eraser (flashrom's spi_block_erase_<xx>
@@ -327,7 +331,8 @@ def _opcodes(
             continue
         erase_op = ERASE_BY_OPCODE.get(e["opcode"])
         if erase_op is None:
-            raise ValueError(f"no operation for erase opcode 0x{e['opcode']:02x}")
+            msg = f"no operation for erase opcode 0x{e['opcode']:02x}"
+            raise ValueError(msg)
         size, count = e["blocks"][0]
         layout = f"{count} x {size}" if len(e["blocks"]) == 1 else "non-uniform"
         ops.add(erase_op, f"block_erasers ({layout})", value=e["opcode"])

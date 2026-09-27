@@ -65,7 +65,8 @@ def extract(root: Path) -> list[Record]:
     text = cparse.drop_preprocessor(stripped)
     table = cparse.array_body(text, r"struct\s+flash_info\s+spi_nor_ids\s*\[\s*\]")
     if table is None:
-        raise ValueError(f"{IDS}: no spi_nor_ids[] table")
+        msg = f"{IDS}: no spi_nor_ids[] table"
+        raise ValueError(msg)
     records = []
     for entry in cparse.braced_items(table.body, table.offset):
         rec = _record(entry, raw, symbols, _vendor_at(markers, entry.offset))
@@ -138,7 +139,7 @@ def _record(
         sector_size=sector,
         features=sorted(features),
         flags=flags,
-        opcodes=_opcodes(flags, symbols, id_hex is not None, features),
+        opcodes=_opcodes(flags, symbols, features, has_id=id_hex is not None),
         notes=notes,
     )
 
@@ -157,7 +158,7 @@ _FLAG_OPS = {
 
 
 def _opcodes(
-    flags: list[str], symbols: dict[str, str | int], has_id: bool, features: set[str]
+    flags: list[str], symbols: dict[str, str | int], features: set[str], *, has_id: bool
 ) -> list[dict[str, object]]:
     """The operations U-Boot's spi-nor-core.c sets up for an entry: read,
     fast read unless SPI_NOR_NO_FR, page program, the erase opcode (SECT_4K,

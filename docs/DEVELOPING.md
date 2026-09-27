@@ -11,6 +11,10 @@ https://spiflash.readthedocs.io/ is built from `docs/` by Sphinx (Furo theme,
 MyST Markdown). The vendor and chip pages are not in git:
 `docs/_ext/spiflash_pages.py` writes them from the installed package's data
 at the start of every build, so the site always matches the release.
+The API reference (`docs/api.md`) is generated the same way, by autosummary,
+from every module of `spiflash` and of `tools/spiflash_extract`: a new module
+or function appears in it without anything to update (`docs/_autosummary/` is
+not in git either).
 
 ```sh
 uv sync --group docs
@@ -23,13 +27,17 @@ builds it (warnings are errors) on every push and pull request.
 ## Setup and gates
 
 ```sh
-uv sync --group dev
-uv run ruff check && uv run mypy && uv run pytest
+uv sync --group dev --group docs
+uv run ruff check && uv run ruff format --check && uv run mypy && uv run pytest
 ```
 
-Those three are what the `test` job of `.github/workflows/deb.yml` runs, on
+Those four are what the `test` job of `.github/workflows/deb.yml` runs, on
 Python 3.11 to 3.14. A green run is what "mergeable" means, and on `main` what
-publishes.
+publishes. `uv run ruff format` applies the formatting.
+
+The code carries no `# noqa`, no `type: ignore` and no per-file lint ignores:
+when a rule fires, the code changes. The rules chosen, and the four families
+left out (and why), are listed in `pyproject.toml`.
 
 ## Layout
 

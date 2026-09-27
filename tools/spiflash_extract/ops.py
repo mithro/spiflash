@@ -10,22 +10,14 @@ fails the extraction instead of shipping a wrong opcode.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from spiflash.opcodes import OPERATIONS, sort_key
 
 from . import cparse
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-# The extractors run from a checkout without the package installed
-# (`uv run --no-project tools/update_db.py`), so find it in src/.
-_SRC = Path(__file__).resolve().parents[2] / "src"
-if str(_SRC) not in sys.path:  # pragma: no cover - depends on how we were started
-    sys.path.insert(0, str(_SRC))
-
-from spiflash.opcodes import OPERATIONS, sort_key  # noqa: E402
+    from collections.abc import Iterator, Mapping
 
 
 class Opcodes:
@@ -40,7 +32,8 @@ class Opcodes:
         first of ``symbols`` the upstream's headers define, or failing both
         the table's; a value that differs from the table's raises."""
         if op not in OPERATIONS:
-            raise KeyError(f"unknown operation {op}")
+            msg = f"unknown operation {op}"
+            raise KeyError(msg)
         expected = OPERATIONS[op].opcode
         if value is None:
             for sym in symbols:
@@ -50,15 +43,18 @@ class Opcodes:
         if value is None:
             value = expected
         if value != expected:
-            raise ValueError(
-                f"{op} ({via}): upstream says 0x{value:02x}, spiflash's table 0x{expected:02x}"
-            )
+            msg = f"{op} ({via}): upstream says 0x{value:02x}, spiflash's table 0x{expected:02x}"
+            raise ValueError(msg)
         _, vias = self._ops.setdefault(op, (value, []))
         if via not in vias:
             vias.append(via)
 
     def __contains__(self, op: str) -> bool:
         return op in self._ops
+
+    def __iter__(self) -> Iterator[str]:
+        """The operations added so far, by name."""
+        return iter(list(self._ops))
 
     def discard(self, op: str) -> None:
         self._ops.pop(op, None)
@@ -157,5 +153,5 @@ def add_spinor(ops: Opcodes, op: str, via: str) -> None:
 
 def add_4b_variants(ops: Opcodes, via: str) -> None:
     """Add the 4-byte-address form of every operation that has one."""
-    for op in [o for o in list(ops._ops) if o in TO_4B]:
+    for op in [o for o in ops if o in TO_4B]:
         add_spinor(ops, TO_4B[op], via)
