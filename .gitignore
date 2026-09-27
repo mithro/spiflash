@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+.uvcache/
+
+# Coverage artifacts (pytest-cov / coverage.py)
+.coverage
+.coverage.*
+htmlcov/
+
+# hatch-vcs writes this at build/editable-install time; it is derived from git.
+/src/spiflash/_version.py
+
+# tools/update_db.py fetches the upstream sources here.
+/upstream/
+
+# Debian build byproducts. debian/changelog is written by the build
+# (apt-repo-action's scripts/deb-version.py) and never committed.
+debian/changelog
+/built-debs/
+*.deb
+*.buildinfo
+*.changes
+/debian/.debhelper/
+/debian/files
+/debian/*.debhelper
+/debian/*.substvars
+/debian/python3-spiflash/
+/.pybuild/
+/debian/debhelper-build-stamp
+
+# Project-local scratch
+tmp/
+
+# Claude Code local config and subagent-driven-development scratch
+/.claude/
+/.superpowers/
+
+# Git worktrees for branches in flight
+/.worktrees/
