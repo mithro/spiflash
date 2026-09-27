@@ -77,7 +77,7 @@ def test_link_roles() -> None:
         repo_url("src/spiflash/data/")
         == "https://github.com/mithro/spiflash/tree/main/src/spiflash/data"
     )
-    commit = spiflash.sources()["linux"]["commit"]
+    commit = spiflash.sources()["linux"].commit
     assert upstream_url("linux", "drivers/mtd/spi-nor/*.c") == (
         f"https://github.com/torvalds/linux/tree/{commit}/drivers/mtd/spi-nor"
     )

@@ -5,18 +5,20 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from functools import cache
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
+from .enums import FlashType, IdFamily
 from .model import Flash, Record, name_matches, parse_id, strip_continuation
 from .vendors import canonical
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Manufacturer:
     """A JEP106 manufacturer: ``bank`` counts the 0x7f continuation codes
     before ``id`` (0 for the first bank); ``id`` includes the parity bit, as
@@ -25,6 +27,36 @@ class Manufacturer:
     bank: int
     id: int
     name: str
+
+
+@dataclass(frozen=True, slots=True)
+class SourceInfo:
+    """Where one upstream's data came from: the repository (``url``), where
+    to browse its files (``browse``: the same, or a GitHub mirror), the
+    branch and commit read, that commit's date, the files read, their
+    licence, and how many entries were taken."""
+
+    url: str
+    browse: str
+    branch: str
+    commit: str
+    date: datetime
+    paths: tuple[str, ...]
+    license: str
+    records: int
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> SourceInfo:
+        return cls(
+            url=d["url"],
+            browse=d.get("browse") or d["url"],
+            branch=d["branch"],
+            commit=d["commit"],
+            date=datetime.fromisoformat(d["date"]),
+            paths=tuple(d["paths"]),
+            license=d["license"],
+            records=d["records"],
+        )
 
 
 #: The data files' format; :repo:`tools/update_db.py` writes the same number.
@@ -39,13 +71,6 @@ def _read(name: str) -> dict[str, Any]:
         msg = f"{name}: unsupported format {data.get('format')!r}"
         raise ValueError(msg)
     return data
-
-
-def _family(rec: Record) -> str:
-    """Records are grouped by how their id is read: every JEDEC read-id
-    variant (the NAND ones send a dummy or address byte first, but answer
-    the same bytes) together, each legacy command on its own."""
-    return "jedec" if rec.is_jedec else (rec.id_method or "none")
 
 
 def _rank(part: str, query: str) -> int | None:
@@ -67,20 +92,25 @@ class Database:
         self,
         records: Iterable[Record],
         manufacturers: Iterable[Manufacturer] = (),
-        sources: dict[str, Any] | None = None,
+        sources: Mapping[str, SourceInfo] | None = None,
     ) -> None:
         self.records: tuple[Record, ...] = tuple(records)
         self.manufacturers: tuple[Manufacturer, ...] = tuple(manufacturers)
-        self.sources: dict[str, Any] = dict(sources or {})
+        #: Where each upstream's data came from, by name (the sources, and
+        #: ``jep106`` for the manufacturer list).
+        self.sources: dict[str, SourceInfo] = dict(sources or {})
         self._jep106 = {(m.bank, m.id): m.name for m in self.manufacturers}
 
-        groups: dict[tuple[str, str, bytes], list[Record]] = defaultdict(list)
-        banks: dict[tuple[str, str, bytes], Counter[int]] = defaultdict(Counter)
+        groups: dict[tuple[FlashType, IdFamily, bytes], list[Record]] = defaultdict(list)
+        banks: dict[tuple[FlashType, IdFamily, bytes], Counter[int]] = defaultdict(Counter)
         for r in self.records:
-            if r.id is None:
-                continue
+            if r.id is None or r.id_method is None:
+                continue  # no id: nothing to look it up by
             bank, core = strip_continuation(r.id)
-            key = (r.type, _family(r), core)
+            # Grouped by how the id is read: every JEDEC read-id variant (the
+            # NAND ones send a dummy or address byte first, but answer the
+            # same bytes) together, each legacy command on its own.
+            key = (r.type, r.id_method.family, core)
             groups[key].append(r)
             banks[key][bank] += 1
         self.flashes: tuple[Flash, ...] = tuple(
@@ -96,15 +126,18 @@ class Database:
         return cls(
             (Record.from_json(r) for r in recs),
             (Manufacturer(m["bank"], m["id"], m["name"]) for m in mfrs),
-            _read("sources.json")["sources"],
+            {
+                name: SourceInfo.from_json(info)
+                for name, info in _read("sources.json")["sources"].items()
+            },
         )
 
     def lookup(
         self,
         chip_id: str | bytes | int | Iterable[int],
         *,
-        flash_type: str | None = None,
-        method: str = "jedec",
+        flash_type: FlashType | str | None = None,
+        method: IdFamily | str = IdFamily.JEDEC,
     ) -> list[Flash]:
         """The chips answering ``chip_id``.
 
@@ -119,10 +152,12 @@ class Database:
         id is two bytes, so a NOR id can start with one (``c22018`` also
         fits the MX35LF2G14AC's ``c220``); pass ``flash_type="nor"`` to rule that
         out."""
+        family = IdFamily(method)
+        wanted = FlashType(flash_type) if flash_type is not None else None
         _bank, core = strip_continuation(parse_id(chip_id))
         found = []
         for f in self.flashes:
-            if f.family != method or (flash_type is not None and f.type != flash_type):
+            if f.family is not family or (wanted is not None and f.type is not wanted):
                 continue
             if core[: len(f.id)] == f.id:
                 ext = core[len(f.id) :]
@@ -130,11 +165,11 @@ class Database:
         # Of the ids that fit, only the longest of each type: Linux's
         # one-byte "any Macronix part" entry (c2) is not an answer when the
         # MX25L12835F's c22018 is.
-        longest: dict[str, int] = {}
+        longest: dict[FlashType, int] = {}
         for f in found:
             longest[f.type] = max(longest.get(f.type, 0), len(f.id))
         found = [f for f in found if len(f.id) == longest[f.type]]
-        return sorted(found, key=lambda f: (f.type != "nor", -len(f.id)))
+        return sorted(found, key=lambda f: (f.type is not FlashType.NOR, -len(f.id)))
 
     def find(self, name: str) -> list[Flash]:
         """The chips whose part names match ``name``, best first.
@@ -160,10 +195,10 @@ class Database:
         src = self.sources.get(record.source)
         if not src:
             return None
-        base = str(src.get("browse") or src["url"]).rstrip("/")
+        base = src.browse.rstrip("/")
         if not base.startswith("https://github.com/"):
             return None
-        return f"{base}/blob/{src['commit']}/{record.file}#L{record.line}"
+        return f"{base}/blob/{src.commit}/{record.file}#L{record.line}"
 
     def jep106(self, manufacturer_id: int, bank: int = 0) -> str | None:
         """The JEP106 name of a manufacturer id byte (with its parity bit)."""

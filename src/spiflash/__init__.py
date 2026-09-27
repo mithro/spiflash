@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .db import Database, Manufacturer, database
-from .model import Flash, Record, parse_id
+from .db import Database, Manufacturer, SourceInfo, database
+from .enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
+from .model import Eraser, Flash, Record, Voltage, parse_id
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -27,9 +28,18 @@ except ImportError:  # pragma: no cover - a checkout without a build
 
 __all__ = [
     "Database",
+    "Eraser",
+    "Feature",
     "Flash",
+    "FlashType",
+    "IdFamily",
+    "IdMethod",
     "Manufacturer",
+    "OperationKind",
     "Record",
+    "Source",
+    "SourceInfo",
+    "Voltage",
     "__version__",
     "database",
     "find",
@@ -67,6 +77,6 @@ def jep106(manufacturer_id: int, bank: int = 0) -> str | None:
     return database().jep106(manufacturer_id, bank)
 
 
-def sources() -> dict[str, dict[str, object]]:
+def sources() -> dict[str, SourceInfo]:
     """Which upstream commits the data came from."""
     return database().sources

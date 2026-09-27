@@ -22,7 +22,8 @@ from sphinx.util.nodes import split_explicit_title
 
 import spiflash
 from spiflash.cli import human_size
-from spiflash.opcodes import KINDS, OPERATIONS
+from spiflash.enums import OperationKind, Source
+from spiflash.opcodes import OPERATIONS
 
 if TYPE_CHECKING:
     from sphinx.application import Sphinx
@@ -34,14 +35,11 @@ EN_DASH = "\N{EN DASH}"
 EM_DASH = "\N{EM DASH}"
 TIMES = "\N{MULTIPLICATION SIGN}"
 
-SOURCE_LABEL = {
-    "flashrom": "flashrom",
-    "flashprog": "flashprog",
-    "linux": "Linux",
-    "u-boot": "U-Boot",
-    "openocd": "OpenOCD",
-    "openfpgaloader": "openFPGALoader",
-}
+
+def source_label(name: str) -> str:
+    """A source's name as its project writes it (``u-boot`` is U-Boot)."""
+    return Source(name).label if name in set(Source) else name
+
 
 # What each feature means, and the badge colour for its group.
 _FEATURE_TEXT = {
@@ -279,7 +277,7 @@ def _opcodes(f: Flash) -> list[str]:
     ]
     out.append(
         list_table(
-            ["Opcode", "Operation", "Description", *[SOURCE_LABEL.get(s, s) for s in srcs]],
+            ["Opcode", "Operation", "Description", *[source_label(s) for s in srcs]],
             rows,
             "sf-table sf-opcodes",
         )
@@ -287,7 +285,7 @@ def _opcodes(f: Flash) -> list[str]:
     out.append("")
     out.append(":::{dropdown} Why each source lists each opcode\n:class-container: sf-why\n")
     for o in f.opcodes.values():
-        reasons = "; ".join(f"{SOURCE_LABEL.get(s, s)}: {esc(via)}" for s, via in o.because)
+        reasons = "; ".join(f"{source_label(s)}: {esc(via)}" for s, via in o.because)
         out.append(f"- `{o.name}` (0x{o.opcode:02x}): {reasons}")
     out.append(":::\n")
     return out
@@ -296,17 +294,22 @@ def _opcodes(f: Flash) -> list[str]:
 def _erase_layouts(f: Flash) -> list[str]:
     rows = []
     for r in f.records:
-        for e in r.erasers or ():
-            blocks = ", ".join(f"{n} {TIMES} {human_size(s)}" for s, n in e["blocks"])
-            op = e["opcode"]
+        for e in r.erasers:
+            blocks = ", ".join(f"{b.count} {TIMES} {human_size(b.size)}" for b in e.blocks)
+            op = e.opcode
             opname = next(
-                (n for n, o in OPERATIONS.items() if o.opcode == op and o.kind == "erase"), None
+                (
+                    n
+                    for n, o in OPERATIONS.items()
+                    if o.opcode == op and o.kind is OperationKind.ERASE
+                ),
+                None,
             )
             rows.append(
                 [
                     source_badge(r.source),
                     esc(r.name),
-                    f"{{sfop}}`0x{op:02x}`" if op is not None else esc(e.get("function", "")),
+                    f"{{sfop}}`0x{op:02x}`" if op is not None else esc(e.function or ""),
                     f"`{opname}`" if opname else EM_DASH,
                     blocks,
                 ]
@@ -332,7 +335,7 @@ def _disagreements(f: Flash) -> list[str]:
     out = [":::{warning}\nThe sources disagree:\n"]
     for attr, vals in f.conflicts.items():
         said = "; ".join(
-            f"{_conflict_value(attr, v)} ({', '.join(SOURCE_LABEL.get(s, s) for s in ss)})"
+            f"{_conflict_value(attr, v)} ({', '.join(source_label(s) for s in ss)})"
             for v, ss in vals.items()
         )
         out.append(f"- **{attr.replace('_', ' ')}**: {said}")
@@ -374,7 +377,7 @@ def _sources(db: Database, f: Flash) -> list[str]:
     if notes:
         out.append(":::{dropdown} Upstream comments\n:class-container: sf-why\n")
         for r, n in notes:
-            out.append(f"- {SOURCE_LABEL.get(r.source, r.source)} ({esc(r.name)}): {esc(n)}")
+            out.append(f"- {source_label(r.source)} ({esc(r.name)}): {esc(n)}")
         out.append(":::\n")
     return out
 
@@ -496,7 +499,7 @@ def chips_index(flashes: list[Flash], slugs: dict[int, str]) -> str:
 def opcodes_table(flashes: list[Flash]) -> str:
     uses = Counter(name for f in flashes for name in f.opcodes)
     out = []
-    for kind in KINDS:
+    for kind in OperationKind:
         rows = [
             [
                 f"{{sfop}}`0x{op.opcode:02x}`",
@@ -520,15 +523,15 @@ def opcodes_table(flashes: list[Flash]) -> str:
 def sources_table(db: Database) -> str:
     rows = []
     for name, s in sorted(db.sources.items()):
-        base = s.get("browse") or s["url"]
+        base = s.browse
         commit = (
-            f"[`{s['commit'][:12]}`]({base.rstrip('/')}/commit/{s['commit']})"
+            f"[`{s.commit[:12]}`]({base.rstrip('/')}/commit/{s.commit})"
             if base.startswith("https://github.com/")
-            else f"`{s['commit'][:12]}`"
+            else f"`{s.commit[:12]}`"
         )
-        label = "JEP106 (OpenOCD)" if name == "jep106" else SOURCE_LABEL.get(name, name)
+        label = "JEP106 (OpenOCD)" if name == "jep106" else source_label(name)
         rows.append(
-            [f"[{label}]({base})", commit, s["date"][:10], f"{s['records']:,}", esc(s["license"])]
+            [f"[{label}]({base})", commit, f"{s.date:%Y-%m-%d}", f"{s.records:,}", esc(s.license)]
         )
     return list_table(["Source", "Commit", "Date", "Entries", "Licence"], rows, "sf-table")
 
@@ -539,8 +542,8 @@ def files_read_table(db: Database) -> str:
     for name, s in sorted(db.sources.items()):
         if name == "jep106":
             continue  # the same OpenOCD checkout; its file is in OpenOCD's row
-        files = ", ".join(f"{{upstream}}`{name}:{path}`" for path in s["paths"])
-        rows.append([SOURCE_LABEL.get(name, name), files, esc(s["license"])])
+        files = ", ".join(f"{{upstream}}`{name}:{path}`" for path in s.paths)
+        rows.append([source_label(name), files, esc(s.license)])
     return list_table(["Source", "Files read", "Licence of those files"], rows, "sf-table")
 
 
@@ -620,7 +623,7 @@ class SourceRole(SphinxRole):
     """``{sfsrc}`linux``` as a coloured label naming the source."""
 
     def run(self) -> tuple[list[nodes.Node], list[nodes.system_message]]:
-        label = SOURCE_LABEL.get(self.text, self.text)
+        label = source_label(self.text)
         classes = ["sf-src", f"sf-src-{slug(self.text)}"]
         return [nodes.inline(self.rawtext, label, classes=classes)], []
 
@@ -642,11 +645,11 @@ def upstream_url(source: str, path: str) -> str:
     """An upstream's page for ``path`` at the commit the data came from. A
     glob (``drivers/mtd/spi-nor/*.c``) links to its directory."""
     info = spiflash.sources()[source]
-    base = str(info.get("browse") or info["url"]).rstrip("/")
+    base = info.browse.rstrip("/")
     if "*" in path:
         path = path.rsplit("/", 1)[0] + "/"
     kind = "tree" if _is_dir(path) else "blob"
-    return f"{base}/{kind}/{info['commit']}/{path.rstrip('/')}"
+    return f"{base}/{kind}/{info.commit}/{path.rstrip('/')}"
 
 
 class _LinkRole(SphinxRole):
