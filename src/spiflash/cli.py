@@ -1,11 +1,11 @@
 """The ``spiflash`` command.
 
-    spiflash id ef4018            which chip answers this JEDEC id?
-    spiflash find w25q128jv       which ids does this part answer?
-    spiflash list --manufacturer winbond
-    spiflash opcodes ef4018       which opcodes does it support? (an id or a part name)
-    spiflash jep106 c2            the JEP106 manufacturer of an id byte
-    spiflash sources              where the data came from
+spiflash id ef4018            which chip answers this JEDEC id?
+spiflash find w25q128jv       which ids does this part answer?
+spiflash list --manufacturer winbond
+spiflash opcodes ef4018       which opcodes does it support? (an id or a part name)
+spiflash jep106 c2            the JEP106 manufacturer of an id byte
+spiflash sources              where the data came from
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def human_size(n: int | None) -> str:
     return f"{n} B"
 
 
-def opcode_table(f: Flash, verbose: bool = False) -> list[str]:
+def opcode_table(f: Flash, *, verbose: bool = False) -> list[str]:
     """The operations a chip supports, one per line: opcode, name, what it
     does, and who says so (with -v, why each source says so)."""
     if not f.opcodes:
@@ -49,11 +49,14 @@ def opcode_table(f: Flash, verbose: bool = False) -> list[str]:
     return lines
 
 
-def describe(f: Flash, verbose: bool = False, opcodes: bool = False) -> str:
-    lines = [
-        f"{f.jedec_id if f.family == 'jedec' else f.family + ':' + f.id_hex}  "
-        f"{f.manufacturer or '?'}  {', '.join(f.names)}  ({f.type})"
-    ]
+def header(f: Flash) -> str:
+    """The first line describing a chip: its id, maker, part names and type."""
+    ident = f.jedec_id if f.family == "jedec" else f"{f.family}:{f.id_hex}"
+    return f"{ident}  {f.manufacturer or '?'}  {', '.join(f.names)}  ({f.type})"
+
+
+def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
+    lines = [header(f)]
     detail = [f"size {human_size(f.size)}"]
     if f.page_size:
         detail.append(f"page {human_size(f.page_size)}")
@@ -75,16 +78,18 @@ def describe(f: Flash, verbose: bool = False, opcodes: bool = False) -> str:
         lines.append("    from: " + ", ".join(f.sources))
     if opcodes:
         lines.append("    opcodes:")
-        lines.extend(opcode_table(f, verbose))
+        lines.extend(opcode_table(f, verbose=verbose))
     return "\n".join(lines)
 
 
-def _emit(found: Sequence[Flash], as_json: bool, verbose: bool, opcodes: bool = False) -> int:
+def _emit(
+    found: Sequence[Flash], *, as_json: bool, verbose: bool = False, opcodes: bool = False
+) -> int:
     if as_json:
         json.dump([f.to_json() for f in found], sys.stdout, indent=1)
         sys.stdout.write("\n")
     else:
-        print("\n\n".join(describe(f, verbose, opcodes) for f in found))
+        print("\n\n".join(describe(f, verbose=verbose, opcodes=opcodes) for f in found))
     return 0 if found else 1
 
 
@@ -135,17 +140,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     db = database()
     try:
         if args.command == "id":
-            return _emit(db.lookup(args.id, type=args.type, method=args.method), args.json,
-                         args.verbose, args.opcodes)
+            return _emit(
+                db.lookup(args.id, flash_type=args.type, method=args.method),
+                as_json=args.json,
+                verbose=args.verbose,
+                opcodes=args.opcodes,
+            )
         if args.command == "find":
-            return _emit(db.find(args.name), args.json, args.verbose, args.opcodes)
+            return _emit(
+                db.find(args.name), as_json=args.json, verbose=args.verbose, opcodes=args.opcodes
+            )
         if args.command == "opcodes":
             found = _resolve(db, args.query)
             if args.json:
-                return _emit(found, True, False)
+                return _emit(found, as_json=True)
             for f in found:
-                print(f"{f.jedec_id}  {f.manufacturer or '?'}  {', '.join(f.names)}  ({f.type})")
-                print("\n".join(opcode_table(f, args.verbose)))
+                print(header(f))
+                print("\n".join(opcode_table(f, verbose=args.verbose)))
                 print()
             return 0 if found else 1
         if args.command == "list":
@@ -155,10 +166,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.type:
                 listed = [f for f in listed if f.type == args.type]
             if args.json or args.verbose:
-                return _emit(listed, args.json, args.verbose, args.opcodes)
+                return _emit(listed, as_json=args.json, verbose=args.verbose, opcodes=args.opcodes)
             for f in listed:
-                print(f"{f.jedec_id:10} {f.type:4} {f.manufacturer or '?':14} "
-                      f"{human_size(f.size):>8}  {', '.join(f.names)}")
+                print(
+                    f"{f.jedec_id:10} {f.type:4} {f.manufacturer or '?':14} "
+                    f"{human_size(f.size):>8}  {', '.join(f.names)}"
+                )
             return 0
         if args.command == "jep106":
             data = parse_id(args.id)
@@ -168,8 +181,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0 if name else 1
         # sources
         for name, s in db.sources.items():
-            print(f"{name:15} {s['commit'][:12]} {s['date'][:10]} {s['records']:5}  "
-                  f"{s['url']} ({s['license']})")
+            print(
+                f"{name:15} {s['commit'][:12]} {s['date'][:10]} {s['records']:5}  "
+                f"{s['url']} ({s['license']})"
+            )
         return 0
     except ValueError as e:
         print(f"spiflash: {e}", file=sys.stderr)

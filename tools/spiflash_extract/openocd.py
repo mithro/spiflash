@@ -35,6 +35,8 @@ def part_name(vendor: str, name: str) -> str:
     if prefix and not name.lower().startswith(prefix):
         return prefix + name
     return name
+
+
 JEP106 = "src/helper/jep106.inc"
 
 
@@ -158,4 +160,4 @@ def manufacturers(root: Path) -> list[dict[str, object]]:
 
 def _with_parity(code: int) -> int:
     """JEP106 codes are 7 bits plus an odd-parity bit in bit 7."""
-    return code | (0 if bin(code).count("1") % 2 else 0x80)
+    return code | (0 if code.bit_count() % 2 else 0x80)

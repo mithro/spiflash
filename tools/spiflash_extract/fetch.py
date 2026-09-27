@@ -44,7 +44,8 @@ def set_commit(path: Path, name: str, commit: str) -> None:
             lines[i] = f'commit = "{commit}"\n'
             path.write_text("".join(lines))
             return
-    raise KeyError(f"no commit line for [{name}] in {path}")
+    msg = f"no commit line for [{name}] in {path}"
+    raise KeyError(msg)
 
 
 def _git(*args: str, cwd: Path | None = None) -> str:
@@ -57,7 +58,8 @@ def remote_head(up: Upstream) -> str:
     """The commit at the head of the upstream's branch, right now."""
     out = _git("ls-remote", up.url, f"refs/heads/{up.branch}")
     if not out:
-        raise RuntimeError(f"{up.url} has no branch {up.branch}")
+        msg = f"{up.url} has no branch {up.branch}"
+        raise RuntimeError(msg)
     return out.split()[0]
 
 

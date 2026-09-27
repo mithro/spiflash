@@ -8,9 +8,11 @@ from importlib import resources
 import pytest
 
 import spiflash
-from spiflash import vendors
+from spiflash import db as db_module
+from spiflash import opcodes, vendors
 from spiflash.db import FORMAT, Database
 from spiflash.model import Flash, Record, name_matches, parse_id, part_names, strip_continuation
+from spiflash.opcodes import OPERATIONS
 
 
 def rec(**kw: object) -> Record:
@@ -75,27 +77,40 @@ def test_w25q128() -> None:
     (f,) = spiflash.lookup("ef4018")
     assert f.manufacturer == "Winbond"
     assert {"W25Q128FV", "W25Q128JV"} <= set(f.names)
-    assert f.size == 16 << 20 and f.page_size == 256 and f.sector_size == 64 << 10
+    assert f.size == 16 << 20
+    assert f.page_size == 256
+    assert f.sector_size == 64 << 10
     assert f.voltage == (2700, 3600)
     assert {"erase_4k", "quad_read"} <= f.features
-    assert set(f.sources) == {"flashrom", "flashprog", "linux", "u-boot", "openocd",
-                              "openfpgaloader"}
-    assert f.type == "nor" and f.family == "jedec" and f.jedec_id == "ef4018"
+    assert set(f.sources) == {
+        "flashrom",
+        "flashprog",
+        "linux",
+        "u-boot",
+        "openocd",
+        "openfpgaloader",
+    }
+    assert f.type == "nor"
+    assert f.family == "jedec"
+    assert f.jedec_id == "ef4018"
     assert f.manufacturer_id == 0xEF
     assert spiflash.jep106(f.manufacturer_id) == "NEXCOM"  # Winbond's JEP106 entry
 
 
-@pytest.mark.parametrize("query", ["ef4018", "0xEF4018", "ef 40 18", "EF:40:18",
-                                   b"\xef\x40\x18", 0xEF4018, [0xEF, 0x40, 0x18]])
-def test_lookup_accepts_every_spelling(query: object) -> None:
-    assert [f.id_hex for f in spiflash.lookup(query)] == ["ef4018"]  # type: ignore[arg-type]
+@pytest.mark.parametrize(
+    "query",
+    ["ef4018", "0xEF4018", "ef 40 18", "EF:40:18", b"\xef\x40\x18", 0xEF4018, [0xEF, 0x40, 0x18]],
+)
+def test_lookup_accepts_every_spelling(query: str | bytes | int | list[int]) -> None:
+    assert [f.id_hex for f in spiflash.lookup(query)] == ["ef4018"]
 
 
 def test_continuation_codes_are_optional() -> None:
     # Eon is in JEP106 bank 2 (7f 1c) but its chips mostly answer 1c alone.
     plain = spiflash.lookup("1c7018")
     prefixed = spiflash.lookup("7f1c7018")
-    assert [f.id for f in plain] == [f.id for f in prefixed] and plain
+    assert [f.id for f in plain] == [f.id for f in prefixed]
+    assert plain
     assert plain[0].manufacturer == "Eon"
     assert spiflash.jep106(0x1C, bank=1) == "Eon Silicon Devices"
 
@@ -116,11 +131,11 @@ def test_only_the_longest_id_of_each_type() -> None:
     assert [(f.type, f.id_hex) for f in found] == [("nor", "c22018"), ("nand", "c220")]
     assert "MX25L12835F" in found[0].names
     # Linux's one-byte Macronix catch-all is still there for an unknown part.
-    assert [f.id_hex for f in spiflash.lookup("c2ffff", type="nor")] == ["c2"]
+    assert [f.id_hex for f in spiflash.lookup("c2ffff", flash_type="nor")] == ["c2"]
 
 
 def test_openocd_names_get_their_prefix_back() -> None:
-    (f,) = spiflash.lookup("c22018", type="nor")
+    (f,) = spiflash.lookup("c22018", flash_type="nor")
     assert "25L12845" not in f.names
 
 
@@ -130,14 +145,17 @@ def test_unknown_id() -> None:
 
 def test_legacy_ids_are_separate() -> None:
     res = spiflash.lookup("05", method="res1")
-    assert res and all(f.family == "res1" for f in res)
+    assert res
+    assert all(f.family == "res1" for f in res)
     assert "M25P05" not in [n for f in spiflash.lookup("05") for n in f.names]
 
 
 def test_nand() -> None:
-    found = spiflash.lookup("efaa21", type="nand")
-    assert found and found[0].type == "nand" and "W25N01GV" in found[0].names
-    assert spiflash.lookup("efaa21", type="nor") == []
+    found = spiflash.lookup("efaa21", flash_type="nand")
+    assert found
+    assert found[0].type == "nand"
+    assert "W25N01GV" in found[0].names
+    assert spiflash.lookup("efaa21", flash_type="nor") == []
 
 
 def test_find() -> None:
@@ -156,7 +174,8 @@ def test_by_manufacturer_uses_any_spelling() -> None:
     db = spiflash.database()
     a = db.by_manufacturer("win")
     b = db.by_manufacturer("Winbond")
-    assert a == b and len(a) > 20
+    assert a == b
+    assert len(a) > 20
 
 
 def test_every_jedec_flash_has_a_name_and_manufacturer() -> None:
@@ -179,7 +198,8 @@ def test_vendor_spellings_all_canonical() -> None:
 def test_to_json_round_trips() -> None:
     (f,) = spiflash.lookup("012018")
     doc = json.loads(json.dumps(f.to_json()))
-    assert doc["id"] == "012018" and doc["manufacturer"] == "Spansion"
+    assert doc["id"] == "012018"
+    assert doc["manufacturer"] == "Spansion"
     assert doc["conflicts"]  # the S25FL12x family disagrees on page and sector size
     assert {r["source"] for r in doc["records"]} >= {"linux", "flashrom"}
 
@@ -188,13 +208,15 @@ def test_to_json_round_trips() -> None:
 
 
 def test_consensus_prefers_majority_then_priority() -> None:
-    db = Database([
-        rec(source="openocd", size=1),
-        rec(source="linux", size=2),
-        rec(source="u-boot", size=2),
-        rec(source="flashrom", size=None, page_size=512),
-        rec(source="linux", size=None, page_size=256),
-    ])
+    db = Database(
+        [
+            rec(source="openocd", size=1),
+            rec(source="linux", size=2),
+            rec(source="u-boot", size=2),
+            rec(source="flashrom", size=None, page_size=512),
+            rec(source="linux", size=None, page_size=256),
+        ]
+    )
     (f,) = db.flashes
     assert f.size == 2
     # page_size: 256 from three sources (openocd, linux, u-boot), 512 from one.
@@ -206,10 +228,12 @@ def test_consensus_prefers_majority_then_priority() -> None:
 
 
 def test_features_union_and_sources() -> None:
-    db = Database([
-        rec(source="linux", features=["quad_read"]),
-        rec(source="flashrom", features=["qpi", "quad_read"]),
-    ])
+    db = Database(
+        [
+            rec(source="linux", features=["quad_read"]),
+            rec(source="flashrom", features=["qpi", "quad_read"]),
+        ]
+    )
     (f,) = db.flashes
     assert f.features == {"quad_read", "qpi"}
     assert f.feature_sources("qpi") == ("flashrom",)
@@ -218,7 +242,8 @@ def test_features_union_and_sources() -> None:
 
 def test_records_without_an_id_are_kept_but_not_grouped() -> None:
     db = Database([rec(id=None, id_method=None), rec()])
-    assert len(db.records) == 2 and len(db.flashes) == 1
+    assert len(db.records) == 2
+    assert len(db.flashes) == 1
 
 
 def test_unknown_source_sorts_last() -> None:
@@ -229,7 +254,9 @@ def test_unknown_source_sorts_last() -> None:
 
 def test_record_properties() -> None:
     r = rec(vendor="mac", id="c22018", file="x.c", line=7)
-    assert r.manufacturer == "Macronix" and r.id_hex == "c22018" and r.url == "x.c:7"
+    assert r.manufacturer == "Macronix"
+    assert r.id_hex == "c22018"
+    assert r.url == "x.c:7"
     assert r.is_jedec
     assert not rec(id_method="rems").is_jedec
     assert rec(id=None).id_hex is None
@@ -289,11 +316,9 @@ def test_strip_continuation() -> None:
 
 
 def test_bad_format(monkeypatch: pytest.MonkeyPatch) -> None:
-    from spiflash import db
-
-    monkeypatch.setattr(db.json, "loads", lambda _text: {"format": 99})
+    monkeypatch.setattr(db_module.json, "loads", lambda _text: {"format": 99})
     with pytest.raises(ValueError, match="unsupported format"):
-        db.Database.load()
+        db_module.Database.load()
 
 
 # --- opcodes -----------------------------------------------------------------
@@ -307,18 +332,21 @@ def test_opcodes_of_a_shipped_chip() -> None:
         assert f.supports(op), op
     assert not f.supports("READ_1_1_8")
     se = f.opcodes["SE"]
-    assert se.opcode == 0xD8 and se.name == "SE" and se.operation.kind == "erase"
+    assert se.opcode == 0xD8
+    assert se.name == "SE"
+    assert se.operation.kind == "erase"
     assert se.sources[0] == "flashrom"  # by source priority
     assert ("openocd", "erase_cmd") in se.because
     doc = f.to_json()["opcodes"]
-    assert {"op": "SE", "opcode": 0xD8, "kind": "erase",
-            "description": "Erase a sector (usually 64 KiB)"}.items() <= next(
-        o for o in doc if o["op"] == "SE").items()
+    assert {
+        "op": "SE",
+        "opcode": 0xD8,
+        "kind": "erase",
+        "description": "Erase a sector (usually 64 KiB)",
+    }.items() <= next(o for o in doc if o["op"] == "SE").items()
 
 
 def test_every_record_opcode_matches_the_table() -> None:
-    from spiflash.opcodes import OPERATIONS
-
     for r in spiflash.records():
         for use in r.opcodes:
             assert OPERATIONS[use.op].opcode == use.opcode, (r.source, r.name, use)
@@ -326,12 +354,19 @@ def test_every_record_opcode_matches_the_table() -> None:
 
 
 def test_opcodes_merge_across_records() -> None:
-    db = Database([
-        rec(source="openocd", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "erase_cmd"}]),
-        rec(source="linux", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "default"},
-                                     {"op": "RDID", "opcode": 0x9F, "via": "id"}]),
-        rec(source="linux", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "default"}]),
-    ])
+    db = Database(
+        [
+            rec(source="openocd", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "erase_cmd"}]),
+            rec(
+                source="linux",
+                opcodes=[
+                    {"op": "SE", "opcode": 0xD8, "via": "default"},
+                    {"op": "RDID", "opcode": 0x9F, "via": "id"},
+                ],
+            ),
+            rec(source="linux", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "default"}]),
+        ]
+    )
     (f,) = db.flashes
     assert list(f.opcodes) == ["RDID", "SE"]
     assert f.opcodes["SE"].because == (("linux", "default"), ("openocd", "erase_cmd"))
@@ -339,8 +374,6 @@ def test_opcodes_merge_across_records() -> None:
 
 
 def test_operations_table() -> None:
-    from spiflash import opcodes
-
     assert opcodes.get("READ_1_1_4").opcode == 0x6B
     with pytest.raises(KeyError):
         opcodes.get("NOPE")
@@ -356,9 +389,12 @@ def test_link_to_the_upstream_line() -> None:
     linux = by_source["linux"]
     commit = db.sources["linux"]["commit"]
     assert db.link(linux) == (
-        f"https://github.com/torvalds/linux/blob/{commit}/{linux.file}#L{linux.line}")
+        f"https://github.com/torvalds/linux/blob/{commit}/{linux.file}#L{linux.line}"
+    )
     # flashprog lives on Gerrit; links go to its GitHub mirror.
-    assert db.link(by_source["flashprog"]).startswith("https://github.com/SourceArcade/flashprog/blob/")
+    assert db.link(by_source["flashprog"]).startswith(
+        "https://github.com/SourceArcade/flashprog/blob/"
+    )
     assert Database([rec(source="nowhere")]).link(rec(source="nowhere")) is None
     other = Database([rec()], sources={"linux": {"url": "https://example.org/x", "commit": "c"}})
     assert other.link(rec()) is None

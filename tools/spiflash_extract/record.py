@@ -6,30 +6,48 @@ id a chip answers, at load time.
 
 Fields (``None`` / empty when the upstream does not say):
 
-``source``       which upstream: ``linux``, ``u-boot``, ``flashrom``, ...
-``file``/``line`` where in that upstream's tree the entry is
-``type``         ``nor`` or ``nand``
-``vendor``       the upstream's own vendor name for the entry
-``name``         the upstream's part name, verbatim
-``id``           hex of the id bytes the chip answers (``9f`` RDID unless
-                 ``id_method`` says otherwise), continuation codes included
-``ext_id``       hex of further id bytes some upstreams match on
-``id_method``    ``rdid`` (JEDEC 0x9F), or the legacy probe: ``rems``,
-                 ``res1``, ``res2``, ``at25f``, ``st95``...
-``size``         bytes; ``None`` where the upstream reads it from SFDP
-``page_size``    program page, bytes
-``sector_size``  the erase unit the upstream uses by default, bytes
-``erasers``      ``[{"opcode": 0x20, "blocks": [[4096, 4096]]}, ...]``
-``features``     normalised capability names (see :data:`FEATURES`)
-``flags``        the upstream's raw flag / feature names, for anything
-                 :data:`FEATURES` does not capture
-``voltage``      ``[min_mV, max_mV]``
-``opcodes``      the operations the entry implies, ``[{"op": "READ_1_1_4",
-                 "opcode": 0x6b, "via": "SPI_NOR_QUAD_READ"}, ...]``: ``op``
-                 a name in ``spiflash.opcodes.OPERATIONS``, ``via`` the
-                 upstream flag, field or default behind it
-``tested``       the upstream's test status, verbatim
-``notes``        comments the upstream attached to the entry or its id
+``source``
+    Which upstream: ``linux``, ``u-boot``, ``flashrom``, ...
+``file``, ``line``
+    Where in that upstream's tree the entry is.
+``type``
+    ``nor`` or ``nand``.
+``vendor``
+    The upstream's own vendor name for the entry.
+``name``
+    The upstream's part name, verbatim.
+``id``
+    Hex of the id bytes the chip answers (to JEDEC read-id, 0x9f, unless
+    ``id_method`` says otherwise), continuation codes included.
+``ext_id``
+    Hex of further id bytes some upstreams match on.
+``id_method``
+    ``rdid`` (JEDEC 0x9f), or the legacy probe: ``rems``, ``res1``, ``res2``,
+    ``at25f``, ``st95``, ...
+``size``
+    Bytes; ``None`` where the upstream reads it from SFDP.
+``page_size``
+    The program page, in bytes.
+``sector_size``
+    The erase unit the upstream uses by default, in bytes.
+``erasers``
+    ``[{"opcode": 0x20, "blocks": [[4096, 4096]]}, ...]``.
+``features``
+    Normalised capability names (see :data:`FEATURES`).
+``flags``
+    The upstream's raw flag and feature names, for anything :data:`FEATURES`
+    does not capture.
+``voltage``
+    ``[min_mV, max_mV]``.
+``opcodes``
+    The operations the entry implies:
+    ``[{"op": "READ_1_1_4", "opcode": 0x6b, "via": "SPI_NOR_QUAD_READ"}, ...]``,
+    ``op`` a name in ``spiflash.opcodes.OPERATIONS`` and ``via`` the upstream
+    flag, field or default behind it.
+``tested``
+    The upstream's test status, verbatim.
+``notes``
+    Comments the upstream attached to the entry or its id.
 """
 
 from __future__ import annotations
@@ -88,11 +106,13 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     """A record with every key present, in the canonical order."""
     unknown = set(fields) - set(KEYS)
     if unknown:
-        raise KeyError(f"unknown record fields: {sorted(unknown)}")
+        msg = f"unknown record fields: {sorted(unknown)}"
+        raise KeyError(msg)
     features = fields.get("features") or []
     bad = set(features) - set(FEATURES)
     if bad:
-        raise ValueError(f"unknown features {sorted(bad)} for {source} {name}")
+        msg = f"unknown features {sorted(bad)} for {source} {name}"
+        raise ValueError(msg)
     rec: Record = dict.fromkeys(KEYS)
     rec.update(
         source=source,

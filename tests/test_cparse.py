@@ -12,7 +12,8 @@ def test_strip_comments_keeps_offsets_and_strings() -> None:
     out = cparse.strip_comments(text)
     assert len(out) == len(text)
     assert out.count("\n") == text.count("\n")
-    assert "one" not in out and "three" not in out
+    assert "one" not in out
+    assert "three" not in out
     assert '"http://x"' in out
 
 
@@ -132,5 +133,6 @@ def test_bit_names_expands_composites_and_masks() -> None:
 def test_line_of_and_drop_preprocessor() -> None:
     text = "a\n#ifdef X\nb\n#endif\n"
     out = cparse.drop_preprocessor(text)
-    assert len(out) == len(text) and "#" not in out
+    assert len(out) == len(text)
+    assert "#" not in out
     assert cparse.line_of(text, text.index("b")) == 3

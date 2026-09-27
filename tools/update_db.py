@@ -17,7 +17,10 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+# Run from a checkout, the package and the extractors are not installed:
+# spiflash is in src/, spiflash_extract beside this script.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from spiflash_extract import fetch, flashrom, linux, openfpgaloader, openocd, uboot
 
@@ -105,8 +108,10 @@ def main(argv: list[str] | None = None) -> int:
         stale = [n for n, text in files.items() if (DATA / n).read_text() != text]
         if stale:
             print(f"out of date: {', '.join(stale)}", file=sys.stderr)
-            print("run `uv run tools/update_db.py" + (" --latest" if args.latest else "") + "`",
-                  file=sys.stderr)
+            print(
+                "run `uv run tools/update_db.py" + (" --latest" if args.latest else "") + "`",
+                file=sys.stderr,
+            )
             return 1
         print("data is up to date", file=sys.stderr)
         return 0

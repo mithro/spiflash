@@ -37,7 +37,8 @@ def extract(root: Path) -> list[Record]:
     text = cparse.drop_preprocessor(cparse.strip_comments(raw))
     table = cparse.array_body(text, r"std::map\s*<\s*uint32_t\s*,\s*flash_t\s*>\s*flash_list")
     if table is None:
-        raise ValueError(f"{DB}: no flash_list map")
+        msg = f"{DB}: no flash_list map"
+        raise ValueError(msg)
     symbols: dict[str, str | int] = {
         "STATR": 0,
         "FUNCR": 1,

@@ -39,13 +39,15 @@ def parse_id(value: str | bytes | bytearray | int | Iterable[int]) -> bytes:
         return bytes(value)
     if isinstance(value, int):
         if value < 0:
-            raise ValueError("an id cannot be negative")
+            msg = "an id cannot be negative"
+            raise ValueError(msg)
         return value.to_bytes(max(1, (value.bit_length() + 7) // 8), "big")
     if isinstance(value, str):
         s = re.sub(r"[\s:_-]", "", value.strip().lower())
         s = s.removeprefix("0x")
         if not s or len(s) % 2 or not re.fullmatch(r"[0-9a-f]+", s):
-            raise ValueError(f"not a hex id: {value!r}")
+            msg = f"not a hex id: {value!r}"
+            raise ValueError(msg)
         return bytes.fromhex(s)
     return bytes(value)
 
@@ -183,7 +185,7 @@ def part_names(name: str) -> tuple[str, ...]:
             continue
         # "w25q128fv/jv": a second half that is not itself a part number
         # (letters then two digits) replaces the tail of the first.
-        if out and len(tok) < len(out[0]) and not re.match(r"[a-z]{1,5}\d{2}", tok, re.I):
+        if out and len(tok) < len(out[0]) and not re.match(r"[a-z]{1,5}\d{2}", tok, re.IGNORECASE):
             tok = out[0][: len(out[0]) - len(tok)] + tok
         out.append(tok.upper())
     return tuple(dict.fromkeys(out))
@@ -345,8 +347,7 @@ class Flash:
         keep = tuple(
             r
             for r in self.records
-            if r.ext_id is None
-            or r.ext_id[: len(ext)] == ext[: len(r.ext_id)]
+            if r.ext_id is None or r.ext_id[: len(ext)] == ext[: len(r.ext_id)]
         )
         return Flash(self.id, self.type, keep or self.records, self.bank, self.family)
 
@@ -376,13 +377,19 @@ class Flash:
             ],
             "sources": list(self.sources),
             "conflicts": {
-                k: [{"value": list(v) if isinstance(v, tuple) else v, "sources": list(s)}
-                    for v, s in vals.items()]
+                k: [
+                    {"value": list(v) if isinstance(v, tuple) else v, "sources": list(s)}
+                    for v, s in vals.items()
+                ]
                 for k, vals in self.conflicts.items()
             },
             "records": [
-                {"source": r.source, "name": r.name, "at": r.url,
-                 "ext_id": r.ext_id.hex() if r.ext_id else None}
+                {
+                    "source": r.source,
+                    "name": r.name,
+                    "at": r.url,
+                    "ext_id": r.ext_id.hex() if r.ext_id else None,
+                }
                 for r in self.records
             ],
         }

@@ -81,7 +81,8 @@ def matching(text: str, start: int) -> int:
         if c == '"':
             m = _STRING.match(text, i)
             if m is None:
-                raise ValueError(f"unterminated string at {i}")
+                msg = f"unterminated string at {i}"
+                raise ValueError(msg)
             i = m.end()
             continue
         if c in _OPEN:
@@ -91,7 +92,8 @@ def matching(text: str, start: int) -> int:
             if depth == 0:
                 return i
         i += 1
-    raise ValueError(f"unbalanced bracket at {start}")
+    msg = f"unbalanced bracket at {start}"
+    raise ValueError(msg)
 
 
 def split_top(text: str, sep: str = ",") -> list[str]:
@@ -176,7 +178,8 @@ def c_string(expr: str) -> str:
     """The value of a C string literal, adjacent literals concatenated."""
     pieces = _STRING.findall(expr)
     if not pieces:
-        raise ValueError(f"not a string literal: {expr!r}")
+        msg = f"not a string literal: {expr!r}"
+        raise ValueError(msg)
     out = []
     for p in pieces:
         s = p[1:-1]
@@ -298,7 +301,8 @@ class _Evaluator:
             # Parenthesised, so an expression spanning lines still parses.
             tree = ast.parse(f"({py})", mode="eval")
         except SyntaxError as e:
-            raise EvalError(f"cannot parse {expr!r}") from e
+            msg = f"cannot parse {expr!r}"
+            raise EvalError(msg) from e
         return self.node(tree.body, stack)
 
     def node(self, n: ast.expr, stack: tuple[str, ...]) -> int:
@@ -323,17 +327,20 @@ class _Evaluator:
             and not n.keywords
         ):
             return _FUNCS[n.func.id](*(self.node(a, stack) for a in n.args))
-        raise EvalError(f"unsupported expression: {ast.unparse(n)}")
+        msg = f"unsupported expression: {ast.unparse(n)}"
+        raise EvalError(msg)
 
     def name(self, ident: str, stack: tuple[str, ...]) -> int:
         if ident in stack:
-            raise EvalError(f"recursive definition of {ident}")
+            msg = f"recursive definition of {ident}"
+            raise EvalError(msg)
         if ident in self.symbols:
             v = self.symbols[ident]
             return v if isinstance(v, int) else self.value(v, (*stack, ident))
         if ident in SIZES:
             return SIZES[ident]
-        raise EvalError(f"unknown identifier {ident}")
+        msg = f"unknown identifier {ident}"
+        raise EvalError(msg)
 
 
 def flag_names(expr: str) -> list[str]:
@@ -342,8 +349,8 @@ def flag_names(expr: str) -> list[str]:
     ``0`` gives ``[]``."""
     names = []
     for part in split_top(expr, "|"):
-        part = part.strip().strip("()").strip()
-        if part in ("", "0"):
+        name = part.strip().strip("()").strip()
+        if name in ("", "0"):
             continue
-        names.append(part)
+        names.append(name)
     return names

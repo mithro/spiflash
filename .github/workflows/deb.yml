@@ -30,8 +30,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The same gates as local development (ruff, mypy --strict, pytest with
-  # coverage), across the supported Pythons. Whether the data matches the
+  # The same gates as local development (ruff lint and format, mypy --strict,
+  # pytest with coverage), across the supported Pythons. The docs group is
+  # installed so mypy checks the documentation's Sphinx extension too. Whether the data matches the
   # upstreams is upstream.yml's job: it needs the network.
   test:
     runs-on: ubuntu-24.04
@@ -63,11 +64,14 @@ jobs:
       - name: Install the matrix Python
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Sync the dev group
-        run: uv sync --dev --python ${{ matrix.python-version }}
+      - name: Sync the dev and docs groups
+        run: uv sync --group dev --group docs --python ${{ matrix.python-version }}
 
       - name: Lint (ruff)
         run: uv run ruff check
+
+      - name: Format (ruff)
+        run: uv run ruff format --check
 
       - name: Type-check (mypy --strict)
         run: uv run mypy
