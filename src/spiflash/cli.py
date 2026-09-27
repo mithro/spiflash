@@ -3,6 +3,7 @@
     spiflash id ef4018            which chip answers this JEDEC id?
     spiflash find w25q128jv       which ids does this part answer?
     spiflash list --manufacturer winbond
+    spiflash opcodes ef4018       which opcodes does it support? (an id or a part name)
     spiflash jep106 c2            the JEP106 manufacturer of an id byte
     spiflash sources              where the data came from
 """
@@ -15,7 +16,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from . import __version__
-from .db import database
+from .db import Database, database
 from .model import Flash, parse_id
 
 if TYPE_CHECKING:
@@ -31,7 +32,24 @@ def human_size(n: int | None) -> str:
     return f"{n} B"
 
 
-def describe(f: Flash, verbose: bool = False) -> str:
+def opcode_table(f: Flash, verbose: bool = False) -> list[str]:
+    """The operations a chip supports, one per line: opcode, name, what it
+    does, and who says so (with -v, why each source says so)."""
+    if not f.opcodes:
+        return ["    no opcodes known (the sources describe none for this part)"]
+    width = max(len(o.name) for o in f.opcodes.values())
+    lines = []
+    for o in f.opcodes.values():
+        head = f"    0x{o.opcode:02x}  {o.name:<{width}}  {o.operation.description}"
+        if verbose:
+            lines.append(head)
+            lines.extend(f"          {src:15} {via}" for src, via in o.because)
+        else:
+            lines.append(f"{head}  [{', '.join(o.sources)}]")
+    return lines
+
+
+def describe(f: Flash, verbose: bool = False, opcodes: bool = False) -> str:
     lines = [
         f"{f.jedec_id if f.family == 'jedec' else f.family + ':' + f.id_hex}  "
         f"{f.manufacturer or '?'}  {', '.join(f.names)}  ({f.type})"
@@ -55,16 +73,28 @@ def describe(f: Flash, verbose: bool = False) -> str:
             lines.append(f"    {r.source:15} {r.name}{ext}  [{r.url}]")
     else:
         lines.append("    from: " + ", ".join(f.sources))
+    if opcodes:
+        lines.append("    opcodes:")
+        lines.extend(opcode_table(f, verbose))
     return "\n".join(lines)
 
 
-def _emit(found: Sequence[Flash], as_json: bool, verbose: bool) -> int:
+def _emit(found: Sequence[Flash], as_json: bool, verbose: bool, opcodes: bool = False) -> int:
     if as_json:
         json.dump([f.to_json() for f in found], sys.stdout, indent=1)
         sys.stdout.write("\n")
     else:
-        print("\n\n".join(describe(f, verbose) for f in found))
+        print("\n\n".join(describe(f, verbose, opcodes) for f in found))
     return 0 if found else 1
+
+
+def _resolve(db: Database, query: str) -> list[Flash]:
+    """An id if ``query`` reads as one and matches, else a part name."""
+    try:
+        found = db.lookup(query)
+    except ValueError:
+        found = []
+    return found or db.find(query)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -78,6 +108,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", help="print JSON")
     common.add_argument("-v", "--verbose", action="store_true", help="list every upstream entry")
+    common.add_argument("--opcodes", action="store_true", help="list the supported opcodes")
     sub = ap.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("id", parents=[common], help="look up a JEDEC read-id (0x9F) answer")
@@ -92,6 +123,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--manufacturer")
     p.add_argument("--type", choices=["nor", "nand"])
 
+    p = sub.add_parser("opcodes", parents=[common], help="the opcodes a chip supports")
+    p.add_argument("query", help="a JEDEC id (ef4018) or a part name (W25Q128JV)")
+
     p = sub.add_parser("jep106", help="name the manufacturer of an id byte")
     p.add_argument("id", help="the id byte in hex, with any 7f continuation codes before it")
 
@@ -102,16 +136,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "id":
             return _emit(db.lookup(args.id, type=args.type, method=args.method), args.json,
-                         args.verbose)
+                         args.verbose, args.opcodes)
         if args.command == "find":
-            return _emit(db.find(args.name), args.json, args.verbose)
-        if args.command == "list":
-            found = db.by_manufacturer(args.manufacturer) if args.manufacturer else db.flashes
-            if args.type:
-                found = [f for f in found if f.type == args.type]
-            if args.json or args.verbose:
-                return _emit(list(found), args.json, args.verbose)
+            return _emit(db.find(args.name), args.json, args.verbose, args.opcodes)
+        if args.command == "opcodes":
+            found = _resolve(db, args.query)
+            if args.json:
+                return _emit(found, True, False)
             for f in found:
+                print(f"{f.jedec_id}  {f.manufacturer or '?'}  {', '.join(f.names)}  ({f.type})")
+                print("\n".join(opcode_table(f, args.verbose)))
+                print()
+            return 0 if found else 1
+        if args.command == "list":
+            listed = list(
+                db.by_manufacturer(args.manufacturer) if args.manufacturer else db.flashes
+            )
+            if args.type:
+                listed = [f for f in listed if f.type == args.type]
+            if args.json or args.verbose:
+                return _emit(listed, args.json, args.verbose, args.opcodes)
+            for f in listed:
                 print(f"{f.jedec_id:10} {f.type:4} {f.manufacturer or '?':14} "
                       f"{human_size(f.size):>8}  {', '.join(f.names)}")
             return 0

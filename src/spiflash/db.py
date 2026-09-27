@@ -26,10 +26,15 @@ class Manufacturer:
     name: str
 
 
+#: The data files' format; tools/update_db.py writes the same number.
+#: 2: records' ``opcodes`` became a list of {op, opcode, via}.
+FORMAT = 2
+
+
 def _read(name: str) -> dict[str, Any]:
     text = resources.files("spiflash").joinpath("data", name).read_text(encoding="utf-8")
     data: dict[str, Any] = json.loads(text)
-    if data.get("format") != 1:
+    if data.get("format") != FORMAT:
         raise ValueError(f"{name}: unsupported format {data.get('format')!r}")
     return data
 

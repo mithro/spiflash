@@ -18,7 +18,8 @@ publishes.
 
 ```
 src/spiflash/          the package: model.py (Record, Flash), db.py (loading,
-                       lookup, find), vendors.py (one name per vendor), cli.py
+                       lookup, find), opcodes.py (the named operations),
+                       vendors.py (one name per vendor), cli.py
 src/spiflash/data/     generated: records.json, manufacturers.json, sources.json
 tools/sources.toml     the upstream commits the data is built from
 tools/update_db.py     fetch, extract, write the data
@@ -26,6 +27,8 @@ tools/spiflash_extract/
     cparse.py          just enough C: find tables, split initialisers,
                        evaluate integer expressions (SZ_16M, BIT(3), 64 * 1024)
     record.py          the common record every extractor writes
+    ops.py             each record's opcodes, values checked against
+                       src/spiflash/opcodes.py
     linux.py uboot.py flashrom.py openocd.py openfpgaloader.py
     fetch.py           sparse, blobless, depth-1 fetch of one commit
 ```

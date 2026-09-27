@@ -24,7 +24,10 @@ Fields (``None`` / empty when the upstream does not say):
 ``flags``        the upstream's raw flag / feature names, for anything
                  :data:`FEATURES` does not capture
 ``voltage``      ``[min_mV, max_mV]``
-``opcodes``      named opcodes, e.g. ``{"read": 3, "qread": 235}``
+``opcodes``      the operations the entry implies, ``[{"op": "READ_1_1_4",
+                 "opcode": 0x6b, "via": "SPI_NOR_QUAD_READ"}, ...]``: ``op``
+                 a name in ``spiflash.opcodes.OPERATIONS``, ``via`` the
+                 upstream flag, field or default behind it
 ``tested``       the upstream's test status, verbatim
 ``notes``        comments the upstream attached to the entry or its id
 """
@@ -101,6 +104,7 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         features=[],
         flags=[],
         notes=[],
+        opcodes=[],
     )
     rec.update(fields)
     rec["features"] = sorted(set(rec["features"]))

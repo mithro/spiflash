@@ -85,3 +85,35 @@ def test_version(capsys: pytest.CaptureFixture[str]) -> None:
 )
 def test_human_size(n: int | None, text: str) -> None:
     assert cli.human_size(n) == text
+
+
+def test_opcodes_by_id_and_by_name(capsys: pytest.CaptureFixture[str]) -> None:
+    code, out = run(capsys, "opcodes", "ef4018")
+    assert code == 0
+    assert out.startswith("ef4018  Winbond  ")
+    assert "    0x6b  READ_1_1_4" in out and "Quad output fast read" in out
+    code, by_name = run(capsys, "opcodes", "W25Q128JV")
+    assert code == 0 and by_name.startswith(out.splitlines()[0])
+    assert run(capsys, "opcodes", "NOT-A-PART-XYZ")[0] == 1
+
+
+def test_opcodes_verbose_says_why(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "opcodes", "-v", "ef4018")
+    assert "          linux           SPI_NOR_QUAD_READ" in out
+    assert "          openocd         erase_cmd" in out
+
+
+def test_opcodes_json(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "opcodes", "--json", "ef4018")
+    (doc,) = json.loads(out)
+    assert any(o["op"] == "READ_1_1_4" and o["opcode"] == 0x6B for o in doc["opcodes"])
+
+
+def test_id_with_opcodes_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "--opcodes", "ef4018")
+    assert "    opcodes:" in out and "0x9f  RDID" in out
+
+
+def test_opcodes_none_known(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "opcodes", "--", "c220")  # a SPI NAND: no NOR opcodes
+    assert "no opcodes known" in out

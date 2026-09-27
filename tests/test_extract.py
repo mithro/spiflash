@@ -27,6 +27,11 @@ def by_name(recs: list[record.Record]) -> dict[str, record.Record]:
     return {r["name"]: r for r in recs}
 
 
+def ops(rec: record.Record) -> dict[str, tuple[int, str]]:
+    """A record's opcodes as {op: (opcode, via)}."""
+    return {o["op"]: (o["opcode"], o["via"]) for o in rec["opcodes"]}
+
+
 LINUX_CORE_H = """
 #define SPI_NOR_DEFAULT_SECTOR_SIZE SZ_64K
 struct flash_info {
@@ -42,6 +47,33 @@ struct flash_info {
 	u8 fixup_flags;
 #define SPI_NOR_4B_OPCODES		BIT(0)
 };
+"""
+
+SPINOR_H = """
+#define SPINOR_OP_RDID		0x9f	/* Read JEDEC ID */
+#define SPINOR_OP_RDSFDP	0x5a	/* Read SFDP */
+#define SPINOR_OP_READ		0x03	/* Read data bytes (low frequency) */
+#define SPINOR_OP_READ_FAST	0x0b	/* Read data bytes (high frequency) */
+#define SPINOR_OP_READ_1_1_2	0x3b	/* Read data bytes (Dual Output SPI) */
+#define SPINOR_OP_READ_1_1_4	0x6b	/* Read data bytes (Quad Output SPI) */
+#define SPINOR_OP_PP		0x02	/* Page program (up to 256 bytes) */
+#define SPINOR_OP_PP_1_1_4	0x32	/* Quad page program */
+#define SPINOR_OP_BE_4K		0x20	/* Erase 4KiB block */
+#define SPINOR_OP_BE_4K_PMC	0xd7	/* Erase 4KiB block on PMC chips */
+#define SPINOR_OP_CHIP_ERASE	0xc7	/* Erase whole flash chip */
+#define SPINOR_OP_SE		0xd8	/* Sector erase (usually 64KiB) */
+#define SPINOR_OP_READ_4B	0x13	/* Read data bytes (low frequency) */
+#define SPINOR_OP_READ_FAST_4B	0x0c	/* Read data bytes (high frequency) */
+#define SPINOR_OP_READ_1_1_2_4B	0x3c	/* Read data bytes (Dual Output SPI) */
+#define SPINOR_OP_READ_1_1_4_4B	0x6c	/* Read data bytes (Quad Output SPI) */
+#define SPINOR_OP_PP_4B		0x12	/* Page program (up to 256 bytes) */
+#define SPINOR_OP_PP_1_1_4_4B	0x34	/* Quad page program */
+#define SPINOR_OP_BE_4K_4B	0x21	/* Erase 4KiB block */
+#define SPINOR_OP_SE_4B		0xdc	/* Sector erase (usually 64KiB) */
+#define SPINOR_OP_BP		0x02	/* Byte program */
+#define SPINOR_OP_AAI_WP	0xad	/* Auto address increment word program */
+#define SPINOR_OP_RDFSR		0x70	/* Read flag status register */
+#define SPINOR_OP_CLSR		0x30	/* Clear status register 1 */
 """
 
 LINUX_WINBOND = """
@@ -125,6 +157,7 @@ def linux_tree(tmp_path: Path) -> Path:
         tmp_path,
         {
             "drivers/mtd/spi-nor/core.h": LINUX_CORE_H,
+            linux.SPINOR_H: SPINOR_H,
             "drivers/mtd/spi-nor/core.c": "static const struct flash_info x[] = { {} };",
             "drivers/mtd/spi-nor/winbond.c": LINUX_WINBOND,
             "drivers/mtd/spi-nor/spansion.c": LINUX_SPANSION,
@@ -142,6 +175,19 @@ def test_linux_nor(linux_tree: Path) -> None:
     assert w["vendor"] == "winbond"
     assert w["size"] == 16 << 20 and w["page_size"] == 256 and w["sector_size"] == 65536
     assert w["features"] == ["dual_read", "erase_4k", "erase_64k", "lock", "quad_read"]
+    # core.c's defaults, plus what the no_sfdp_flags set up.
+    assert ops(w) == {
+        "RDID": (0x9F, "JEDEC id match (spi_nor_match_id)"),
+        "READ_1_1_1": (0x03, "default (spi_nor_init_default_params)"),
+        "READ_1_1_1_FAST": (0x0B, "default (spi_nor_init_default_params)"),
+        "READ_1_1_2": (0x3B, "SPI_NOR_DUAL_READ"),
+        "READ_1_1_4": (0x6B, "SPI_NOR_QUAD_READ"),
+        "PP_1_1_1": (0x02, "default (spi_nor_init_default_params)"),
+        "BE_4K": (0x20, "SECT_4K"),
+        "SE": (0xD8, "default sector erase (spi_nor_no_sfdp_init_params)"),
+        "CHIP_ERASE": (0xC7, "default (spi_nor_erase)"),
+    }
+    assert [o["op"] for o in w["opcodes"]][:2] == ["RDID", "READ_1_1_1"]  # id, read, ...
     assert "SPI_NOR_HAS_TB" in w["flags"]
     assert w["notes"] == ["Flavors w/ and w/o SFDP."]
     assert w["file"] == "drivers/mtd/spi-nor/winbond.c"
@@ -150,8 +196,12 @@ def test_linux_nor(linux_tree: Path) -> None:
     j = r["W25Q01JV"]
     assert j["id"] == "ef4021" and j["size"] is None and "sfdp" in j["features"]
 
+    assert "RDSFDP" in ops(j) and "SE" not in ops(j)
     big = r["w25q512jvq"]
     assert {"4byte_addr", "4byte_opcodes", "otp"} <= set(big["features"])
+    assert ops(big)["READ_1_1_1_4B"] == (0x13, "SPI_NOR_4B_OPCODES")
+    assert ops(big)["SE_4B"] == (0xDC, "SPI_NOR_4B_OPCODES")
+    assert ops(big)["PP_1_1_1_4B"] == (0x12, "SPI_NOR_4B_OPCODES")
 
     # Neither a name nor a comment: named by vendor and id.
     assert r["winbond-ef60"]["notes"] == ["Linux gives this entry no name"]
@@ -183,6 +233,7 @@ def test_linux_bad_id(tmp_path: Path) -> None:
         tmp_path,
         {
             "drivers/mtd/spi-nor/core.h": LINUX_CORE_H,
+            linux.SPINOR_H: SPINOR_H,
             "drivers/mtd/spi-nor/x.c": "static const struct flash_info x_parts[] = "
             "{ { .id = SOMETHING_ELSE(1), .name = \"x\" } };",
         },
@@ -237,12 +288,19 @@ const struct flash_info spi_nor_ids[] = {
 
 
 def test_uboot(tmp_path: Path) -> None:
-    write(tmp_path, {uboot.IDS: UBOOT_IDS, uboot.FLAGS_H: UBOOT_FLAGS})
+    write(tmp_path, {uboot.IDS: UBOOT_IDS, uboot.FLAGS_H: UBOOT_FLAGS, uboot.SPINOR_H: SPINOR_H})
     r = by_name(uboot.extract(tmp_path))
     assert set(r) == {"w25q128", "w25q512", "s25fl128s", "s25sl12800", "mb85rs256ty"}
     w = r["w25q128"]
     assert w["vendor"] == "winbond" and w["id"] == "ef4018" and w["size"] == 16 << 20
     assert w["features"] == ["dual_read", "erase_4k", "erase_64k", "fast_read"]
+    assert set(ops(w)) == {"RDID", "READ_1_1_1", "READ_1_1_1_FAST", "READ_1_1_2", "PP_1_1_1",
+                           "BE_4K", "SE", "CHIP_ERASE"}
+    # SPI_NOR_QUAD_READ gives U-Boot's PP_1_1_4 too; 4B_OPCODES the 4-byte forms.
+    w512 = ops(r["w25q512"])
+    assert w512["PP_1_1_4"] == (0x32, "SPI_NOR_QUAD_READ")
+    assert w512["PP_1_1_4_4B"] == (0x34, "SPI_NOR_4B_OPCODES")
+    assert "READ_1_1_1_FAST" not in ops(r["s25fl128s"])  # SPI_NOR_NO_FR
     assert {"4byte_addr", "4byte_opcodes", "quad_read"} <= set(r["w25q512"]["features"])
     s = r["s25fl128s"]
     assert s["vendor"] == "spansion" and s["ext_id"] == "4d0180"
@@ -255,7 +313,7 @@ def test_uboot(tmp_path: Path) -> None:
 
 
 def test_uboot_no_table(tmp_path: Path) -> None:
-    write(tmp_path, {uboot.IDS: "int x;", uboot.FLAGS_H: ""})
+    write(tmp_path, {uboot.IDS: "int x;", uboot.FLAGS_H: "", uboot.SPINOR_H: ""})
     with pytest.raises(ValueError, match="no spi_nor_ids"):
         uboot.extract(tmp_path)
 
@@ -287,6 +345,21 @@ FLASH_H = """
 #define FEATURE_DIO		(FEATURE_FAST_READ | FEATURE_FAST_READ_DOUT)
 #define FEATURE_QIO		(FEATURE_DIO | FEATURE_FAST_READ_QOUT)
 #define FEATURE_QPI_38		(FEATURE_QIO | FEATURE_QPI_38_FF)
+"""
+
+FLASHROM_SPI_H = """
+#define JEDEC_RDID		0x9f
+#define JEDEC_REMS		0x90
+#define JEDEC_SFDP		0x5a
+#define JEDEC_RES		0xab
+#define JEDEC_WRSR		0x01
+#define JEDEC_EWSR		0x50
+#define JEDEC_READ		0x03
+#define JEDEC_FAST_READ		0x0b /* with 8 cycles delay after sending address */
+#define JEDEC_FAST_READ_DOUT	0x3b /* with 8 cycles delay and dual output */
+#define JEDEC_BYTE_PROGRAM		0x02
+#define JEDEC_AAI_WORD_PROGRAM			0xad
+#define JEDEC_READ_4BA		0x13
 """
 
 FLASHROM_EON = """
@@ -409,6 +482,7 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
         {
             flashrom.HEADER: FLASHROM_H,
             flashrom.FLASH_H: FLASH_H,
+            flashrom.SPI_H: FLASHROM_SPI_H,
             "flashchips/eon.c": FLASHROM_EON,
             "flashchips.c": '#include "flashchips/eon.c"',
         },
@@ -445,6 +519,18 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
     }
     assert len(e["erasers"]) == 4
     assert e["voltage"] == [2700, 3600] and e["tested"] == "TEST_OK_PREW"
+    assert ops(e) == {
+        "RDID": (0x9F, "probe (rdid)"),
+        "RDSFDP": (0x5A, "comment: supports SFDP"),
+        "READ_1_1_1_FAST": (0x0B, "FEATURE_FAST_READ"),
+        "READ_1_1_2": (0x3B, "FEATURE_FAST_READ_DOUT"),
+        "BE_4K": (0x20, "block_erasers (4096 x 4096)"),
+        "SE": (0xD8, "block_erasers (256 x 65536)"),
+        "CHIP_ERASE": (0xC7, "block_erasers (1 x 16777216)"),
+        "WRSR": (0x01, "FEATURE_WRSR_WREN"),
+        "EQPI_38": (0x38, "FEATURE_QPI_38_FF"),
+        "RSTQIO_FF": (0xFF, "FEATURE_QPI_38_FF"),
+    }
     assert "EON_ID_NOPREFIX: EON, missing 0x7F prefix" in e["notes"]
 
     s = r["S25FL128S_UL Uniform 128 kB Sectors"]
@@ -457,7 +543,8 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
 def test_flashprog_single_file(tmp_path: Path) -> None:
     write(
         tmp_path,
-        {flashrom.HEADER: FLASHROM_H, flashrom.FLASH_H: FLASH_H, "flashchips.c": FLASHPROG_C},
+        {flashrom.HEADER: FLASHROM_H, flashrom.FLASH_H: FLASH_H, flashrom.SPI_H: FLASHROM_SPI_H,
+         "flashchips.c": FLASHPROG_C},
     )
     (e,) = flashrom.extract(tmp_path, "flashprog")
     assert e["source"] == "flashprog" and e["id"] == "1c7018"
@@ -466,7 +553,8 @@ def test_flashprog_single_file(tmp_path: Path) -> None:
 
 
 def test_flashrom_errors(tmp_path: Path) -> None:
-    write(tmp_path, {flashrom.HEADER: FLASHROM_H, flashrom.FLASH_H: FLASH_H})
+    write(tmp_path, {flashrom.HEADER: FLASHROM_H, flashrom.FLASH_H: FLASH_H,
+                     flashrom.SPI_H: FLASHROM_SPI_H})
     write(tmp_path, {"flashchips.c": "int nothing;"})
     with pytest.raises(ValueError, match=r"no flashchips\[\]"):
         flashrom.extract(tmp_path, "flashprog")
@@ -483,9 +571,14 @@ const struct flash_device flash_devices[] = {
 	FLASH_ID("win w25q128fv/jv",    0x03, 0xeb, 0x02, 0xd8, 0xc7, 0x001840ef, 0x100, 0x10000, 0x1000000),
 	FLASH_ID("issi is25wp512m",     0x13, 0xec, 0x12, 0xdc, 0xc7, 0x001a709d, 0x100, 0x10000, 0x4000000),
 	FLASH_ID("gd gd25q512",         0x03, 0x00, 0x02, 0x20, 0x00, 0x001040c8, 0x100, 0x1000,  0x10000),
+	FLASH_ID("sp s25fl008",         0x03, 0x08, 0x02, 0xd8, 0xc7, 0x00130201, 0x100, 0x10000, 0x100000),
 	FRAM_ID("cyp fm25v02",          0x03, 0,    0x02, 0x060022c2, 0x8000), /* exists ? */
 	FLASH_ID(NULL,                  0,    0,    0,    0,    0,    0,          0,     0,       0)
 };
+"""
+
+OPENOCD_SPI_H = """
+#define SPIFLASH_READ_ID		0x9F /* Read Flash Identification */
 """
 
 JEP106_INC = """
@@ -496,12 +589,25 @@ JEP106_INC = """
 
 
 def test_openocd(tmp_path: Path) -> None:
-    write(tmp_path, {openocd.SPI_C: OPENOCD_SPI_C, openocd.JEP106: JEP106_INC})
+    write(tmp_path, {openocd.SPI_C: OPENOCD_SPI_C, openocd.SPI_H: OPENOCD_SPI_H, openocd.JEP106: JEP106_INC})
     r = by_name(openocd.extract(tmp_path))
-    assert set(r) == {"w25q128fv/jv", "is25wp512m", "gd25q512", "fm25v02"}
+    assert set(r) == {"w25q128fv/jv", "is25wp512m", "gd25q512", "s25fl008", "fm25v02"}
+    # A byte OpenOCD holds that is no known operation is noted, not guessed.
+    s008 = r["s25fl008"]
+    assert "OpenOCD's qread_cmd is 0x08, which is not a known operation" in s008["notes"]
+    assert "quad_read" not in s008["features"]
+    assert set(ops(r["fm25v02"])) == {"RDID", "READ_1_1_1", "PP_1_1_1"}
     w = r["w25q128fv/jv"]
     assert w["vendor"] == "win" and w["id"] == "ef4018"
-    assert w["opcodes"] == {"read": 3, "qread": 0xEB, "pp": 2, "erase": 0xD8, "chip_erase": 0xC7}
+    assert ops(w) == {
+        "RDID": (0x9F, "probe (SPIFLASH_READ_ID)"),
+        "READ_1_1_1": (0x03, "read_cmd"),
+        "READ_1_4_4": (0xEB, "qread_cmd"),
+        "PP_1_1_1": (0x02, "pprog_cmd"),
+        "SE": (0xD8, "erase_cmd"),
+        "CHIP_ERASE": (0xC7, "chip_erase_cmd"),
+    }
+    assert ops(r["is25wp512m"])["READ_1_4_4_4B"] == (0xEC, "qread_cmd")
     assert w["erasers"] == [
         {"opcode": 0xD8, "blocks": [[65536, 256]]},
         {"opcode": 0xC7, "blocks": [[16 << 20, 1]]},
@@ -509,7 +615,7 @@ def test_openocd(tmp_path: Path) -> None:
     assert w["features"] == ["erase_64k", "quad_read"]
     assert "4byte_addr" in r["is25wp512m"]["features"]
     g = r["gd25q512"]
-    assert g["features"] == ["erase_4k"] and "chip_erase" not in g["opcodes"]
+    assert g["features"] == ["erase_4k"] and "CHIP_ERASE" not in ops(g)
     f = r["fm25v02"]
     assert f["id"] == "7f7f7f7f7f7fc22200" and f["features"] == ["no_erase"]
     assert f["notes"] == ["exists ?", "FRAM"] and f["page_size"] is None
@@ -562,19 +668,35 @@ static std::map <uint32_t, flash_t> flash_list = {
 """
 
 
+OFL_CPP = """
+#define FLASH_PP       0x02
+#define FLASH_4PP      0x12
+#define FLASH_READ     0x03
+#define FLASH_4READ    0x13
+#define FLASH_SE       0x20
+#define FLASH_4SE      0x21
+#define FLASH_BE64     0xD8
+#define FLASH_4BE64    0xDC
+"""
+
+
 def test_openfpgaloader(tmp_path: Path) -> None:
-    write(tmp_path, {openfpgaloader.DB: OFL_DB})
+    write(tmp_path, {openfpgaloader.DB: OFL_DB, openfpgaloader.FLASH_CPP: OFL_CPP})
     r = by_name(openfpgaloader.extract(tmp_path))
     s = r["S25FL256S"]
     assert s["id"] == "010219" and s["vendor"] == "spansion" and s["size"] == 32 << 20
     assert s["features"] == ["4byte_addr", "erase_64k", "lock", "quad_read"]
     assert "quad_register=CONFR" in s["flags"]
     assert s["notes"][0].startswith("https://www.mouser.fr/")
+    # 32 MiB: the 4-byte forms too; no subsector_erase, so no BE_4K.
+    assert set(ops(s)) == {"RDID", "READ_1_1_1", "READ_1_1_1_4B", "PP_1_1_1", "PP_1_1_1_4B",
+                           "SE", "SE_4B"}
+    assert ops(s)["SE"] == (0xD8, "sector_erase = true")
     assert r["W25Q128"]["features"] == ["erase_4k", "erase_64k"]
 
 
 def test_openfpgaloader_no_map(tmp_path: Path) -> None:
-    write(tmp_path, {openfpgaloader.DB: "int x;"})
+    write(tmp_path, {openfpgaloader.DB: "int x;", openfpgaloader.FLASH_CPP: ""})
     with pytest.raises(ValueError, match="no flash_list"):
         openfpgaloader.extract(tmp_path)
 
@@ -586,3 +708,31 @@ def test_record_make_validates() -> None:
         record.make("x", "f", 1, "n", features=["telepathy"])
     r = record.make("x", "f", 1, "n", features=["otp", "lock", "otp"])
     assert list(r) == list(record.KEYS) and r["features"] == ["lock", "otp"]
+
+
+def test_opcodes_checks_values_against_the_table() -> None:
+    from spiflash_extract.ops import Opcodes
+
+    o = Opcodes({"MY_READ": "0x03", "WRONG": "0x04"})
+    o.add("READ_1_1_1", "first", "MISSING", "MY_READ")
+    o.add("READ_1_1_1", "second")  # a second reason for the same operation
+    o.add("READ_1_1_1", "first")  # a repeated reason is kept once
+    assert "READ_1_1_1" in o
+    assert o.to_json() == [{"op": "READ_1_1_1", "opcode": 3, "via": "first; second"}]
+    with pytest.raises(ValueError, match=r"upstream says 0x04, spiflash's table 0x03"):
+        o.add("READ_1_1_1", "bad header", "WRONG")
+    with pytest.raises(ValueError, match="upstream says 0x99"):
+        o.add("SE", "bad value", value=0x99)
+    with pytest.raises(KeyError, match="unknown operation"):
+        o.add("TELEPORT", "x")
+    o.discard("READ_1_1_1")
+    o.discard("READ_1_1_1")
+    assert o.to_json() == []
+
+
+def test_flashrom_erase_opcode_without_an_operation(tmp_path: Path) -> None:
+    write(tmp_path, {flashrom.HEADER: FLASHROM_H, flashrom.FLASH_H: FLASH_H,
+                     flashrom.SPI_H: FLASHROM_SPI_H,
+                     "flashchips.c": FLASHPROG_C.replace("spi_block_erase_d8", "spi_block_erase_99")})
+    with pytest.raises(ValueError, match="no operation for erase opcode 0x99"):
+        flashrom.extract(tmp_path, "flashprog")

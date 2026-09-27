@@ -19,16 +19,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from . import cparse
+from .ops import Opcodes
 from .record import Record, make
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 DB = "src/spiFlashdb.hpp"
+FLASH_CPP = "src/spiFlash.cpp"  # the FLASH_* opcodes it sends
 
 
 def extract(root: Path) -> list[Record]:
     raw = (root / DB).read_text()
+    flash_defs: dict[str, str | int] = dict(
+        cparse.defines(cparse.strip_comments((root / FLASH_CPP).read_text()))
+    )
     text = cparse.drop_preprocessor(cparse.strip_comments(raw))
     table = cparse.array_body(text, r"std::map\s*<\s*uint32_t\s*,\s*flash_t\s*>\s*flash_list")
     if table is None:
@@ -77,7 +82,35 @@ def extract(root: Path) -> list[Record]:
                 sector_size=64 * 1024,
                 features=sorted(features),
                 flags=flags,
+                opcodes=_opcodes(features, size, flash_defs),
                 notes=cparse.comments(raw[entry.offset : entry.offset + len(entry.body)]),
             )
         )
     return records
+
+
+def _opcodes(
+    features: set[str], size: int, symbols: dict[str, str | int]
+) -> list[dict[str, object]]:
+    """What openFPGALoader's src/spiFlash.cpp sends to a part: read and page
+    program for every part; its sector_erase() (0x20) for a table
+    subsector_erase and block64_erase() (0xd8) for sector_erase; and above
+    16 MiB the 4-byte form of each. The values are spiFlash.cpp's FLASH_*
+    defines."""
+    big = size > 16 * 1024 * 1024
+    ops = Opcodes(symbols)
+    ops.add("RDID", "JEDEC id match")
+    ops.add("READ_1_1_1", "every read", "FLASH_READ")
+    ops.add("PP_1_1_1", "every write", "FLASH_PP")
+    if big:
+        ops.add("READ_1_1_1_4B", "every read above 16 MiB", "FLASH_4READ")
+        ops.add("PP_1_1_1_4B", "every write above 16 MiB", "FLASH_4PP")
+    if "erase_4k" in features:
+        ops.add("BE_4K", "subsector_erase = true", "FLASH_SE")
+        if big:
+            ops.add("BE_4K_4B", "subsector_erase = true, above 16 MiB", "FLASH_4SE")
+    if "erase_64k" in features:
+        ops.add("SE", "sector_erase = true", "FLASH_BE64")
+        if big:
+            ops.add("SE_4B", "sector_erase = true, above 16 MiB", "FLASH_4BE64")
+    return ops.to_json()
