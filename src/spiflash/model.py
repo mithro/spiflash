@@ -7,8 +7,9 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 
+from .enums import Feature, FlashType, IdFamily, IdMethod, Source
 from .opcodes import OPERATIONS, Operation, sort_key
 from .vendors import canonical
 
@@ -17,18 +18,44 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
-# When sources disagree on a value and are otherwise tied, the earlier one
-# wins. flashrom and flashprog are first: their entries are per part, tested
-# on hardware and carry the most detail; OpenOCD and openFPGALoader last,
-# since their tables are the smallest and the least specific.
-SOURCE_PRIORITY = ("flashrom", "flashprog", "linux", "u-boot", "openocd", "openfpgaloader")
+
+class Voltage(NamedTuple):
+    """A supply voltage range, in millivolts."""
+
+    minimum_mv: int
+    maximum_mv: int
 
 
-def _priority(source: str) -> int:
-    try:
-        return SOURCE_PRIORITY.index(source)
-    except ValueError:
-        return len(SOURCE_PRIORITY)
+@dataclass(frozen=True, slots=True)
+class EraseBlock:
+    """``count`` blocks of ``size`` bytes, as one eraser erases them."""
+
+    size: int
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class Eraser:
+    """One way to erase a chip: the opcode, and the blocks it erases
+    (non-uniform when there is more than one kind). ``opcode`` is ``None``
+    for an eraser that is a routine rather than one command (``function``
+    names it: flashrom's ``spi_block_erase_emulation``, ...)."""
+
+    opcode: int | None
+    blocks: tuple[EraseBlock, ...]
+    function: str | None = None
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> Eraser:
+        blocks = tuple(EraseBlock(size, count) for size, count in d["blocks"])
+        return cls(d["opcode"], blocks, d.get("function"))
+
+
+class Claim(NamedTuple):
+    """A source's reason for saying a chip has an operation."""
+
+    source: Source
+    via: str
 
 
 def parse_id(value: str | bytes | bytearray | int | Iterable[int]) -> bytes:
@@ -60,7 +87,7 @@ def strip_continuation(data: bytes) -> tuple[int, bytes]:
     return n, data[n:]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class OpcodeUse:
     """One operation an upstream entry implies: its name in
     :data:`spiflash.opcodes.OPERATIONS`, the opcode byte, and what in the
@@ -76,7 +103,7 @@ class SupportedOperation:
     """An operation a chip supports, and which upstreams say so, why."""
 
     operation: Operation
-    because: tuple[tuple[str, str], ...]  # (source, via), by source priority
+    because: tuple[Claim, ...]  # by source priority
 
     @property
     def name(self) -> str:
@@ -87,8 +114,8 @@ class SupportedOperation:
         return self.operation.opcode
 
     @property
-    def sources(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(s for s, _ in self.because))
+    def sources(self) -> tuple[Source, ...]:
+        return tuple(dict.fromkeys(claim.source for claim in self.because))
 
 
 @dataclass(frozen=True)
@@ -97,22 +124,22 @@ class Record:
 
     See :mod:`spiflash_extract.record` for what each field means."""
 
-    source: str
+    source: Source
     file: str
     line: int
-    type: str
+    type: FlashType
     vendor: str | None
     name: str
     id: bytes | None
     ext_id: bytes | None
-    id_method: str | None
+    id_method: IdMethod | None
     size: int | None
     page_size: int | None
     sector_size: int | None
-    erasers: tuple[dict[str, Any], ...] | None
-    features: frozenset[str]
+    erasers: tuple[Eraser, ...]
+    features: frozenset[Feature]
     flags: tuple[str, ...]
-    voltage: tuple[int, int] | None
+    voltage: Voltage | None
     opcodes: tuple[OpcodeUse, ...]
     tested: str | None
     notes: tuple[str, ...]
@@ -120,22 +147,22 @@ class Record:
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> Record:
         return cls(
-            source=d["source"],
+            source=Source(d["source"]),
             file=d["file"],
             line=d["line"],
-            type=d["type"],
+            type=FlashType(d["type"]),
             vendor=d["vendor"],
             name=d["name"],
             id=bytes.fromhex(d["id"]) if d["id"] else None,
             ext_id=bytes.fromhex(d["ext_id"]) if d["ext_id"] else None,
-            id_method=d["id_method"],
+            id_method=IdMethod(d["id_method"]) if d["id_method"] else None,
             size=d["size"],
             page_size=d["page_size"],
             sector_size=d["sector_size"],
-            erasers=tuple(d["erasers"]) if d["erasers"] else None,
-            features=frozenset(d["features"]),
+            erasers=tuple(Eraser.from_json(e) for e in d["erasers"] or ()),
+            features=frozenset(Feature(f) for f in d["features"]),
             flags=tuple(d["flags"]),
-            voltage=(d["voltage"][0], d["voltage"][1]) if d["voltage"] else None,
+            voltage=Voltage(*d["voltage"]) if d["voltage"] else None,
             opcodes=tuple(OpcodeUse(o["op"], o["opcode"], o["via"]) for o in d["opcodes"]),
             tested=d["tested"],
             notes=tuple(d["notes"]),
@@ -154,7 +181,7 @@ class Record:
     def is_jedec(self) -> bool:
         """Whether ``id`` is what the chip answers to a JEDEC read-id (0x9F),
         rather than to a legacy command (REMS 0x90, RES 0xAB, ...)."""
-        return self.id is not None and (self.id_method or "").startswith("rdid")
+        return self.id_method is not None and self.id_method.family is IdFamily.JEDEC
 
     @property
     def url(self) -> str:
@@ -201,7 +228,7 @@ def name_matches(pattern: str, query: str, *, prefix: bool = False) -> bool:
     return match(rx, query.upper()) is not None
 
 
-def _consensus(values: Iterable[tuple[T | None, str]]) -> T | None:
+def _consensus(values: Iterable[tuple[T | None, Source]]) -> T | None:
     """The value most sources give, ties to the higher-priority source."""
     counts: Counter[T] = Counter()
     best: dict[T, int] = {}
@@ -209,8 +236,7 @@ def _consensus(values: Iterable[tuple[T | None, str]]) -> T | None:
         if value is None:
             continue
         counts[value] += 1
-        p = _priority(source)
-        best[value] = min(best.get(value, p), p)
+        best[value] = min(best.get(value, source.priority), source.priority)
     if not counts:
         return None
     return min(counts, key=lambda v: (-counts[v], best[v]))
@@ -227,12 +253,11 @@ class Flash:
     :meth:`values` shows who says what."""
 
     id: bytes
-    type: str
+    type: FlashType
     records: tuple[Record, ...] = field(repr=False)
     bank: int = 0
-    #: ``"jedec"`` for an id read with JEDEC read-id (0x9F), else the legacy
-    #: command's name (``"rems"``, ``"res1"``, ...).
-    family: str = "jedec"
+    #: Which command the id answers: JEDEC read-id (0x9F), or a legacy one.
+    family: IdFamily = IdFamily.JEDEC
 
     @property
     def id_hex(self) -> str:
@@ -260,7 +285,7 @@ class Flash:
         for i, r in enumerate(self.records):
             for n in r.part_names:
                 counts[n] += 1
-                order.setdefault(n, (_priority(r.source), i))
+                order.setdefault(n, (r.source.priority, i))
         return tuple(sorted(counts, key=lambda n: (-counts[n], order[n], n)))
 
     @property
@@ -268,8 +293,8 @@ class Flash:
         return self.names[0]
 
     @cached_property
-    def sources(self) -> tuple[str, ...]:
-        return tuple(sorted({r.source for r in self.records}, key=_priority))
+    def sources(self) -> tuple[Source, ...]:
+        return tuple(sorted({r.source for r in self.records}, key=lambda s: s.priority))
 
     @cached_property
     def size(self) -> int | None:
@@ -284,11 +309,11 @@ class Flash:
         return _consensus((r.sector_size, r.source) for r in self.records)
 
     @cached_property
-    def voltage(self) -> tuple[int, int] | None:
+    def voltage(self) -> Voltage | None:
         return _consensus((r.voltage, r.source) for r in self.records)
 
     @cached_property
-    def features(self) -> frozenset[str]:
+    def features(self) -> frozenset[Feature]:
         """Every capability any source claims for this id. Parts sharing an
         id can differ (a W25Q128BV has no QPI, a W25Q128FV does), so check
         :meth:`feature_sources` before relying on one."""
@@ -300,12 +325,12 @@ class Flash:
         order id, read, program, erase, register, mode. Parts sharing an id
         can differ, and some sources only list what their own driver uses,
         so :attr:`SupportedOperation.sources` says who vouches for each."""
-        because: dict[str, list[tuple[str, str]]] = {}
-        for r in sorted(self.records, key=lambda r: _priority(r.source)):
+        because: dict[str, list[Claim]] = {}
+        for r in sorted(self.records, key=lambda r: r.source.priority):
             for use in r.opcodes:
-                pair = (r.source, use.via)
-                if pair not in because.setdefault(use.op, []):
-                    because[use.op].append(pair)
+                claim = Claim(r.source, use.via)
+                if claim not in because.setdefault(use.op, []):
+                    because[use.op].append(claim)
         return {
             name: SupportedOperation(OPERATIONS[name], tuple(because[name]))
             for name in sorted(because, key=sort_key)
@@ -315,24 +340,23 @@ class Flash:
         """Whether any source says the chip has ``operation`` (``"READ_1_1_4"``)."""
         return operation in self.opcodes
 
-    def feature_sources(self, feature: str) -> tuple[str, ...]:
+    def feature_sources(self, feature: Feature | str) -> tuple[Source, ...]:
         """The sources claiming ``feature``, in source priority order."""
-        return tuple(
-            sorted({r.source for r in self.records if feature in r.features}, key=_priority)
-        )
+        claiming = {r.source for r in self.records if feature in r.features}
+        return tuple(sorted(claiming, key=lambda s: s.priority))
 
-    def values(self, attribute: str) -> dict[Any, tuple[str, ...]]:
+    def values(self, attribute: str) -> dict[Any, tuple[Source, ...]]:
         """Each value of a :class:`Record` attribute, and the sources giving it:
         ``flash.values("size")`` → ``{16777216: ("flashrom", "linux", ...)}``."""
-        out: dict[Any, set[str]] = {}
+        out: dict[Any, set[Source]] = {}
         for r in self.records:
             v = getattr(r, attribute)
             if v is not None:
                 out.setdefault(v, set()).add(r.source)
-        return {k: tuple(sorted(v, key=_priority)) for k, v in out.items()}
+        return {k: tuple(sorted(v, key=lambda s: s.priority)) for k, v in out.items()}
 
     @property
-    def conflicts(self) -> dict[str, dict[Any, tuple[str, ...]]]:
+    def conflicts(self) -> dict[str, dict[Any, tuple[Source, ...]]]:
         """The attributes the sources disagree on."""
         out = {}
         for attr in ("size", "page_size", "sector_size", "voltage"):

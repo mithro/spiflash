@@ -443,10 +443,12 @@ def test_openfpgaloader_no_map(tmp_path: Path) -> None:
 
 def test_record_make_validates() -> None:
     with pytest.raises(KeyError, match="unknown record fields"):
-        record.make("x", "f", 1, "n", colour="red")
+        record.make("linux", "f", 1, "n", colour="red")
     with pytest.raises(ValueError, match="unknown features"):
-        record.make("x", "f", 1, "n", features=["telepathy"])
-    r = record.make("x", "f", 1, "n", features=["otp", "lock", "otp"])
+        record.make("linux", "f", 1, "n", features=["telepathy"])
+    with pytest.raises(ValueError, match="nowhere"):
+        record.make("nowhere", "f", 1, "n")
+    r = record.make("linux", "f", 1, "n", features=["otp", "lock", "otp"])
     assert list(r) == list(record.KEYS)
     assert r["features"] == ["lock", "otp"]
 

@@ -68,7 +68,10 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     if f.features:
         lines.append("    features: " + " ".join(sorted(f.features)))
     for attr, vals in f.conflicts.items():
-        said = "; ".join(f"{v} ({', '.join(s)})" for v, s in vals.items())
+        # A voltage prints as its (min, max) pair, not its NamedTuple repr.
+        said = "; ".join(
+            f"{tuple(v) if isinstance(v, tuple) else v} ({', '.join(s)})" for v, s in vals.items()
+        )
         lines.append(f"    sources disagree on {attr}: {said}")
     if verbose:
         for r in f.records:
@@ -186,8 +189,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # sources
         for name, s in db.sources.items():
             print(
-                f"{name:15} {s['commit'][:12]} {s['date'][:10]} {s['records']:5}  "
-                f"{s['url']} ({s['license']})"
+                f"{name:15} {s.commit[:12]} {s.date:%Y-%m-%d} {s.records:5}  {s.url} ({s.license})"
             )
         return 0
     except ValueError as e:

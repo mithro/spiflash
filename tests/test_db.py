@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import UTC, datetime
 from importlib import resources
 
 import pytest
@@ -11,8 +12,19 @@ import pytest
 import spiflash
 from spiflash import db as db_module
 from spiflash import opcodes, vendors
-from spiflash.db import FORMAT, Database
-from spiflash.model import Flash, Record, name_matches, parse_id, part_names, strip_continuation
+from spiflash.db import FORMAT, Database, SourceInfo
+from spiflash.enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
+from spiflash.model import (
+    EraseBlock,
+    Eraser,
+    Flash,
+    Record,
+    Voltage,
+    name_matches,
+    parse_id,
+    part_names,
+    strip_continuation,
+)
 from spiflash.opcodes import OPERATIONS
 
 
@@ -56,11 +68,12 @@ def test_every_source_is_present() -> None:
         "jep106",
     }
     for name, s in spiflash.sources().items():
-        assert len(s["commit"]) == 40, name
-        assert s["records"] > 0, name
+        assert len(s.commit) == 40, name
+        assert s.records > 0, name
+        assert s.date.year >= 2026, name
     by_source = Counter(r.source for r in spiflash.records())
     for name, n in by_source.items():
-        assert spiflash.sources()[name]["records"] == n
+        assert spiflash.sources()[name].records == n
 
 
 def test_data_files_are_one_record_per_line() -> None:
@@ -242,10 +255,47 @@ def test_records_without_an_id_are_kept_but_not_grouped() -> None:
     assert len(db.flashes) == 1
 
 
-def test_unknown_source_sorts_last() -> None:
-    db = Database([rec(source="someone-else", size=1), rec(source="openocd", size=2)])
-    assert db.flashes[0].size == 2
-    assert db.flashes[0].sources == ("openocd", "someone-else")
+def test_unknown_source_is_rejected() -> None:
+    with pytest.raises(ValueError, match="someone-else"):
+        rec(source="someone-else")
+
+
+def test_sources_are_in_priority_order() -> None:
+    assert [s.priority for s in Source] == list(range(len(Source)))
+    assert Source.FLASHROM.priority < Source.LINUX.priority < Source.OPENFPGALOADER.priority
+    assert Source.UBOOT.label == "U-Boot"
+    assert Source("u-boot") is Source.UBOOT
+
+
+def test_enums_are_their_strings() -> None:
+    assert FlashType.NOR == "nor"
+    assert Feature.FOUR_BYTE_ADDR == "4byte_addr"
+    assert Feature.QPI.description == "supports QPI (4-4-4) mode"
+    assert IdMethod.RDID_OPCODE_DUMMY.family is IdFamily.JEDEC
+    assert IdMethod.RES1.family is IdFamily.RES1
+    assert FlashType.NAND.label == "SPI NAND"
+
+
+def test_typed_record_fields() -> None:
+    (f,) = spiflash.lookup("ef4018")
+    flashrom = next(r for r in f.records if r.source is Source.FLASHROM)
+    assert flashrom.type is FlashType.NOR
+    assert flashrom.id_method is IdMethod.RDID
+    assert Feature.ERASE_4K in flashrom.features
+    assert flashrom.voltage == Voltage(2700, 3600)
+    assert flashrom.voltage.maximum_mv == 3600
+    eraser = flashrom.erasers[0]
+    assert eraser == Eraser(0x20, (EraseBlock(4096, 4096),))
+    assert f.family is IdFamily.JEDEC
+
+
+def test_lookup_takes_enums_or_strings() -> None:
+    assert spiflash.lookup("efaa21", flash_type=FlashType.NAND) == spiflash.lookup(
+        "efaa21", flash_type="nand"
+    )
+    assert spiflash.lookup("05", method=IdFamily.RES1) == spiflash.lookup("05", method="res1")
+    with pytest.raises(ValueError, match="flash"):
+        spiflash.lookup("ef4018", flash_type="flash")
 
 
 def test_record_properties() -> None:
@@ -375,7 +425,7 @@ def test_operations_table() -> None:
         opcodes.get("NOPE")
     order = sorted(["SE", "READ_1_1_1", "RDID", "EN4B", "PP_1_1_1", "WRSR"], key=opcodes.sort_key)
     assert order == ["RDID", "READ_1_1_1", "PP_1_1_1", "SE", "WRSR", "EN4B"]
-    assert {op.kind for op in opcodes.OPERATIONS.values()} == set(opcodes.KINDS)
+    assert {op.kind for op in opcodes.OPERATIONS.values()} == set(OperationKind)
 
 
 def test_link_to_the_upstream_line() -> None:
@@ -383,7 +433,7 @@ def test_link_to_the_upstream_line() -> None:
     (f,) = db.lookup("ef4018")
     by_source = {r.source: r for r in f.records}
     linux = by_source["linux"]
-    commit = db.sources["linux"]["commit"]
+    commit = db.sources["linux"].commit
     assert db.link(linux) == (
         f"https://github.com/torvalds/linux/blob/{commit}/{linux.file}#L{linux.line}"
     )
@@ -391,6 +441,15 @@ def test_link_to_the_upstream_line() -> None:
     assert db.link(by_source["flashprog"]).startswith(
         "https://github.com/SourceArcade/flashprog/blob/"
     )
-    assert Database([rec(source="nowhere")]).link(rec(source="nowhere")) is None
-    other = Database([rec()], sources={"linux": {"url": "https://example.org/x", "commit": "c"}})
-    assert other.link(rec()) is None
+    assert Database([rec()]).link(rec()) is None  # no sources known
+    elsewhere = SourceInfo(
+        url="https://example.org/x",
+        browse="https://example.org/x",
+        branch="main",
+        commit="c",
+        date=datetime(2026, 9, 1, tzinfo=UTC),
+        paths=("a.c",),
+        license="MIT",
+        records=1,
+    )
+    assert Database([rec()], sources={"linux": elsewhere}).link(rec()) is None

@@ -33,10 +33,10 @@ Fields (``None`` / empty when the upstream does not say):
 ``erasers``
     ``[{"opcode": 0x20, "blocks": [[4096, 4096]]}, ...]``.
 ``features``
-    Normalised capability names (see :data:`FEATURES`).
+    Normalised capability names: :class:`spiflash.enums.Feature` values.
 ``flags``
-    The upstream's raw flag and feature names, for anything :data:`FEATURES`
-    does not capture.
+    The upstream's raw flag and feature names, for anything
+    :class:`~spiflash.enums.Feature` does not capture.
 ``voltage``
     ``[min_mV, max_mV]``.
 ``opcodes``
@@ -54,31 +54,14 @@ from __future__ import annotations
 
 from typing import Any
 
-# The normalised capability vocabulary. Anything an upstream says that does
-# not map onto one of these stays in ``flags``.
-FEATURES = {
-    "erase_4k": "4 KiB sectors can be erased (0x20 or equivalent)",
-    "erase_32k": "32 KiB blocks can be erased (0x52)",
-    "erase_64k": "64 KiB blocks can be erased (0xd8)",
-    "sfdp": "answers SFDP (JESD216) queries",
-    "fast_read": "supports fast read (0x0b)",
-    "dual_read": "supports dual-output/IO read",
-    "quad_read": "supports quad-output/IO read",
-    "quad_pp": "supports quad-input page program",
-    "octal_read": "supports octal read",
-    "octal_dtr_read": "supports octal DTR read",
-    "octal_dtr_pp": "supports octal DTR page program",
-    "qpi": "supports QPI (4-4-4) mode",
-    "4byte_addr": "supports 4-byte addressing",
-    "4byte_opcodes": "has dedicated 4-byte-address opcodes",
-    "otp": "has one-time-programmable area",
-    "lock": "block protection bits in the status register",
-    "no_erase": "no erase needed (FRAM/MRAM)",
-    "rww": "read-while-write",
-}
+from spiflash.enums import Feature, FlashType, Source
 
 # The feature a uniform erase block of each size gives.
-ERASE_FEATURES = {4096: "erase_4k", 32 * 1024: "erase_32k", 64 * 1024: "erase_64k"}
+ERASE_FEATURES = {
+    4096: Feature.ERASE_4K.value,
+    32 * 1024: Feature.ERASE_32K.value,
+    64 * 1024: Feature.ERASE_64K.value,
+}
 
 Record = dict[str, Any]
 
@@ -114,8 +97,9 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     if unknown:
         msg = f"unknown record fields: {sorted(unknown)}"
         raise KeyError(msg)
+    Source(source)  # raises for a source spiflash does not know
     features = fields.get("features") or []
-    bad = set(features) - set(FEATURES)
+    bad = set(features) - {f.value for f in Feature}
     if bad:
         msg = f"unknown features {sorted(bad)} for {source} {name}"
         raise ValueError(msg)
@@ -125,7 +109,7 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         file=file,
         line=line,
         name=name,
-        type="nor",
+        type=FlashType.NOR.value,
         id_method="rdid",
         features=[],
         flags=[],
