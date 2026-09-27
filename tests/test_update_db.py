@@ -26,7 +26,9 @@ def test_every_source_has_an_extractor() -> None:
     ups = fetch.load(update_db.SOURCES)
     assert [u.name for u in ups] == list(update_db.EXTRACTORS)
     for u in ups:
-        assert len(u.commit) == 40 and u.paths and u.license
+        assert len(u.commit) == 40
+        assert u.paths
+        assert u.license
 
 
 def test_set_commit(tmp_path: Path) -> None:
