@@ -1,0 +1,37 @@
+Source: spiflash
+Section: python
+Priority: optional
+Maintainer: Tim 'mithro' Ansell <me@mith.ro>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               pybuild-plugin-pyproject,
+               python3-all,
+               python3-hatchling,
+               python3-hatch-vcs,
+               python3-setuptools-scm,
+               python3-pytest <!nocheck>,
+Standards-Version: 4.7.0
+Homepage: https://github.com/mithro/spiflash
+Vcs-Git: https://github.com/mithro/spiflash.git
+Vcs-Browser: https://github.com/mithro/spiflash
+Rules-Requires-Root: no
+
+Package: python3-spiflash
+Architecture: all
+Depends: python3 (>= 3.11),
+         ${python3:Depends},
+         ${misc:Depends}
+Provides: spiflash
+Description: database of SPI flash chips: JEDEC ids, sizes, erase geometry
+ spiflash answers "which chip answered this JEDEC id?" and "what does this
+ part answer?" for SPI NOR and SPI NAND flash, from one database merged from
+ the flash tables in Linux, U-Boot, flashrom, flashprog, OpenOCD and
+ openFPGALoader, with the JEP106 manufacturer list.
+ .
+ Each chip id carries the part names every source gives it, its size, page
+ and sector size, erase opcodes and block layouts, supply voltage and
+ capabilities (dual/quad/octal read, QPI, 4-byte addressing, SFDP, OTP),
+ with the places where the sources disagree kept visible and every entry
+ traced to the upstream file and line it came from.
+ .
+ This package provides the spiflash Python module and the spiflash command.

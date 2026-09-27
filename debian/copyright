@@ -1,0 +1,32 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: spiflash
+Upstream-Contact: Tim Ansell <me@mith.ro>
+Source: https://github.com/mithro/spiflash
+
+Files: *
+Copyright: 2026 Tim Ansell
+License: Apache-2.0
+
+Files: src/spiflash/data/*
+Copyright: 2026 Tim Ansell
+License: Apache-2.0
+Comment:
+ Facts about flash chips (identifiers, sizes, page and sector sizes, erase
+ opcodes, supply voltages, capability flags, part and manufacturer names)
+ extracted by tools/update_db.py from the flash tables of the Linux kernel
+ (GPL-2.0-only), U-Boot, flashrom, flashprog and OpenOCD (GPL-2.0-or-later)
+ and openFPGALoader (Apache-2.0), at the commits recorded in
+ src/spiflash/data/sources.json. No code from those projects is included;
+ the free-text notes reproduce short comments from their tables, credited
+ to the file and line they came from. See docs/SOURCES.md.
+
+Files: tools/spiflash_extract/*
+Copyright: 2026 Tim Ansell
+License: Apache-2.0
+Comment:
+ A rewrite of the approach of LiteSPI's tools/spi_nor_config_generator
+ (Copyright (c) 2020 Antmicro, BSD-2-Clause). No code from it is included.
+
+License: Apache-2.0
+ On Debian systems, the complete text of the Apache License Version 2.0
+ can be found in '/usr/share/common-licenses/Apache-2.0'.
