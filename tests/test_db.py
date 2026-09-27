@@ -111,6 +111,19 @@ def test_extended_id_narrows_variants() -> None:
     assert any(r.ext_id is None for r in s1.records)
 
 
+def test_only_the_longest_id_of_each_type() -> None:
+    found = spiflash.lookup("c22018")
+    assert [(f.type, f.id_hex) for f in found] == [("nor", "c22018"), ("nand", "c220")]
+    assert "MX25L12835F" in found[0].names
+    # Linux's one-byte Macronix catch-all is still there for an unknown part.
+    assert [f.id_hex for f in spiflash.lookup("c2ffff", type="nor")] == ["c2"]
+
+
+def test_openocd_names_get_their_prefix_back() -> None:
+    (f,) = spiflash.lookup("c22018", type="nor")
+    assert "25L12845" not in f.names
+
+
 def test_unknown_id() -> None:
     assert spiflash.lookup("123456") == []
 

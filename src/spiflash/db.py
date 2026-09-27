@@ -96,8 +96,10 @@ class Database:
         answers ``01 20 18 4d 01 80``). ``method`` selects a legacy id
         instead (``"rems"``, ``"res1"``, ``"res2"``, ``"at25f"``).
 
-        More than one :class:`Flash` comes back only when a NOR and a NAND
-        part share the bytes, or ids of different lengths both fit."""
+        Only the longest ids that fit come back, NOR before NAND: a SPI NAND
+        id is two bytes, so a NOR id can start with one (``c22018`` also
+        fits the MX35LF2G14AC's ``c220``); pass ``type="nor"`` to rule that
+        out."""
         _bank, core = strip_continuation(parse_id(chip_id))
         found = []
         for f in self.flashes:
@@ -106,7 +108,14 @@ class Database:
             if core[: len(f.id)] == f.id:
                 ext = core[len(f.id) :]
                 found.append(f.with_ext_id(ext) if ext else f)
-        return sorted(found, key=lambda f: -len(f.id))
+        # Of the ids that fit, only the longest of each type: Linux's
+        # one-byte "any Macronix part" entry (c2) is not an answer when the
+        # MX25L12835F's c22018 is.
+        longest: dict[str, int] = {}
+        for f in found:
+            longest[f.type] = max(longest.get(f.type, 0), len(f.id))
+        found = [f for f in found if len(f.id) == longest[f.type]]
+        return sorted(found, key=lambda f: (f.type != "nor", -len(f.id)))
 
     def find(self, name: str) -> list[Flash]:
         """The chips whose part names match ``name``, best first.
