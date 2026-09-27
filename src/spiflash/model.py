@@ -209,7 +209,8 @@ def _consensus(values: Iterable[tuple[T | None, str]]) -> T | None:
         if value is None:
             continue
         counts[value] += 1
-        best[value] = min(best.get(value, 99), _priority(source))
+        p = _priority(source)
+        best[value] = min(best.get(value, p), p)
     if not counts:
         return None
     return min(counts, key=lambda v: (-counts[v], best[v]))

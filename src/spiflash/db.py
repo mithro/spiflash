@@ -48,6 +48,18 @@ def _family(rec: Record) -> str:
     return "jedec" if rec.is_jedec else (rec.id_method or "none")
 
 
+def _rank(part: str, query: str) -> int | None:
+    """How well part name ``part`` matches ``query``: 0 exactly, 1 as a prefix
+    of it, 2 when ``query`` starts with it; None for no match."""
+    if name_matches(part, query):
+        return 0
+    if part.startswith(query):
+        return 1
+    if len(part) >= 4 and name_matches(part, query, prefix=True):
+        return 2
+    return None
+
+
 class Database:
     """The records, grouped into one :class:`Flash` per chip id."""
 
@@ -134,23 +146,13 @@ class Database:
         q = name.strip().upper()
         if not q:
             return []
-        ranked: list[tuple[int, int, Flash]] = []
-        for i, f in enumerate(self.flashes):
-            best = None
-            for part in f.names:
-                if name_matches(part, q):
-                    rank = 0
-                elif part.startswith(q):
-                    rank = 1
-                elif len(part) >= 4 and name_matches(part, q, prefix=True):
-                    rank = 2
-                else:
-                    continue
-                best = rank if best is None else min(best, rank)
-            if best is not None:
-                ranked.append((best, i, f))
-        ranked.sort(key=lambda t: (t[0], t[1]))
-        return [f for _, _, f in ranked]
+        ranked: list[tuple[int, Flash]] = []
+        for f in self.flashes:
+            ranks = [r for part in f.names if (r := _rank(part, q)) is not None]
+            if ranks:
+                ranked.append((min(ranks), f))
+        ranked.sort(key=lambda t: t[0])  # stable: equal ranks keep database order
+        return [f for _, f in ranked]
 
     def link(self, record: Record) -> str | None:
         """A web link to the upstream line a record came from, at the commit
