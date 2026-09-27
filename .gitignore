@@ -50,3 +50,12 @@ tmp/
 
 # Git worktrees for branches in flight
 /.worktrees/
+
+# The Sphinx site's generated pages (docs/_ext/spiflash_pages.py) and build.
+/docs/chips/
+/docs/vendors/
+/docs/_generated/
+/docs/_build/
+
+# Playwright MCP scratch output
+.playwright-mcp/

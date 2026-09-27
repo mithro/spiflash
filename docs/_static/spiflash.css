@@ -1,0 +1,172 @@
+/* spiflash site styling, on top of Furo. Colours follow Furo's variables so
+   light and dark mode both work. */
+
+body {
+  --sf-accent: var(--color-brand-primary);
+  --sf-muted: var(--color-foreground-muted);
+  --sf-border: var(--color-background-border);
+  --sf-row-alt: var(--color-background-secondary);
+  --sf-yes: #16a34a;
+}
+
+/* Ids and opcodes: monospace chips. */
+.sf-id, .sf-op {
+  font-family: var(--font-stack--monospace);
+  font-size: 0.9em;
+  padding: 0.05em 0.4em;
+  border-radius: 0.3em;
+  background: var(--color-inline-code-background);
+  border: 1px solid var(--sf-border);
+  white-space: nowrap;
+}
+.sf-op { color: var(--sf-accent); font-weight: 600; }
+h1 + p .sf-id { font-size: 1em; }
+
+.sf-yes { color: var(--sf-yes); font-weight: 700; }
+
+/* Source labels: one colour each, so a column of them reads at a glance. */
+.sf-src {
+  display: inline-block;
+  font-size: 0.78em;
+  font-weight: 600;
+  padding: 0.1em 0.55em;
+  margin: 0.05em 0.15em 0.05em 0;
+  border-radius: 1em;
+  color: #fff;
+  background: #64748b;
+  white-space: nowrap;
+}
+.sf-src-flashrom { background: #b45309; }
+.sf-src-flashprog { background: #c2410c; }
+.sf-src-linux { background: #1d4ed8; }
+.sf-src-u-boot { background: #7c3aed; }
+.sf-src-openocd { background: #0f766e; }
+.sf-src-openfpgaloader { background: #be185d; }
+
+/* Summary cards on a chip page. */
+.sf-cards { margin: 1rem 0 1.5rem; }
+.sf-card .sd-card-header, .sf-card .sd-card-title {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sf-muted);
+  margin-bottom: 0.2rem;
+}
+.sf-card .sd-card-body { padding: 0.8rem 1rem; }
+.sf-card .sd-card-body p:last-child {
+  font-size: 1.45em;
+  font-weight: 650;
+  margin: 0;
+}
+.sf-vendor-card { transition: transform 0.12s ease, box-shadow 0.12s ease; }
+.sf-vendor-card:hover { transform: translateY(-2px); }
+
+/* Tables: compact, striped, readable at a glance, scrolling when wide. */
+table.sf-table, table.sf-kv {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9em;
+}
+table.sf-table th {
+  position: sticky;
+  top: 0;
+  background: var(--color-background-primary);
+  border-bottom: 2px solid var(--sf-accent);
+  text-align: left;
+  white-space: nowrap;
+  font-weight: 650;
+}
+table.sf-table td, table.sf-table th, table.sf-kv td {
+  padding: 0.35em 0.6em;
+  vertical-align: top;
+}
+table.sf-table tbody tr:nth-child(even) { background: var(--sf-row-alt); }
+table.sf-table tbody tr:hover { background: var(--color-background-hover); }
+table.sf-table td p, table.sf-kv td p { margin: 0; }
+table.sf-kv thead { display: none; }
+table.sf-kv td:first-child { color: var(--sf-muted); width: 40%; }
+table.sf-opcodes td:nth-child(n+4) { text-align: center; }
+table.sf-opcodes th:nth-child(n+4) { text-align: center; }
+table.sf-parts td:first-child { white-space: nowrap; }
+.table-wrapper { overflow-x: auto; }
+
+/* Sorting and filtering (tables.js). */
+table.sf-sortable th { cursor: pointer; user-select: none; }
+table.sf-sortable th::after { content: " ⇅"; color: var(--sf-muted); font-size: 0.8em; }
+table.sf-sortable th[aria-sort="ascending"]::after { content: " ▲"; color: var(--sf-accent); }
+table.sf-sortable th[aria-sort="descending"]::after { content: " ▼"; color: var(--sf-accent); }
+.sf-filter {
+  display: flex;
+  gap: 0.75em;
+  align-items: center;
+  margin: 0.5em 0 0.75em;
+}
+.sf-filter input {
+  flex: 1;
+  max-width: 28em;
+  padding: 0.45em 0.75em;
+  border: 1px solid var(--sf-border);
+  border-radius: 0.4em;
+  background: var(--color-background-primary);
+  color: var(--color-foreground-primary);
+  font-size: 0.95em;
+}
+.sf-filter input:focus { outline: 2px solid var(--sf-accent); outline-offset: 1px; }
+.sf-filter .sf-count { color: var(--sf-muted); font-size: 0.85em; }
+
+.sf-why ul { margin-top: 0.3em; }
+.sf-why li { margin: 0.15em 0; }
+
+/* The home page's big numbers. */
+.sf-stat .sd-card-body p:first-child {
+  font-size: 2em;
+  font-weight: 700;
+  color: var(--sf-accent);
+  margin: 0;
+  line-height: 1.1;
+}
+.sf-stat .sd-card-body p:last-child { color: var(--sf-muted); margin: 0.2em 0 0; }
+
+/* Headers hold a <p>; keep the sort arrow on the same line as the text. */
+table.sf-table th p { display: inline; }
+
+/* The data pages are tables first: give the article more width on wide
+   screens (Furo's default measure is for prose). */
+@media (min-width: 82em) {
+  .content { width: 58em; }
+}
+
+/* Furo sizes the logo to the sidebar; keep ours modest. */
+.sidebar-logo { max-width: 5.5rem; }
+
+/* The home page's big numbers: the rule above loses to Furo's own p rules. */
+.sd-card.sf-stat .sd-card-body > p:first-child {
+  font-size: 2.2em;
+  font-weight: 750;
+  color: var(--sf-accent);
+  line-height: 1.1;
+  margin: 0;
+}
+.sd-card.sf-stat .sd-card-body > p:last-child { color: var(--sf-muted); margin: 0.25em 0 0; }
+
+/* Kind of operation, as a small label before the description. */
+.sf-kind {
+  display: inline-block;
+  min-width: 4.8em;
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sf-muted);
+}
+
+/* Parts tables: numbers on one line; the part names and highlights wrap. */
+table.sf-parts td { white-space: nowrap; }
+/* Vendor pages: Parts is column 2, Highlights 8; the all-chips table adds
+   Vendor as column 2 and drops Page, moving them to 3 and 8. */
+table.sf-parts:not(.sf-with-vendor) td:nth-child(2),
+table.sf-parts.sf-with-vendor td:nth-child(3) { white-space: normal; min-width: 12em; }
+table.sf-parts:not(.sf-with-vendor) td:nth-child(8),
+table.sf-parts.sf-with-vendor td:nth-child(8) { white-space: normal; min-width: 7em; }
+table.sf-sources td { white-space: nowrap; }
+
+table.sf-parts { font-size: 0.86em; }

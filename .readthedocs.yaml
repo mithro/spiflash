@@ -1,0 +1,23 @@
+# https://spiflash.readthedocs.io/ -- built from docs/ (see docs/conf.py).
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.13"
+  jobs:
+    # Read the Docs clones shallowly; hatch-vcs needs the tags to derive the
+    # version the site shows.
+    post_checkout:
+      - git fetch --unshallow --tags || true
+
+python:
+  install:
+    - method: uv
+      command: sync
+      groups:
+        - docs
+
+sphinx:
+  configuration: docs/conf.py
+  fail_on_warning: true
