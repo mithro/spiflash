@@ -71,7 +71,7 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`linux.py <tools/spiflash_extract/linux.py>`, {repo}`uboot.py <tools/spiflash_extract/uboot.py>`, {repo}`flashrom.py <tools/spiflash_extract/flashrom.py>`, {repo}`openocd.py <tools/spiflash_extract/openocd.py>`, {repo}`openfpgaloader.py <tools/spiflash_extract/openfpgaloader.py>` | one extractor per upstream format |
 | {repo}`tools/spiflash_extract/fetch.py` | sparse, blobless, depth-1 fetch of one commit |
 | {repo}`tests/fixtures/` | cut-down copies of each upstream file, verbatim |
-| {repo}`docs/` | the Read the Docs site, and {repo}`docs/_ext/spiflash_pages.py`, which writes its generated pages |
+| {repo}`docs/` | the Read the Docs site, and {repo}`docs/_ext/spiflash_pages.py`, which writes its generated pages: {repo}`opcode_pages.py <docs/_ext/opcode_pages.py>` the operation pages, {repo}`opcode_timing.py <docs/_ext/opcode_timing.py>` their WaveDrom diagrams, {repo}`page_markup.py <docs/_ext/page_markup.py>` the Markdown helpers they share |
 
 The extractors are not in the wheel; the sdist carries them so the data can be
 rebuilt from it.

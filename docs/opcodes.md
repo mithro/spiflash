@@ -34,5 +34,15 @@ list which opcode, and why.
 
 ## The operations
 
+Each has a page: what it does, its timing diagram, and the parts that support
+it.
+
 ```{include} _generated/opcodes-table.md
+```
+
+```{toctree}
+:hidden:
+:glob:
+
+opcodes/*
 ```
