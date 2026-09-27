@@ -16,13 +16,14 @@ from typing import TYPE_CHECKING
 
 from . import cparse
 from .ops import ERASE_BY_OPCODE, Opcodes
-from .record import Record, make
+from .record import ERASE_FEATURES, Record, make
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 SPI_C = "src/flash/nor/spi.c"
 SPI_H = "src/flash/nor/spi.h"  # SPIFLASH_READ_ID
+JEP106 = "src/helper/jep106.inc"
 
 # OpenOCD leaves the family prefix off some part numbers ("mac 25l12845" is
 # the MX25L12845, "adesto xp032" the ATXP032). LiteSPI's generator patched
@@ -37,14 +38,10 @@ def part_name(vendor: str, name: str) -> str:
     return name
 
 
-JEP106 = "src/helper/jep106.inc"
-
-
 def device_id_hex(device_id: int) -> str:
     """The RDID bytes, as the chip sends them, of an OpenOCD ``device_id``."""
     cont = (device_id >> 24) & 0xFF
-    b = [device_id & 0xFF, (device_id >> 8) & 0xFF, (device_id >> 16) & 0xFF]
-    return "7f" * cont + "".join(f"{x:02x}" for x in b)
+    return "7f" * cont + (device_id & 0xFFFFFF).to_bytes(3, "little").hex()
 
 
 def extract(root: Path) -> list[Record]:
@@ -68,17 +65,17 @@ def extract(root: Path) -> list[Record]:
         notes = cparse.comments(raw[end:eol])
         ops = Opcodes(symbols)
         ops.add("RDID", "probe (SPIFLASH_READ_ID)", "SPIFLASH_READ_ID")
+        read, qread, pp = nums[:3]
+        _field(ops, notes, "read_cmd", read, _READ)
+        _field(ops, notes, "qread_cmd", qread, _QREAD)
+        _field(ops, notes, "pprog_cmd", pp, _PROGRAM)
         if m.group(1) == "FLASH_ID":
-            read, qread, pp, erase, chip_erase, dev, page, sector, size = nums
+            erase, chip_erase, dev, page, sector, size = nums[3:]
             features = set()
             if size > 16 * 1024 * 1024:
                 features.add("4byte_addr")
-            erase_feature = {4096: "erase_4k", 32768: "erase_32k", 65536: "erase_64k"}
-            if sector in erase_feature:
-                features.add(erase_feature[sector])
-            _field(ops, notes, "read_cmd", read, _READ)
-            _field(ops, notes, "qread_cmd", qread, _QREAD)
-            _field(ops, notes, "pprog_cmd", pp, _PROGRAM)
+            if sector in ERASE_FEATURES:
+                features.add(ERASE_FEATURES[sector])
             _field(ops, notes, "erase_cmd", erase, ERASE_BY_OPCODE)
             _field(ops, notes, "chip_erase_cmd", chip_erase, ERASE_BY_OPCODE)
             if qread in _QUAD:
@@ -87,12 +84,9 @@ def extract(root: Path) -> list[Record]:
             if chip_erase:
                 erasers.append({"opcode": chip_erase, "blocks": [[size, 1]]})
         else:
-            read, qread, pp, dev, size = nums
+            dev, size = nums[3:]
             features = {"no_erase"}
             page = sector = 0
-            _field(ops, notes, "read_cmd", read, _READ)
-            _field(ops, notes, "qread_cmd", qread, _QREAD)
-            _field(ops, notes, "pprog_cmd", pp, _PROGRAM)
             erasers = []
             notes.append("FRAM")
         opcodes = ops.to_json()
@@ -108,7 +102,7 @@ def extract(root: Path) -> list[Record]:
                 page_size=page or None,
                 sector_size=sector or None,
                 erasers=erasers or None,
-                features=sorted(features),
+                features=features,
                 opcodes=opcodes,
                 notes=notes,
             )

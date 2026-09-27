@@ -81,7 +81,7 @@ def extract(root: Path) -> list[Record]:
                 id=f"{cparse.evaluate(key, symbols):06x}",
                 size=size,
                 sector_size=64 * 1024,
-                features=sorted(features),
+                features=features,
                 flags=flags,
                 opcodes=_opcodes(features, size, flash_defs),
                 notes=cparse.comments(raw[entry.offset : entry.offset + len(entry.body)]),

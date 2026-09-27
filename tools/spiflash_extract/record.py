@@ -77,6 +77,9 @@ FEATURES = {
     "rww": "read-while-write",
 }
 
+# The feature a uniform erase block of each size gives.
+ERASE_FEATURES = {4096: "erase_4k", 32 * 1024: "erase_32k", 64 * 1024: "erase_64k"}
+
 Record = dict[str, Any]
 
 KEYS = (
@@ -103,7 +106,10 @@ KEYS = (
 
 
 def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
-    """A record with every key present, in the canonical order."""
+    """A record with every key present, in the canonical order.
+
+    ``features`` and ``flags`` may come in any order and with repeats; they
+    are stored sorted and unique."""
     unknown = set(fields) - set(KEYS)
     if unknown:
         msg = f"unknown record fields: {sorted(unknown)}"
