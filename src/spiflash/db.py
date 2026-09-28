@@ -61,7 +61,7 @@ class SourceInfo:
 
 #: The data files' format; :repo:`tools/update_db.py` writes the same number.
 #: 2: records' ``opcodes`` became a list of {op, opcode, via}.
-FORMAT = 2
+FORMAT = 3
 
 
 def _read(name: str) -> dict[str, Any]:

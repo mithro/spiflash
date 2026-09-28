@@ -66,6 +66,7 @@ def test_every_source_is_present() -> None:
         "flashprog",
         "openocd",
         "openfpgaloader",
+        "qemu",
         "jep106",
     }
     for name, s in spiflash.sources().items():
