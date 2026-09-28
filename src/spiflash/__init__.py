@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from .db import Database, Manufacturer, SourceInfo, database
 from .enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
-from .model import Eraser, Flash, Record, Voltage, parse_id
+from .model import Datasheet, Eraser, Flash, Record, Voltage, parse_id
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - a checkout without a build
 
 __all__ = [
     "Database",
+    "Datasheet",
     "Eraser",
     "Feature",
     "Flash",

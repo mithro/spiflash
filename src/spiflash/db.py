@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cache
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from .enums import FlashType, IdFamily
-from .model import Flash, Record, name_matches, parse_id, strip_continuation
+from .model import Datasheet, Flash, Record, name_matches, parse_id, strip_continuation
 from .vendors import canonical
 
 if TYPE_CHECKING:
@@ -93,6 +93,7 @@ class Database:
         records: Iterable[Record],
         manufacturers: Iterable[Manufacturer] = (),
         sources: Mapping[str, SourceInfo] | None = None,
+        datasheets: Iterable[Datasheet] = (),
     ) -> None:
         self.records: tuple[Record, ...] = tuple(records)
         self.manufacturers: tuple[Manufacturer, ...] = tuple(manufacturers)
@@ -113,8 +114,21 @@ class Database:
             key = (r.type, r.id_method.family, core)
             groups[key].append(r)
             banks[key][bank] += 1
+        #: Every datasheet known, each once (a chip's own are in its
+        #: :attr:`Flash.datasheets`).
+        self.datasheets: tuple[Datasheet, ...] = tuple(datasheets)
+        sheets: dict[str, list[Datasheet]] = defaultdict(list)
+        for d in self.datasheets:
+            for chip in d.ids:
+                sheets[chip].append(d)
+
+        def flash(typ: FlashType, fam: IdFamily, core: bytes, recs: list[Record]) -> Flash:
+            f = Flash(core, typ, tuple(recs), banks[(typ, fam, core)].most_common(1)[0][0], fam)
+            mine = sorted(sheets.get(f.key, ()), key=lambda d: d.rank(f.key))
+            return replace(f, datasheets=tuple(mine)) if mine else f
+
         self.flashes: tuple[Flash, ...] = tuple(
-            Flash(core, typ, tuple(recs), banks[(typ, fam, core)].most_common(1)[0][0], fam)
+            flash(typ, fam, core, recs)
             for (typ, fam, core), recs in sorted(groups.items(), key=lambda kv: (kv[0][2], kv[0]))
         )
 
@@ -130,6 +144,7 @@ class Database:
                 name: SourceInfo.from_json(info)
                 for name, info in _read("sources.json")["sources"].items()
             },
+            (Datasheet.from_json(d) for d in _read("datasheets.json")["datasheets"]),
         )
 
     def lookup(
