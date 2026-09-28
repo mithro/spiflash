@@ -18,6 +18,7 @@ and `8D` marks double transfer rate.
 | U-Boot | the same from its {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | OpenOCD | the columns of its table: read, fastest read, page program, sector erase and chip erase |
 | openFPGALoader | what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
+| QEMU | what its model ({upstream}`qemu:hw/block/m25p80.c`) decodes for every part (read, fast read, page program, sector and chip erase), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for ({upstream}`qemu:hw/block/m25p80_sfdp.c`), everything those tables list, with the part's own dummy clocks |
 
 The opcode values themselves are read from each upstream's own headers
 (`SPINOR_OP_*`, `JEDEC_*`, `SPIFLASH_READ_ID`, `FLASH_*`) and checked against

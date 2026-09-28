@@ -1,5 +1,7 @@
 """A database of SPI flash chips, merged from the tables in Linux, U-Boot,
-flashrom, flashprog, OpenOCD and openFPGALoader.
+flashrom, flashprog, OpenOCD, openFPGALoader and QEMU, with the SFDP (JESD216)
+tables of the parts QEMU has them for (:mod:`spiflash.sfdp` decodes those, and
+any other dump).
 
 >>> import spiflash
 >>> [f.manufacturer for f in spiflash.lookup("ef4018")]
@@ -17,6 +19,8 @@ from typing import TYPE_CHECKING
 from .db import Database, Manufacturer, SourceInfo, database
 from .enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
 from .model import Datasheet, Eraser, Flash, Record, Voltage, parse_id
+from .sfdp import Sfdp
+from .sfdp import parse as parse_sfdp
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -38,6 +42,7 @@ __all__ = [
     "Manufacturer",
     "OperationKind",
     "Record",
+    "Sfdp",
     "Source",
     "SourceInfo",
     "Voltage",
@@ -48,6 +53,7 @@ __all__ = [
     "jep106",
     "lookup",
     "parse_id",
+    "parse_sfdp",
     "records",
     "sources",
 ]

@@ -12,11 +12,13 @@ merged from the flash tables of every project that keeps one:
 | [flashprog](https://review.sourcearcade.org/flashprog.git) | [`flashchips.c`](https://github.com/SourceArcade/flashprog/blob/main/flashchips.c) (SPI chips only) | 480 |
 | [OpenOCD](https://github.com/openocd-org/openocd) | [`src/flash/nor/spi.c`](https://github.com/openocd-org/openocd/blob/master/src/flash/nor/spi.c), and [`src/helper/jep106.inc`](https://github.com/openocd-org/openocd/blob/master/src/helper/jep106.inc) for manufacturer names | 190 |
 | [openFPGALoader](https://github.com/trabucayre/openFPGALoader) | [`src/spiFlashdb.hpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlashdb.hpp) | 53 |
+| [QEMU](https://gitlab.com/qemu-project/qemu) | [`hw/block/m25p80.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80.c), and the SFDP dumps in [`hw/block/m25p80_sfdp.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80_sfdp.c) | 137 |
 
-Together that is 778 distinct chip ids (651 SPI NOR, 127 SPI NAND) from 37
-manufacturers, 459 of them described by more than one source, plus the full
+Together that is 779 distinct chip ids (652 SPI NOR, 127 SPI NAND) from 38
+manufacturers, 462 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
 from, and where the sources disagree (60 ids do) both answers are kept.
+Thirteen chips also carry their complete SFDP (JESD216) tables, decoded.
 
 `spiflash sources` (or `spiflash.sources()`) names the exact upstream commits
 the shipped data was extracted from.
@@ -111,6 +113,7 @@ description. See [Opcodes](#opcodes) for what the list does and does not promise
 spiflash list --manufacturer winbond     # every Winbond id
 spiflash list --type nand
 spiflash id --method res1 10             # a legacy RES signature byte (M25P10)
+spiflash sfdp W25Q512JV                  # its SFDP tables, decoded (see below)
 spiflash jep106 7f1c                     # "Eon Silicon Devices"
 spiflash sources                         # the upstream commits
 ```
@@ -140,7 +143,7 @@ A `Flash` is one chip id, and several parts can share one (a W25Q128BV, FV and
 JV all answer `ef4018`), so it lists every name the sources give. Its single
 values (`size`, `page_size`, `sector_size`, `voltage`, `manufacturer`) are what
 most sources agree on, ties going to flashrom, then flashprog, Linux, U-Boot,
-OpenOCD and openFPGALoader; `values("size")` shows who says what. `features`
+OpenOCD, openFPGALoader and QEMU; `values("size")` shows who says what. `features`
 is everything any source claims, from this list:
 
 | feature | meaning |
@@ -181,6 +184,7 @@ Each source's list is what that source says, from what it says it:
 | U-Boot | the same from its [`spi-nor-core.c`](https://github.com/u-boot/u-boot/blob/master/drivers/mtd/spi/spi-nor-core.c) (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | OpenOCD | the table's own opcode columns: read, fastest read, page program, sector and chip erase |
 | openFPGALoader | what its [`spiFlash.cpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlash.cpp) sends: read, page program, and the erases its table allows |
+| QEMU | what its model decodes for every part (read, fast read, page program, sector and chip erase), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for, everything those tables list |
 
 The opcode values are read from each upstream's own headers (`SPINOR_OP_*`,
 `JEDEC_*`, `FLASH_*`) and checked against the table when the data is built.
@@ -191,6 +195,40 @@ every part, and parts that Linux reads from SFDP get their read, program and
 erase opcodes from the chip at run time, so Linux lists only its defaults for
 them. Parts sharing an id can differ too; `because` says who vouches for what.
 SPI NAND parts have no opcodes listed.
+
+## SFDP
+
+A chip that answers SFDP (JESD216, opcode `0x5a`) describes itself: its
+density, erase types and their opcodes, each fast-read mode with the dummy
+clocks it needs, its page size, how to enter 4-byte addressing and set quad
+mode. That is exactly what the tables above can only approximate, so where a
+source carries a part's SFDP dump (QEMU's flash model does, for thirteen
+parts) the record keeps it whole and the chip gets it decoded:
+
+```python
+t = chip.sfdp                            # None unless a source has a dump; chip.sfdp_source says which
+t.revision_name, t.size, t.page_size     # ('JESD216B', 67108864, 256)
+[(e.size, e.opcode, e.opcode_4b) for e in t.erase_types]   # [(4096, 0x20, 0x21), ...]
+t.reads["1-4-4"].dummy_clocks            # 6: the part's own number, not a default
+t.bfpt.quad_enable_description           # 'SR2 bit 1, written with a 2-byte WRSR ...'
+t.features(), list(t.operations())       # as spiflash names them
+```
+
+The same decoder reads a dump from a real chip, such as the one Linux
+exposes at `/sys/bus/spi/devices/*/spi-nor/sfdp`:
+
+```sh
+spiflash sfdp /sys/bus/spi/devices/spi0.0/spi-nor/sfdp   # a file, or - for stdin
+spiflash sfdp '53 46 44 50 00 01 01 ff ...'               # or the bytes in hex
+spiflash sfdp W25Q512JV                                   # or a chip the database has a dump for
+```
+
+SFDP does not replace the tables. It says nothing about the vendor, the part
+name, the supply voltage, block protection or OTP, nothing at all for parts
+older than 2011, and what it does say is what the part's designers wrote:
+Linux keeps per-part fixups for tables with a wrong density, a wrong page size
+or a missing 4-byte method. `spiflash sfdp` reports what is written, and
+`Sfdp.warnings` what did not decode cleanly.
 
 ## Datasheets
 
