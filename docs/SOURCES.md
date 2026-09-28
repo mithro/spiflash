@@ -28,6 +28,15 @@ sources carries any obligation is a question for your own lawyer; the
 provenance of every value is recorded so that anyone who needs to can find, or
 drop, what came from where ({py:func}`spiflash.records` filtered by `source`).
 
+## Datasheet links
+
+{repo}`src/spiflash/data/datasheets.json` holds links to datasheets, not the
+documents: the URL each was found at (the manufacturer's own site where
+possible, otherwise a distributor's or an archive's copy), its title, revision
+and date, and the part numbers and chip ids it covers. They were found by
+searching for each part, and each document was read to check which part
+numbers it covers and whether it gives the chip's id bytes itself.
+
 ## What each upstream contributes
 
 - **flashrom** and **flashprog** (a fork of flashrom) have the most detail per

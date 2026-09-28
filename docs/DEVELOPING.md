@@ -62,9 +62,10 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | Path | What it is |
 |---|---|
 | {repo}`src/spiflash/` | the package: {repo}`model.py <src/spiflash/model.py>` (`Record`, `Flash`), {repo}`db.py <src/spiflash/db.py>` (loading, lookup, find), {repo}`opcodes.py <src/spiflash/opcodes.py>` (the named operations), {repo}`vendors.py <src/spiflash/vendors.py>` (one name per vendor), {repo}`cli.py <src/spiflash/cli.py>` |
-| {repo}`src/spiflash/data/` | generated: {repo}`records.json <src/spiflash/data/records.json>`, {repo}`manufacturers.json <src/spiflash/data/manufacturers.json>`, {repo}`sources.json <src/spiflash/data/sources.json>` |
+| {repo}`src/spiflash/data/` | generated: {repo}`records.json <src/spiflash/data/records.json>`, {repo}`manufacturers.json <src/spiflash/data/manufacturers.json>`, {repo}`sources.json <src/spiflash/data/sources.json>`; imported: {repo}`datasheets.json <src/spiflash/data/datasheets.json>` |
 | {repo}`tools/sources.toml` | the upstream commits the data is built from |
 | {repo}`tools/update_db.py` | fetch, extract, write the data |
+| {repo}`tools/import_datasheets.py` | write the datasheet links from a datasheet manifest |
 | {repo}`tools/spiflash_extract/cparse.py` | just enough C: find tables, split initialisers, evaluate integer expressions (`SZ_16M`, `BIT(3)`, `64 * 1024`) |
 | {repo}`tools/spiflash_extract/record.py` | the common record every extractor writes |
 | {repo}`tools/spiflash_extract/ops.py` | each record's opcodes, values checked against {repo}`src/spiflash/opcodes.py` |
@@ -91,6 +92,22 @@ data files hold one record per line, so `git diff` reads chip by chip.
 data or the tools, and `--latest --check` weekly. It is deliberately not part
 of {repo}`deb.yml <.github/workflows/deb.yml>`: a release should not wait on six
 servers.
+
+## Updating the datasheet links
+
+{repo}`src/spiflash/data/datasheets.json` is not built from the upstreams.
+It comes from a separate, local-only collection of the datasheets themselves
+(their publishers' copyrighted documents, so it is not published), whose
+`datasheets.jsonl` lists each document: where it was downloaded, its title,
+revision and date, the part numbers and chip ids it covers, and which of those
+ids its own text gives. Only the links and what they cover are shipped:
+
+```sh
+uv run tools/import_datasheets.py ../spiflash-pdfs/datasheets.jsonl
+```
+
+It refuses a manifest naming a chip id the database does not have, so after
+{repo}`tools/update_db.py` drops or renames an id, fix the manifest first.
 
 ## When an upstream changes its format
 

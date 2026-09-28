@@ -165,8 +165,8 @@ table.sf-parts td { white-space: nowrap; }
    Vendor as column 2 and drops Page, moving them to 3 and 8. */
 table.sf-parts:not(.sf-with-vendor) td:nth-child(2),
 table.sf-parts.sf-with-vendor td:nth-child(3) { white-space: normal; min-width: 12em; }
-table.sf-parts:not(.sf-with-vendor) td:nth-child(8),
-table.sf-parts.sf-with-vendor td:nth-child(8) { white-space: normal; min-width: 7em; }
+table.sf-parts:not(.sf-with-vendor) td:nth-child(9),
+table.sf-parts.sf-with-vendor td:nth-child(9) { white-space: normal; min-width: 7em; }
 table.sf-sources td { white-space: nowrap; }
 
 table.sf-parts { font-size: 0.86em; }
@@ -181,3 +181,9 @@ img[src*="wavedrom-"] {
   max-width: 100%;
   height: auto;
 }
+
+/* Datasheets: the title wraps, the rest stays on one line. */
+table.sf-datasheets td { white-space: nowrap; }
+table.sf-datasheets td:first-child,
+table.sf-datasheets td:nth-child(4) { white-space: normal; }
+table.sf-datasheets td:first-child { min-width: 16em; }
