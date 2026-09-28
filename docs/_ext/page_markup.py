@@ -7,8 +7,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from spiflash.cli import human_size
 from spiflash.enums import Source
+from spiflash.units import human_size
 
 if TYPE_CHECKING:
     from spiflash import Flash

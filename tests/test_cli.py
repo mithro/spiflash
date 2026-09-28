@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from spiflash import cli
+from spiflash import cli, units
 
 
 def run(capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, str]:
@@ -97,7 +97,14 @@ def test_version(capsys: pytest.CaptureFixture[str]) -> None:
     ],
 )
 def test_human_size(n: int | None, text: str) -> None:
-    assert cli.human_size(n) == text
+    assert units.human_size(n) == text
+
+
+@pytest.mark.parametrize(
+    ("us", "text"), [(704, "704 us"), (64_000, "64 ms"), (192_000_000, "192 s"), (1500, "1.5 ms")]
+)
+def test_human_time(us: int, text: str) -> None:
+    assert units.human_time(us) == text
 
 
 def test_opcodes_by_id_and_by_name(capsys: pytest.CaptureFixture[str]) -> None:

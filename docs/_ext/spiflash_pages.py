@@ -44,9 +44,9 @@ from page_markup import (
     vendor_of,
     volts,
 )
-from spiflash.cli import human_size
 from spiflash.enums import OperationKind
 from spiflash.opcodes import OPERATIONS
+from spiflash.units import human_size
 
 if TYPE_CHECKING:
     from sphinx.application import Sphinx

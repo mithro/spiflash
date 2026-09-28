@@ -18,18 +18,10 @@ from typing import TYPE_CHECKING
 from . import __version__
 from .db import Database, database
 from .model import Flash, parse_id
+from .units import human_size
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-
-def human_size(n: int | None) -> str:
-    if n is None:
-        return "?"
-    for unit, scale in (("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)):
-        if n >= scale and n % scale == 0:
-            return f"{n // scale} {unit}"
-    return f"{n} B"
 
 
 def opcode_table(f: Flash, *, verbose: bool = False) -> list[str]:
