@@ -51,8 +51,7 @@ def opcode_table(f: Flash, *, verbose: bool = False) -> list[str]:
 
 def header(f: Flash) -> str:
     """The first line describing a chip: its id, maker, part names and type."""
-    ident = f.jedec_id if f.family == "jedec" else f"{f.family}:{f.id_hex}"
-    return f"{ident}  {f.manufacturer or '?'}  {', '.join(f.names)}  ({f.type})"
+    return f"{f.key}  {f.manufacturer or '?'}  {', '.join(f.names)}  ({f.type})"
 
 
 def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
@@ -79,6 +78,8 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    {r.source:15} {r.name}{ext}  [{r.url}]")
     else:
         lines.append("    from: " + ", ".join(f.sources))
+    # The best datasheet, or all of them with -v.
+    lines.extend(f"    datasheet: {d.url}" for d in f.datasheets[: None if verbose else 1])
     if opcodes:
         lines.append("    opcodes:")
         lines.extend(opcode_table(f, verbose=verbose))

@@ -1,8 +1,9 @@
-"""The database's types: one upstream entry (:class:`Record`), and the chip
-id they describe (:class:`Flash`)."""
+"""The database's types: one upstream entry (:class:`Record`), the chip id
+they describe (:class:`Flash`), and a datasheet for it (:class:`Datasheet`)."""
 
 from __future__ import annotations
 
+import datetime
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -85,6 +86,50 @@ def strip_continuation(data: bytes) -> tuple[int, bytes]:
     while n < len(data) - 1 and data[n] == 0x7F:
         n += 1
     return n, data[n:]
+
+
+@dataclass(frozen=True, slots=True)
+class Datasheet:
+    """A datasheet for one or more chip ids: where to get it, what it is,
+    and which part numbers and ids it covers.
+
+    ``official`` is true when ``url`` is the manufacturer's own site, false
+    for a copy elsewhere (a distributor, an archive). ``confirmed`` lists the
+    ids whose bytes the document itself gives; for the others, the match is
+    by part number only."""
+
+    url: str
+    title: str
+    official: bool
+    parts: tuple[str, ...]
+    ids: tuple[str, ...]
+    confirmed: tuple[str, ...] = ()
+    revision: str | None = None
+    date: datetime.date | None = None
+    also_at: tuple[str, ...] = ()
+    #: Of the file as downloaded, so a copy can be checked against it.
+    sha256: str | None = None
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> Datasheet:
+        return cls(
+            url=d["url"],
+            title=d["title"],
+            official=d["official"],
+            parts=tuple(d["parts"]),
+            ids=tuple(d["ids"]),
+            confirmed=tuple(d.get("confirmed") or ()),
+            revision=d.get("revision"),
+            date=datetime.date.fromisoformat(d["date"]) if d.get("date") else None,
+            also_at=tuple(d.get("also_at") or ()),
+            sha256=d.get("sha256"),
+        )
+
+    def rank(self, key: str) -> tuple[bool, bool, int]:
+        """Sorts the best datasheet for chip ``key`` first: one showing the
+        id, then the manufacturer's own, then the newest."""
+        newest = -self.date.toordinal() if self.date else 0
+        return (key not in self.confirmed, not self.official, newest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +303,14 @@ class Flash:
     bank: int = 0
     #: Which command the id answers: JEDEC read-id (0x9F), or a legacy one.
     family: IdFamily = IdFamily.JEDEC
+    #: Datasheets for the id's parts, the best first (see :meth:`Datasheet.rank`).
+    datasheets: tuple[Datasheet, ...] = field(default=(), repr=False, compare=False)
+
+    @property
+    def key(self) -> str:
+        """The id as the command line and the datasheet list write it:
+        ``jedec_id``, or ``family:id`` for a legacy id (``rems:bf48``)."""
+        return self.jedec_id if self.family == IdFamily.JEDEC else f"{self.family}:{self.id_hex}"
 
     @property
     def id_hex(self) -> str:
@@ -374,7 +427,9 @@ class Flash:
             for r in self.records
             if r.ext_id is None or r.ext_id[: len(ext)] == ext[: len(r.ext_id)]
         )
-        return Flash(self.id, self.type, keep or self.records, self.bank, self.family)
+        return Flash(
+            self.id, self.type, keep or self.records, self.bank, self.family, self.datasheets
+        )
 
     def to_json(self) -> dict[str, Any]:
         """A plain-JSON summary, as the ``spiflash`` command prints it."""
@@ -408,6 +463,17 @@ class Flash:
                 ]
                 for k, vals in self.conflicts.items()
             },
+            "datasheets": [
+                {
+                    "url": d.url,
+                    "title": d.title,
+                    "revision": d.revision,
+                    "date": d.date.isoformat() if d.date else None,
+                    "official": d.official,
+                    "id_confirmed": self.key in d.confirmed,
+                }
+                for d in self.datasheets
+            ],
             "records": [
                 {
                     "source": r.source,

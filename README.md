@@ -22,8 +22,9 @@ from, and where the sources disagree (60 ids do) both answers are kept.
 the shipped data was extracted from.
 
 Browse it at **<https://spiflash.readthedocs.io/>**: a page per vendor with a
-table of all its parts, a page per chip, and a page per SPI operation (what
-it does, a WaveDrom timing diagram, and every part that supports it).
+table of all its parts, a page per chip (with links to its datasheets), and a
+page per SPI operation (what it does, a WaveDrom timing diagram, and every part
+that supports it).
 
 <!-- usage-start: docs/usage.md includes from here -->
 
@@ -190,6 +191,21 @@ every part, and parts that Linux reads from SFDP get their read, program and
 erase opcodes from the chip at run time, so Linux lists only its defaults for
 them. Parts sharing an id can differ too; `because` says who vouches for what.
 SPI NAND parts have no opcodes listed.
+
+## Datasheets
+
+```python
+d = chip.datasheets[0]                   # the best first
+d.url, d.revision, d.date                # ('https://www.winbond.com/resource-files/W25Q128JV...pdf', 'Revision H', ...)
+d.official                               # True: the manufacturer's own site
+chip.key in d.confirmed                  # True: the document itself gives this id's bytes
+```
+
+Most chip ids have at least one datasheet link: the manufacturer's own where it
+could be found, otherwise a copy elsewhere (`official` is false). A datasheet
+that gives the id's bytes comes first, then the manufacturer's own, then the
+newest. `spiflash id` prints the best one, and `-v` prints them all. Only the
+links are shipped, not the documents.
 
 <!-- usage-end -->
 

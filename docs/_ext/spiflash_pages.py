@@ -73,6 +73,7 @@ def chip_page(db: Database, f: Flash, vendor_slug: str) -> str:
     if others:
         out.append(f"Also listed as: {', '.join(esc(n) for n in others)}.\n")
     out += _summary_cards(f)
+    out += _datasheets(f)
     out += _identification(db, f, kind)
     out += _capabilities(f)
     out += _opcodes(f)
@@ -95,6 +96,51 @@ def _summary_cards(f: Flash) -> list[str]:
         out.append(f":::{{grid-item-card}} {label}\n:class-card: sf-card\n\n{value}\n:::")
     out.append("::::\n")
     return out
+
+
+def link_to(text: str, url: str) -> str:
+    """A Markdown link; the target in angle brackets, so a URL with
+    parentheses or spaces in it stays one link."""
+    return f"[{esc(text)}](<{url}>)"
+
+
+def _datasheets(f: Flash) -> list[str]:
+    if not f.datasheets:
+        return [
+            "## Datasheets\n",
+            (
+                "No datasheet found for this id yet: if you know where one is, "
+                f"[open an issue]({REPO_URL}/issues/new).\n"
+            ),
+        ]
+    rows = []
+    for d in f.datasheets:
+        where = badge("manufacturer", "success") if d.official else badge("copy", "secondary")
+        mirrors = ", ".join(link_to(f"mirror {n}", u) for n, u in enumerate(d.also_at, 1))
+        rows.append(
+            [
+                link_to(d.title, d.url) + (f" ({mirrors})" if mirrors else ""),
+                esc(d.revision or EM_DASH),
+                d.date.isoformat() if d.date else EM_DASH,
+                ", ".join(esc(n) for n in d.parts),
+                where,
+                "{sfyes}`✓`" if f.key in d.confirmed else " ",
+            ]
+        )
+    return [
+        "## Datasheets\n",
+        list_table(
+            ["Document", "Revision", "Date", "Covers", "From", "Id shown"],
+            rows,
+            "sf-table sf-datasheets",
+        ),
+        "",
+        (
+            "*From* says whether the link is the manufacturer's own site or a copy "
+            "elsewhere (a distributor, an archive). *Id shown* marks a document that "
+            "gives this id's bytes itself; the others were matched by part number.\n"
+        ),
+    ]
 
 
 def _identification(db: Database, f: Flash, kind: str) -> list[str]:
@@ -280,6 +326,7 @@ def parts_table(
             row.append(esc(vendor_of(f)))
         row += [
             ", ".join(esc(n) for n in f.names),
+            link_to("PDF", f.datasheets[0].url) if f.datasheets else " ",
             "NAND" if f.type == "nand" else "NOR",
             size_text(f.size),
             *([] if with_vendor else [size_text(f.page_size)]),
@@ -295,6 +342,7 @@ def parts_table(
         + (["Vendor"] if with_vendor else [])
         + [
             "Parts",
+            "Datasheet",
             "Type",
             "Size",
             *([] if with_vendor else ["Page"]),
