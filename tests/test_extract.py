@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from spiflash_extract import flashrom, linux, openfpgaloader, openocd, record, uboot
+from spiflash_extract import flashrom, linux, openfpgaloader, openocd, qemu, record, uboot
 from spiflash_extract.ops import Opcodes
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -469,3 +469,165 @@ def test_opcodes_checks_values_against_the_table() -> None:
     o.discard("READ_1_1_1")
     o.discard("READ_1_1_1")
     assert o.to_json() == []
+
+
+QEMU_M25P80 = fixture("qemu/hw/block/m25p80.c")
+
+QEMU_SFDP = fixture("qemu/hw/block/m25p80_sfdp.c")
+
+
+def test_qemu(tmp_path: Path) -> None:
+    write(tmp_path, {qemu.M25P80: QEMU_M25P80, qemu.SFDP_C: QEMU_SFDP})
+    recs = qemu.extract(tmp_path)
+    r = by_name(recs)
+    assert [x["name"] for x in recs] == [
+        "at25fs010",
+        "at25128a-nonjedec",
+        "at25256a-nonjedec",
+        "mx25l25635e",
+        "n25q256a",
+        "mt35xu01g",
+        "n25q00",
+        "s25sl032p",
+        "s25fl016k",
+        "w25q512jv",
+        "25csm04",
+    ]
+    assert all(x["source"] == "qemu" and x["file"] == qemu.M25P80 for x in recs)
+
+    a = r["at25fs010"]
+    assert a["vendor"] == "Atmel"  # the heading, without its "-- some are ..." remark
+    assert a["line"] == 119
+    assert (a["id"], a["ext_id"], a["size"], a["page_size"], a["sector_size"]) == (
+        "1f6601",
+        None,
+        128 << 10,
+        256,
+        32 << 10,
+    )
+    assert a["erasers"] == [
+        {"opcode": 0x20, "blocks": [[4096, 32]]},
+        {"opcode": 0xD8, "blocks": [[32 << 10, 4]]},
+    ]
+    assert a["features"] == ["erase_4k", "fast_read"]
+    assert a["flags"] == ["ER_4K"]
+    assert a["sfdp"] is None
+    assert ops(a) == {
+        "RDID": (0x9F, "JEDEC_READ: the entry's id bytes"),
+        "READ_1_1_1": (0x03, "m25p80 decodes it for every part"),
+        "READ_1_1_1_FAST": (0x0B, "m25p80 decodes it for every part"),
+        "PP_1_1_1": (0x02, "m25p80 decodes it for every part"),
+        "BE_4K": (0x20, "ER_4K"),
+        "SE": (0xD8, "ERASE_SECTOR: the entry's sector size"),
+        "CHIP_ERASE": (0xC7, "BULK_ERASE"),
+    }
+
+    # The EEPROMs: no id, a byte-sized "sector", the block comment is not a heading.
+    e = r["at25128a-nonjedec"]
+    assert e["vendor"] == "Atmel"
+    assert e["id"] is None
+    assert e["id_method"] is None
+    assert e["size"] == 128 << 10
+    assert e["sector_size"] is None
+    assert e["erasers"] is None
+    assert e["features"] == ["fast_read", "no_erase"]
+    assert set(ops(e)) == {"READ_1_1_1", "READ_1_1_1_FAST", "PP_1_1_1"}
+
+    # INFO6: a three-byte ext_id; a dump: the SFDP-derived reads and erases.
+    m = r["mx25l25635e"]
+    assert m["vendor"] == "Macronix"
+    assert (m["id"], m["ext_id"]) == ("c22019", "c22019")
+    assert m["size"] == 32 << 20
+    assert m["sfdp"] is not None
+    assert m["sfdp"].startswith("53464450000101ff")
+    assert m["features"] == [
+        "4byte_addr",
+        "dual_read",
+        "erase_32k",
+        "erase_4k",
+        "erase_64k",
+        "fast_read",
+        "quad_read",
+        "sfdp",
+    ]
+    assert ops(m)["RDSFDP"] == (0x5A, ".sfdp_read = m25p80_sfdp_mx25l25635e")
+    assert ops(m)["READ_1_4_4"] == (0xEB, "SFDP BFPT 1-4-4 fast read: 2 mode + 4 wait clocks")
+    assert ops(m)["BE_32K"] == (0x52, "ER_32K; SFDP BFPT erase type 2: 32768 B")
+    assert m["notes"] == []
+
+    # Flags for the status register layout; the multi-line heading before Spansion.
+    n = r["n25q256a"]
+    assert n["vendor"] == "Micron"
+    assert n["flags"] == ["ER_4K", "HAS_SR_BP3_BIT6", "HAS_SR_TB"]
+    assert "lock" in n["features"]
+    assert n["sfdp"] is not None
+    assert r["s25sl032p"]["vendor"] == "Spansion"
+    assert r["s25sl032p"]["ext_id"] == "4d00"
+    assert r["s25fl016k"]["vendor"] == "Spansion"  # filed there, with a Winbond id
+    assert r["s25fl016k"]["id"] == "ef4015"
+
+    # INFO_STACKED: a die count, and only two of the three ext_id bytes.
+    t = r["mt35xu01g"]
+    assert t["ext_id"] == "4100"
+    assert "INFO_STACKED keeps 2 bytes of the ext_id 0x104100" in t["notes"]
+    assert "die_cnt=2" in t["flags"]
+    assert ops(t)["DIE_ERASE"] == (0xC4, "die_cnt = 2")
+    assert ops(t)["BE_32K_4B"] == (0x5C, "SFDP 4BAIT erase type 3: 32768 B, 4-byte address")
+    assert t["sector_size"] == 128 << 10
+    assert "erase_64k" not in t["features"]
+    assert r["n25q00"]["flags"] == ["ER_4K", "die_cnt=4"]
+    assert r["n25q00"]["ext_id"] == "1000"
+    assert r["n25q00"]["sfdp"] is None
+
+    w = r["w25q512jv"]
+    assert w["vendor"] == "Winbond"
+    assert {"4byte_opcodes", "qpi", "quad_pp", "sfdp"} <= set(w["features"])
+    assert ops(w)["READ_1_4_4_4B"] == (0xEC, "SFDP 4BAIT bit 5: fast read 1-4-4, 4-byte address")
+    assert ops(w)["EN4B"][0] == 0xB7
+    assert any(note.startswith("SFDP: 0xeb 4-4-4, no named operation") for note in w["notes"])
+    assert any(note.startswith("SFDP: 4BAIT claims") for note in w["notes"])
+
+    c = r["25csm04"]
+    assert c["vendor"] == "Microchip"
+    assert (c["id"], c["ext_id"]) == ("29cc00", "0100")
+    assert c["features"] == ["erase_64k", "fast_read"]
+
+
+def test_qemu_sfdp_dumps(tmp_path: Path) -> None:
+    write(tmp_path, {qemu.SFDP_C: QEMU_SFDP})
+    dumps = qemu.sfdp_dumps(tmp_path)
+    assert set(dumps) == {
+        "m25p80_sfdp_n25q256a",
+        "m25p80_sfdp_mt35xu01g",
+        "m25p80_sfdp_mx25l25635e",
+        "m25p80_sfdp_w25q512jv",
+    }
+    assert len(dumps["m25p80_sfdp_mx25l25635e"]) == 128
+    assert len(dumps["m25p80_sfdp_w25q512jv"]) == 256
+    assert dumps["m25p80_sfdp_w25q512jv"][:4] == b"SFDP"
+
+
+def test_qemu_errors(tmp_path: Path) -> None:
+    write(tmp_path, {qemu.M25P80: "int x;", qemu.SFDP_C: ""})
+    with pytest.raises(ValueError, match="no known_devices"):
+        qemu.extract(tmp_path)
+    table = QEMU_M25P80.split("static const FlashPartInfo known_devices[] = {")[0]
+    write(
+        tmp_path,
+        {
+            qemu.M25P80: table + "static const FlashPartInfo known_devices[] = {\n"
+            '    { INFO("x", 0xef4020, 0, 64 << 10, 1024, ER_4K), .sfdp_read = m25p80_sfdp_x },\n'
+            "};\n",
+        },
+    )
+    with pytest.raises(ValueError, match=r"no m25p80_sfdp_x\(\) in"):
+        qemu.extract(tmp_path)
+    write(
+        tmp_path,
+        {
+            qemu.M25P80: table
+            + 'static const FlashPartInfo known_devices[] = {\n    { .part_name = "x" },\n};\n'
+        },
+    )
+    with pytest.raises(ValueError, match="not INFO/INFO6/INFO_STACKED"):
+        qemu.extract(tmp_path)

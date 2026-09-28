@@ -264,6 +264,8 @@ def test_unknown_source_is_rejected() -> None:
 def test_sources_are_in_priority_order() -> None:
     assert [s.priority for s in Source] == list(range(len(Source)))
     assert Source.FLASHROM.priority < Source.LINUX.priority < Source.OPENFPGALOADER.priority
+    assert Source.QEMU.priority == len(Source) - 1
+    assert Source.QEMU.label == "QEMU"
     assert Source.UBOOT.label == "U-Boot"
     assert Source("u-boot") is Source.UBOOT
 

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from spiflash_extract import fetch, flashrom, linux, openfpgaloader, openocd, uboot
+from spiflash_extract import fetch, flashrom, linux, openfpgaloader, openocd, qemu, uboot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,6 +45,7 @@ EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
     "flashprog": lambda root: flashrom.extract(root, "flashprog"),
     "openocd": openocd.extract,
     "openfpgaloader": openfpgaloader.extract,
+    "qemu": qemu.extract,
 }
 
 

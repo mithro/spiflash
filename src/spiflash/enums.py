@@ -16,8 +16,10 @@ class Source(StrEnum):
     The members are declared in priority order: when sources disagree on a
     value and are otherwise tied, the earlier one wins. flashrom and
     flashprog come first (their entries are per part, tested on hardware and
-    carry the most detail), OpenOCD and openFPGALoader last (their tables are
-    the smallest and the least specific)."""
+    carry the most detail), OpenOCD and openFPGALoader near the end (their
+    tables are the smallest and the least specific), and QEMU last: its
+    table is a 2012 copy of Linux's, kept for the parts its boards emulate,
+    though its SFDP dumps are the only ones any upstream has."""
 
     FLASHROM = "flashrom"
     FLASHPROG = "flashprog"
@@ -25,6 +27,7 @@ class Source(StrEnum):
     UBOOT = "u-boot"
     OPENOCD = "openocd"
     OPENFPGALOADER = "openfpgaloader"
+    QEMU = "qemu"
 
     @property
     def priority(self) -> int:
@@ -46,6 +49,7 @@ _SOURCE_LABELS = {
     Source.UBOOT: "U-Boot",
     Source.OPENOCD: "OpenOCD",
     Source.OPENFPGALOADER: "openFPGALoader",
+    Source.QEMU: "QEMU",
 }
 
 
