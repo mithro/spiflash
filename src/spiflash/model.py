@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 
 from .enums import Feature, FlashType, IdFamily, IdMethod, Source
 from .opcodes import OPERATIONS, Operation, sort_key
+from .sfdp import Sfdp
+from .sfdp import parse as parse_sfdp
 from .vendors import canonical
 
 if TYPE_CHECKING:
@@ -188,6 +190,8 @@ class Record:
     opcodes: tuple[OpcodeUse, ...]
     tested: str | None
     notes: tuple[str, ...]
+    #: The part's SFDP area, where the upstream carries a dump of it.
+    sfdp: bytes | None = field(default=None, repr=False)
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> Record:
@@ -211,7 +215,13 @@ class Record:
             opcodes=tuple(OpcodeUse(o["op"], o["opcode"], o["via"]) for o in d["opcodes"]),
             tested=d["tested"],
             notes=tuple(d["notes"]),
+            sfdp=bytes.fromhex(d["sfdp"]) if d.get("sfdp") else None,
         )
+
+    def sfdp_tables(self) -> Sfdp | None:
+        """The entry's SFDP dump, decoded (see :mod:`spiflash.sfdp`); ``None``
+        when the upstream has none for it."""
+        return parse_sfdp(self.sfdp) if self.sfdp else None
 
     @property
     def manufacturer(self) -> str | None:
@@ -389,6 +399,25 @@ class Flash:
             for name in sorted(because, key=sort_key)
         }
 
+    @cached_property
+    def sfdp(self) -> Sfdp | None:
+        """The chip's SFDP tables, decoded, from the highest-priority source
+        that carries a dump of them (:attr:`sfdp_source`); ``None`` when no
+        source does. What a dump says is what one part answered, and parts
+        sharing an id can differ."""
+        for r in sorted(self.records, key=lambda r: r.source.priority):
+            if r.sfdp:
+                return r.sfdp_tables()
+        return None
+
+    @property
+    def sfdp_source(self) -> Source | None:
+        """Which source :attr:`sfdp` comes from."""
+        for r in sorted(self.records, key=lambda r: r.source.priority):
+            if r.sfdp:
+                return r.source
+        return None
+
     def supports(self, operation: str) -> bool:
         """Whether any source says the chip has ``operation`` (``"READ_1_1_4"``)."""
         return operation in self.opcodes
@@ -483,4 +512,5 @@ class Flash:
                 }
                 for r in self.records
             ],
+            "sfdp": {"source": self.sfdp_source, **self.sfdp.to_json()} if self.sfdp else None,
         }

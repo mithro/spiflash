@@ -26,6 +26,7 @@ from spiflash.model import (
     strip_continuation,
 )
 from spiflash.opcodes import OPERATIONS
+from test_sfdp import MX25L25635E, W25Q512JV
 
 
 def rec(**kw: object) -> Record:
@@ -453,3 +454,41 @@ def test_link_to_the_upstream_line() -> None:
         records=1,
     )
     assert Database([rec()], sources={"linux": elsewhere}).link(rec()) is None
+
+
+# --- SFDP dumps on records ---------------------------------------------------
+
+
+def test_record_sfdp_dump() -> None:
+    plain = rec()
+    assert plain.sfdp is None
+    assert plain.sfdp_tables() is None
+    with_dump = rec(source="openocd", sfdp=W25Q512JV.hex())
+    assert with_dump.sfdp == W25Q512JV
+    tables = with_dump.sfdp_tables()
+    assert tables is not None
+    assert tables.size == 64 << 20
+    db = Database([plain, with_dump, rec(source="openfpgaloader", sfdp=MX25L25635E.hex())])
+    (f,) = db.flashes
+    assert f.sfdp is not None
+    assert f.sfdp.revision_name == "JESD216B"  # OpenOCD outranks openFPGALoader
+    assert f.sfdp_source == "openocd"
+    doc = f.to_json()
+    assert doc["sfdp"]["source"] == "openocd"
+    assert doc["sfdp"]["size"] == 64 << 20
+    json.dumps(doc)
+    (none,) = Database([plain]).flashes
+    assert none.sfdp is None
+    assert none.sfdp_source is None
+    assert none.to_json()["sfdp"] is None
+
+
+def test_every_shipped_sfdp_dump_decodes() -> None:
+    for r in spiflash.records():
+        if r.sfdp is None:
+            continue
+        tables = r.sfdp_tables()
+        assert tables is not None, r.name
+        assert tables.bfpt is not None, r.name
+        assert tables.features() <= r.features, r.name
+        assert "sfdp" in r.features

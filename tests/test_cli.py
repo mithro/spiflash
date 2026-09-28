@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import io
 import json
+import sys
+from typing import TYPE_CHECKING
 
 import pytest
 
 from spiflash import cli, units
+from spiflash.sfdp import parse
+from test_sfdp import MX25L25635E, W25Q512JV
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def run(capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, str]:
@@ -140,3 +148,44 @@ def test_id_with_opcodes_flag(capsys: pytest.CaptureFixture[str]) -> None:
 def test_opcodes_none_known(capsys: pytest.CaptureFixture[str]) -> None:
     _, out = run(capsys, "opcodes", "--", "c220")  # a SPI NAND: no NOR opcodes
     assert "no opcodes known" in out
+
+
+def test_sfdp_from_hex_and_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    code, out = run(capsys, "sfdp", MX25L25635E.hex())
+    assert code == 0
+    assert out.startswith("SFDP 1.0 (JESD216), 2 parameter headers")
+    assert "0xeb  READ_1_4_4" in out
+    dump = tmp_path / "sfdp"
+    dump.write_bytes(MX25L25635E)
+    assert run(capsys, "sfdp", str(dump)) == (0, out)
+    _, verbose = run(capsys, "sfdp", "-v", str(dump))
+    assert "DW1: 0xfff320e5" in verbose
+    _, js = run(capsys, "sfdp", "--json", str(dump))
+    (doc,) = json.loads(js)
+    assert doc["size"] == 32 << 20
+    assert doc["features"] == sorted(doc["features"])
+
+
+def test_sfdp_from_stdin(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(W25Q512JV)))
+    code, out = run(capsys, "sfdp", "-")
+    assert code == 0
+    assert "SFDP 1.6 (JESD216B)" in out
+
+
+def test_sfdp_of_a_chip_without_a_dump(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["sfdp", "w25q128jv"]) == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "no SFDP dump for w25q128jv" in err
+
+
+def test_sfdp_garbage() -> None:
+    assert cli.main(["sfdp", "deadbeef"]) == 1  # a hex string that is not a dump, nor an id
+    assert cli.main(["sfdp", "no such part"]) == 1
+
+
+def test_sfdp_summary() -> None:
+    assert cli.sfdp_summary(parse(W25Q512JV)) == "JESD216B (BFPT 1.6, 4BAIT 1.0)"

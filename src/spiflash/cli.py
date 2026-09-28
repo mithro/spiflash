@@ -4,6 +4,7 @@ spiflash id ef4018            which chip answers this JEDEC id?
 spiflash find w25q128jv       which ids does this part answer?
 spiflash list --manufacturer winbond
 spiflash opcodes ef4018       which opcodes does it support? (an id or a part name)
+spiflash sfdp sfdp.bin        decode an SFDP dump (a file, hex, or a chip with a shipped one)
 spiflash jep106 c2            the JEP106 manufacturer of an id byte
 spiflash sources              where the data came from
 """
@@ -13,11 +14,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import __version__
 from .db import Database, database
 from .model import Flash, parse_id
+from .sfdp import SIGNATURE, Sfdp
+from .sfdp import parse as parse_sfdp
 from .units import human_size
 
 if TYPE_CHECKING:
@@ -70,12 +74,43 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    {r.source:15} {r.name}{ext}  [{r.url}]")
     else:
         lines.append("    from: " + ", ".join(f.sources))
+    if f.sfdp is not None:
+        lines.append(f"    sfdp: {sfdp_summary(f.sfdp)}  [{f.sfdp_source}]")
     # The best datasheet, or all of them with -v.
     lines.extend(f"    datasheet: {d.url}" for d in f.datasheets[: None if verbose else 1])
     if opcodes:
         lines.append("    opcodes:")
         lines.extend(opcode_table(f, verbose=verbose))
     return "\n".join(lines)
+
+
+def sfdp_summary(s: Sfdp) -> str:
+    """One line on a chip's SFDP dump: its revision and the tables in it."""
+    tables = ", ".join(f"{h.name} {h.revision}" for h in s.headers)
+    return f"{s.revision_name} ({tables})"
+
+
+def _sfdp_input(db: Database, source: str) -> tuple[list[tuple[str | None, Sfdp]], bool]:
+    """What ``spiflash sfdp`` was given: a file, ``-`` for stdin, hex bytes,
+    or a chip (id or part name) whose shipped dump to show. Each dump comes
+    with the chip's header line, or ``None`` for a dump given directly; the
+    flag says a chip was named."""
+    if source == "-":
+        return [(None, parse_sfdp(sys.stdin.buffer.read()))], False
+    try:
+        data = parse_id(source)
+    except ValueError:
+        data = b""
+    if data[:4] == SIGNATURE:
+        return [(None, parse_sfdp(data))], False
+    try:
+        is_file = Path(source).is_file()
+    except OSError:  # a long hex string is not a usable file name
+        is_file = False
+    if is_file:
+        return [(None, parse_sfdp(Path(source).read_bytes()))], False
+    found = _resolve(db, source)
+    return [(header(f), f.sfdp) for f in found if f.sfdp is not None], True
 
 
 def _emit(
@@ -128,6 +163,15 @@ def _parser() -> argparse.ArgumentParser:
     p = sub.add_parser("opcodes", parents=[common], help="the opcodes a chip supports")
     p.add_argument("query", help="a JEDEC id (ef4018) or a part name (W25Q128JV)")
 
+    p = sub.add_parser("sfdp", help="decode SFDP (JESD216) tables")
+    p.add_argument(
+        "source",
+        help="a dump file (/sys/bus/spi/devices/*/spi-nor/sfdp), - for stdin, hex bytes, "
+        "or a chip (a JEDEC id or part name) the database has a dump for",
+    )
+    p.add_argument("--json", action="store_true", help="print JSON")
+    p.add_argument("-v", "--verbose", action="store_true", help="print every table's dwords")
+
     p = sub.add_parser("jep106", help="name the manufacturer of an id byte")
     p.add_argument("id", help="the id byte in hex, with any 7f continuation codes before it")
 
@@ -172,6 +216,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{f.jedec_id:10} {f.type:4} {f.manufacturer or '?':14} "
                     f"{human_size(f.size):>8}  {', '.join(f.names)}"
                 )
+            return 0
+        if args.command == "sfdp":
+            dumps, named = _sfdp_input(db, args.source)
+            if not dumps:
+                print(f"spiflash: no SFDP dump for {args.source}", file=sys.stderr)
+                return 1
+            if args.json:
+                json.dump([s.to_json() for _, s in dumps], sys.stdout, indent=1)
+                sys.stdout.write("\n")
+                return 0
+            for head, tables in dumps:
+                if named and head:
+                    print(head)
+                print(tables.describe(verbose=args.verbose))
+                print()
             return 0
         if args.command == "jep106":
             data = parse_id(args.id)
