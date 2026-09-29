@@ -5,6 +5,7 @@ from __future__ import annotations
 import spiflash
 from issue_checks import IssueKind, find
 from issue_pages import chip_issues, generate_all
+from page_markup import EM_SPACE, EN_DASH
 from spiflash import Database, Datasheet
 from spiflash.enums import Source
 from test_db import rec
@@ -162,5 +163,29 @@ def test_values_grouped_by_what_disagrees() -> None:
         "## Sector size",
         "## Supply voltage",
     ]
+    # Each has a target, an HTML id as it is: no underscores.
+    assert "(value-page-size)=" in page
     counts = sum(int(h.split("(")[1].rstrip(")")) for h in headings)
     assert counts == len([i for i in find(db) if i.kind is IssueKind.VALUE])
+
+
+def test_summary_has_a_row_per_value() -> None:
+    db = Database([rec(voltage=[2700, 3600]), rec(source="u-boot", voltage=[1700, 2000])])
+    slugs = {id(f): f.key for f in db.flashes}
+    pages = generate_all(db, slugs)
+    rows = [line for line in pages["index.md"].splitlines() if line.startswith("* - ")]
+    # Voltage has an issue, so a section to link to; size has none.
+    assert "* - {sfsub}`Supply voltage <value.html#value-voltage>`" in rows
+    assert "* - {sfsub}`Size`" in rows
+    # Only the value page has the targets.
+    assert "(value-voltage)=" in pages["value.md"]
+    assert "(value-voltage)=" not in pages["index.md"]
+
+
+def test_supply_ends_are_numbers_of_their_own() -> None:
+    db = Database([rec(voltage=[2700, 3600]), rec(source="u-boot", voltage=[1700, 2000])])
+    slugs = {id(f): f.key for f in db.flashes}
+    page = generate_all(db, slugs)["value.md"]
+    assert "Answers: V min, V max" in page
+    assert f"**{{sfnum}}`2.7 V`{EM_SPACE}{{sfnum}}`3.6 V`**" in page
+    assert EN_DASH not in page
