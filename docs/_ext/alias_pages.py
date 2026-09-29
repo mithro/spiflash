@@ -162,7 +162,9 @@ STYLE = (
 )
 CHOICE_TEXT = (
     "under more than one id: a second JEDEC id, or a legacy id older parts answer."
-    " Its datasheet, or the id read from the chip, says which applies."
+    " Its datasheet, or the id read from the chip, says which applies. A part"
+    ' listed under several JEDEC ids is also on <a href="../issues/name-ids.html">One'
+    " part, several ids</a>, with each source's entries."
 )
 CHOICE_HEADER = ("Id", "Chip", "Manufacturer", "Type", "Listed as this part by")
 

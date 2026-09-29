@@ -1,7 +1,7 @@
 # API reference
 
 Everything in the package, generated from its docstrings. The library's front
-door is the `spiflash` module itself:
+door is the {py:mod}`spiflash` module itself:
 
 ```python
 import spiflash
@@ -13,12 +13,20 @@ chip.supports("READ_1_1_4"), chip.opcodes["SE"].opcode
 spiflash.database().link(chip.records[0])   # the upstream line it came from
 ```
 
-`spiflash.db` loads the data and answers queries, `spiflash.model` holds the
-types (`Record` is one upstream entry, `Flash` everything known about one
-chip id), `spiflash.opcodes` the named SPI operations, `spiflash.vendors` the
-vendor spellings, and `spiflash.cli` the `spiflash` command.
+The modules behind it:
 
-The extraction tools, `spiflash_extract` (in {repo}`tools/`, shipped in the sdist,
+| Module | What it holds |
+|---|---|
+| {py:mod}`spiflash.db` | loading the data, and answering queries |
+| {py:mod}`spiflash.model` | the types: {py:class}`~spiflash.model.Record` is one upstream entry, {py:class}`~spiflash.model.Flash` everything known about one chip id |
+| {py:mod}`spiflash.enums` | the fixed vocabularies, as enums: sources, flash types, id families, features, kinds of operation, ... |
+| {py:mod}`spiflash.opcodes` | the named SPI operations |
+| {py:mod}`spiflash.sfdp` | the SFDP ([JESD216](https://www.jedec.org/standards-documents/docs/jesd216b)) decoder |
+| {py:mod}`spiflash.vendors` | the vendor spellings |
+| {py:mod}`spiflash.units` | sizes and times as people read them |
+| {py:mod}`spiflash.cli` | the `spiflash` command |
+
+The extraction tools, {py:mod}`spiflash_extract` (in {repo}`tools/`, shipped in the sdist,
 not the wheel), are documented too: they are how the data is built, and what
 to read when an upstream changes its format.
 

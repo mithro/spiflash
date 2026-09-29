@@ -19,6 +19,11 @@ EN_DASH = "\N{EN DASH}"
 EM_DASH = "\N{EM DASH}"
 TIMES = "\N{MULTIPLICATION SIGN}"
 
+#: JEDEC's pages for the standards the pages cite.
+JESD216 = "https://www.jedec.org/standards-documents/docs/jesd216b"
+JESD251 = "https://www.jedec.org/standards-documents/docs/jesd251"
+JEP106 = "https://www.jedec.org/standards-documents/docs/jep-106ab"
+
 
 def source_label(name: str) -> str:
     """A source's name as its project writes it (``u-boot`` is U-Boot)."""
