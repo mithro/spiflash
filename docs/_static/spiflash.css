@@ -25,17 +25,30 @@ h1 + p .sf-id { font-size: 1em; }
 .sf-yes { color: var(--sf-yes); font-weight: 700; }
 
 /* Source labels: one colour each, so a column of them reads at a glance. */
+/* Every label is 1.1 times the height of the text around it: its own font
+   is smaller, and its height is set in the text's em (1.1em / font-size).
+   A long name (openFPGALoader) takes two lines in a smaller font. */
 .sf-src {
-  display: inline-block;
-  font-size: 0.78em;
+  --sf-src-font: 0.72;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  box-sizing: border-box;
+  height: calc(1.1em / var(--sf-src-font));
+  font-size: calc(var(--sf-src-font) * 1em);
+  line-height: 1;
+  vertical-align: middle;
   font-weight: 600;
-  padding: 0.1em 0.55em;
+  padding: 0 0.55em;
   margin: 0.05em 0.15em 0.05em 0;
   border-radius: 1em;
   color: #fff;
   background: #64748b;
   white-space: nowrap;
 }
+.sf-src > span { display: block; }
+.sf-src-split { --sf-src-font: 0.5; padding: 0 0.7em; }
 .sf-src-flashrom { background: #b45309; }
 .sf-src-flashprog { background: #c2410c; }
 .sf-src-linux { background: #1d4ed8; }
@@ -96,8 +109,9 @@ table.sf-kv td:first-child { color: var(--sf-muted); white-space: nowrap; width:
    its label in small type; the text columns stay on one line. */
 table.sf-matrix td { white-space: nowrap; }
 table.sf-matrix th .sf-src {
-  font-size: 0.7em;
-  padding: 0.5em 0.15em;
+  height: auto;
+  width: calc(1.1em / var(--sf-src-font));
+  padding: 0.55em 0;
   writing-mode: vertical-rl;
   transform: rotate(180deg);
 }

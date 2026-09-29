@@ -9,7 +9,7 @@ import pytest
 import spiflash
 from alias_pages import aliases, choice_page, generate_all, redirect_page, write
 from check_links import bare_urls
-from page_markup import chip_slug
+from page_markup import chip_slug, source_badge_html
 from spiflash import Database
 from test_db import rec
 
@@ -75,10 +75,12 @@ def test_shared_name_lists_each_chip_and_who_says_so() -> None:
     assert "<code>ef 70 18</code>" in page
     assert "Winbond" in page
     rows = [line for line in page.splitlines() if line.startswith("<tr><td>")]
-    # The sources in their order of trust.
+    # The sources in their order of trust, as the site's labels.
+    flashrom, uboot = source_badge_html("flashrom"), source_badge_html("u-boot")
+    assert "U-Boot" in uboot
     assert [row.rsplit("<td>", 1)[1] for row in rows] == [
-        "flashrom</td></tr>",
-        "flashrom, U-Boot</td></tr>",
+        f"{flashrom}</td></tr>",
+        f"{flashrom} {uboot}</td></tr>",
     ]
 
 
@@ -118,3 +120,10 @@ def test_write_keeps_real_pages_and_drops_stale_aliases(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError):
         write(tmp_path, {"ef4018.html": redirect_page("EF4018", "ef4017.html")})
     assert real.read_text() == "<html>the chip</html>"
+
+
+def test_long_source_names_take_two_lines() -> None:
+    html = source_badge_html("openfpgaloader")
+    assert "sf-src-split" in html
+    assert "<span>openFPGA</span><span>Loader</span>" in html
+    assert "sf-src-split" not in source_badge_html("linux")

@@ -13,13 +13,13 @@ at the commit the shipped data was read from:
 
 Facts about chips: the id bytes a part answers, its part and manufacturer
 names, its size, page and sector sizes, erase opcodes and block layouts, other
-opcodes (OpenOCD, and the SFDP tables Zephyr's boards copy), supply voltage
-range (flashrom, flashprog), the names of the capability flags each upstream
+opcodes ({sfsrc}`openocd`, and the SFDP tables {sfsrc}`zephyr`'s boards copy), supply voltage
+range ({sfsrc}`flashrom`, {sfsrc}`flashprog`), the names of the capability flags each upstream
 sets, and each upstream's test status. The JEP106 manufacturer names come
-from OpenOCD's copy of the JEDEC list. From QEMU, the SFDP (JESD216) tables
+from {sfsrc}`openocd`'s copy of the JEDEC list. From {sfsrc}`qemu`, the SFDP (JESD216) tables
 its flash model answers for thirteen parts are kept whole (the `sfdp` of
 those records): byte for byte what those parts answer to the SFDP command,
-as QEMU records them, which is data rather than code.
+as {sfsrc}`qemu` records them, which is data rather than code.
 
 No code is copied: the tables are parsed, and the database holds the values.
 The one exception is `notes`, which keeps the short comments an upstream
@@ -27,7 +27,7 @@ attached to an entry or its id `#define` ("supports SFDP", "uniform 256 kB
 sectors", "W25Q128BV; W25Q128FV in SPI mode (default)"), each traceable to its
 file and line through the record's `file` and `line`.
 
-The package is Apache-2.0, as are openFPGALoader and Zephyr. Whether a
+The package is Apache-2.0, as are {sfsrc}`openfpgaloader` and {sfsrc}`zephyr`. Whether a
 compilation of facts extracted from GPL sources carries any obligation is a
 question for your own lawyer; the provenance of every value is recorded so
 that anyone who needs to can find, or drop, what came from where
@@ -44,27 +44,27 @@ numbers it covers and whether it gives the chip's id bytes itself.
 
 ## What each upstream contributes
 
-- **flashrom** and **flashprog** (a fork of flashrom) have the most detail per
+- {sfsrc}`flashrom` and {sfsrc}`flashprog` (a fork of {sfsrc}`flashrom`) have the most detail per
   part: every erase opcode with its block layout, voltage, test status, and
   legacy ids (REMS, RES, AT25F) for chips that predate JEDEC read-id. Only
   their SPI chips are taken; parallel, LPC and FWH parts are not SPI flash.
-  flashrom names use `.` as a wildcard (`W25Q128.V`).
-- **Linux** has the most recent parts, 6-byte extended ids that separate
+  {sfsrc}`flashrom` names use `.` as a wildcard (`W25Q128.V`).
+- {sfsrc}`linux` has the most recent parts, 6-byte extended ids that separate
   variants, capability flags for chips without SFDP, and, alone here, SPI
   NAND. Parts it reads entirely from SFDP have no size in the table (their
   records have `size: null` and the `sfdp` feature).
-- **U-Boot** kept Linux's pre-6.8 table format and has parts Linux dropped or
+- {sfsrc}`u-boot` kept {sfsrc}`linux`'s pre-6.8 table format and has parts {sfsrc}`linux` dropped or
   never had.
-- **OpenOCD** gives read, quad read, page program, sector and chip erase
+- {sfsrc}`openocd` gives read, quad read, page program, sector and chip erase
   opcodes per part, and the JEP106 list.
-- **openFPGALoader** gives the block-protection layout (the `flags` of its
+- {sfsrc}`openfpgaloader` gives the block-protection layout (the `flags` of its
   records: `bp_len`, `bp_offset`, `tb_register`, `quad_register`, ...).
-- **QEMU** keeps a 2012 copy of Linux's table for the parts its boards
+- {sfsrc}`qemu` keeps a 2012 copy of {sfsrc}`linux`'s table for the parts its boards
   emulate (so its geometry rarely adds anything), but is alone in carrying
   complete SFDP dumps: from them come the fast reads with the part's own
   dummy clocks, the erase types, the 4-byte-address opcodes and the quad
   enable method, and the page size where the table has it.
-- **Zephyr** has no table of parts: its boards describe the flash chip each
+- {sfsrc}`zephyr` has no table of parts: its boards describe the flash chip each
   carries, in devicetree, for the driver to check at start-up. Every node
   with a `jedec-id` in {upstream}`zephyr:boards/` and {upstream}`zephyr:dts/`
   gives the id, the size (in bits in those bindings), and, where the board
@@ -79,12 +79,12 @@ numbers it covers and whether it gives the chip's id bytes itself.
   a comment on the `jedec-id` line or a descriptive `compatible`, whichever
   first looks like a part number, and a node none of them names is left out.
   The maker is named only where a `compatible` does (`"issi,is25lp128"`,
-  `"mxicy,mx25u"`), so a chip only Zephyr has may have no manufacturer. Boards
+  `"mxicy,mx25u"`), so a chip only {sfsrc}`zephyr` has may have no manufacturer. Boards
   often share a chip: nodes that give the same values are one record, at the
   first file, with a note listing the others. The values are written, and
   copied between boards, by each board's porter, and some are wrong (a
   size given in bytes where bits are meant, an id copied from another board),
-  which is why Zephyr comes last when sources are tied, and why its
+  which is why {sfsrc}`zephyr` comes last when sources are tied, and why its
   disagreements are worth reading on the data issues pages. Only
   `boards/` and `dts/` are read: the overlays in `samples/` and `tests/`
   configure test set-ups, some with placeholder ids.

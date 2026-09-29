@@ -114,8 +114,8 @@ It refuses a manifest naming a chip id the database does not have, so after
 ## When an upstream changes its format
 
 An extractor that meets something it does not understand raises, naming the
-file and line, rather than guessing: an unknown probe in flashrom, an `.id`
-that is not `SNOR_ID(...)` in Linux, an identifier the expression evaluator has
+file and line, rather than guessing: an unknown probe in {sfsrc}`flashrom`, an `.id`
+that is not `SNOR_ID(...)` in {sfsrc}`linux`, an identifier the expression evaluator has
 no value for. Fix the extractor, and add the new shape to the miniature tree in
 {repo}`tests/fixtures/`, which {repo}`tests/test_extract.py` reads.
 
