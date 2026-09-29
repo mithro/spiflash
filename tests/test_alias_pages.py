@@ -75,9 +75,12 @@ def test_shared_name_lists_each_chip_and_who_says_so() -> None:
     assert "<code>ef 70 18</code>" in page
     assert "Winbond" in page
     rows = [line for line in page.splitlines() if line.startswith("<tr><td>")]
-    # The sources in their order of trust, as the site's labels.
-    flashrom, uboot = source_badge_html("flashrom"), source_badge_html("u-boot")
+    # The sources in their order of trust, as the site's labels, each
+    # linked to its page.
+    flashrom = source_badge_html("flashrom", "../sources/flashrom.html")
+    uboot = source_badge_html("u-boot", "../sources/u-boot.html")
     assert "U-Boot" in uboot
+    assert uboot.startswith('<a class="sf-src-link" href="../sources/u-boot.html"')
     assert [row.rsplit("<td>", 1)[1] for row in rows] == [
         f"{flashrom}</td></tr>",
         f"{flashrom} {uboot}</td></tr>",

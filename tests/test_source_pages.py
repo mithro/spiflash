@@ -6,6 +6,7 @@ from pathlib import Path
 
 import spiflash
 from issue_checks import find
+from issue_pages import generate_all as issue_pages
 from page_markup import chip_slug, source_badge_html
 from source_pages import PARSERS, SUMMARY, commit_link, generate_all
 from spiflash.enums import Source
@@ -71,3 +72,13 @@ def test_labels_link_to_the_source_pages() -> None:
     assert '<span class="sf-src sf-src-u-boot">' in html
     assert "<a " not in source_badge_html("u-boot")
 
+
+def test_issue_pages_link_the_source_pages() -> None:
+    db = spiflash.database()
+    slugs = {id(f): chip_slug(f) for f in db.flashes}
+    pages = issue_pages(db, slugs)
+    # The summary's column headers are the labels alone (linked to the source
+    # pages by the role); the totals link to each source's issues.
+    assert "  - {sfsrc}`linux`\n" in pages["index.md"]
+    assert "](source-linux.md)" in pages["index.md"]
+    assert "](../sources/zephyr.md)" in pages["source-zephyr.md"]
