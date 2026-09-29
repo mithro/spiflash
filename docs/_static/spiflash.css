@@ -14,6 +14,16 @@ body {
    The content takes the room there is; prose keeps a readable measure. */
 .main, .content { min-width: 0; }
 .content { width: auto; flex: 1 1 46em; }
+/* With the content growing there is nothing to centre, so the navigation
+   keeps its own 15em rather than half the spare width, a blank band on
+   its left; and the content's padding is less. (Below 63em Furo makes the
+   navigation a drawer; below 67em it sets the padding itself.) */
+@media (min-width: 63em) {
+  .sidebar-drawer { width: 15em; }
+}
+@media (min-width: 67em) {
+  .content { padding: 0 1.5em; }
+}
 article :is(p, ul, ol, dl, blockquote):not(td *, th *) { max-width: 46em; }
 
 /* Ids and opcodes: monospace chips. */
