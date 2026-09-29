@@ -176,3 +176,53 @@ class TimingSource(StrEnum):
     FLASHROM_SIZES = "flashrom-sizes"
     JESD216 = "jesd216"
     PART = "part"
+
+
+class IssueKind(StrEnum):
+    """A kind of conflict or error in the source data (see
+    :mod:`spiflash.issues`); the members are in the order the site lists them."""
+
+    VALUE = "value"
+    SAME_SOURCE = "same-source"
+    NAME_IDS = "name-ids"
+    MANUFACTURER = "manufacturer"
+    DATASHEET = "datasheet"
+
+    @property
+    def heading(self) -> str:
+        return _ISSUE_TITLES[self][0]
+
+    @property
+    def description(self) -> str:
+        """What the check looks for, in a sentence."""
+        return _ISSUE_TITLES[self][1]
+
+
+_ISSUE_TITLES = {
+    IssueKind.VALUE: (
+        "Sources disagree on a value",
+        "Two sources give one chip id a different size, page size, sector size or supply voltage.",
+    ),
+    IssueKind.SAME_SOURCE: (
+        "One source, two values",
+        (
+            "One source lists a chip id more than once, with different values, and "
+            "nothing in the id (no extended id) tells the entries apart."
+        ),
+    ),
+    IssueKind.NAME_IDS: (
+        "One part, several ids",
+        "The same part number is listed under different chip ids.",
+    ),
+    IssueKind.MANUFACTURER: (
+        "Sources disagree on the manufacturer",
+        "Sources name different manufacturers for one chip id.",
+    ),
+    IssueKind.DATASHEET: (
+        "Ids the datasheets don't give",
+        (
+            "A datasheet was found for the part, but the chip id the sources list it "
+            "under was not found in it."
+        ),
+    ),
+}

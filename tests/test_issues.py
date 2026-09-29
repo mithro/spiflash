@@ -1,0 +1,137 @@
+"""spiflash.issues: the checks, on small databases, and the pages about them."""
+
+from __future__ import annotations
+
+import spiflash
+from issue_pages import generate_all
+from spiflash import Database, Datasheet
+from spiflash.enums import IssueKind, Source
+from spiflash.issues import find
+from test_db import rec
+
+
+def kinds(db: Database) -> list[IssueKind]:
+    return [i.kind for i in find(db)]
+
+
+def test_agreement_is_no_issue() -> None:
+    db = Database([rec(), rec(source="flashrom", name="W25Q128.V")])
+    assert find(db) == []
+
+
+def test_sources_disagree_on_a_value() -> None:
+    db = Database([rec(), rec(source="openocd", name="w25q128fv/jv", size=8 << 20)])
+    (issue,) = find(db)
+    assert issue.kind is IssueKind.VALUE
+    assert issue.subject == "ef4018"
+    assert issue.attribute == "size"
+    # One answer each, the most trusted source's first on a tie.
+    assert [(a.value, a.sources) for a in issue.answers] == [
+        (16 << 20, (Source.LINUX,)),
+        (8 << 20, (Source.OPENOCD,)),
+    ]
+    assert issue.sources == (Source.LINUX, Source.OPENOCD)
+
+
+def test_one_source_two_values() -> None:
+    db = Database([rec(page_size=256), rec(name="w25q128x", line=2, page_size=512)])
+    (issue,) = find(db)
+    assert issue.kind is IssueKind.SAME_SOURCE
+    assert issue.attribute == "page_size"
+    assert issue.sources == (Source.LINUX,)
+
+
+def test_extended_ids_tell_entries_apart() -> None:
+    db = Database(
+        [
+            rec(ext_id="4d00", sector_size=65536),
+            rec(ext_id="4d01", sector_size=262144, line=2),
+        ]
+    )
+    # Still two answers for the id as a whole, but not one entry twice.
+    assert IssueKind.SAME_SOURCE not in kinds(db)
+
+
+def test_one_part_several_ids() -> None:
+    db = Database([rec(), rec(source="u-boot", id="ef7018")])
+    (issue,) = find(db)
+    assert issue.kind is IssueKind.NAME_IDS
+    assert issue.subject == "W25Q128"
+    assert {a.value for a in issue.answers} == {"ef4018", "ef7018"}
+    assert {f.key for f in issue.flashes} == {"ef4018", "ef7018"}
+
+
+def test_legacy_ids_and_wildcards_are_not_name_issues() -> None:
+    db = Database(
+        [
+            rec(name="sst25vf512"),
+            rec(name="sst25vf512", id="bf48", id_method="rems"),
+            rec(source="flashrom", name="W25Q.V", id="ef4017"),
+            rec(source="flashrom", name="W25Q.V", id="ef4016"),
+        ]
+    )
+    assert IssueKind.NAME_IDS not in kinds(db)
+
+
+def test_manufacturers() -> None:
+    db = Database([rec(vendor="Spansion", id="012018"), rec(vendor="Cypress", id="012018")])
+    (issue,) = find(db)
+    assert issue.kind is IssueKind.MANUFACTURER
+    assert {a.value for a in issue.answers} == {"Spansion", "Cypress"}
+
+
+def datasheet(parts: list[str], confirmed: list[str]) -> Datasheet:
+    return Datasheet.from_json(
+        {
+            "url": f"https://example.com/{parts[0]}.pdf",
+            "title": parts[0],
+            "official": True,
+            "parts": parts,
+            "ids": ["ef4018"],
+            "confirmed": confirmed,
+        }
+    )
+
+
+def test_datasheet_not_giving_the_id() -> None:
+    records = [rec(name="w25q128jv/fv")]
+    assert find(Database(records, datasheets=[datasheet(["W25Q128JV"], ["ef4018"])])) == []
+    # Another part's datasheet giving the id doesn't make this one's right.
+    db = Database(
+        records,
+        datasheets=[datasheet(["W25Q128JV"], ["ef4018"]), datasheet(["W25Q128FV"], [])],
+    )
+    (issue,) = find(db)
+    assert issue.kind is IssueKind.DATASHEET
+    assert issue.part == "W25Q128FV"
+    assert [d.title for d in issue.datasheets] == ["W25Q128FV"]
+
+
+def test_shipped_data() -> None:
+    found = find()
+    assert {i.kind for i in found} == set(IssueKind)
+    by_kind = {k: [i for i in found if i.kind is k] for k in IssueKind}
+    # U-Boot's MT25QL01G id has its bytes swapped; the datasheet gives 20 ba 21.
+    (mt,) = [i for i in by_kind[IssueKind.NAME_IDS] if i.subject == "MT25QL01G"]
+    assert {a.value: a.sources for a in mt.answers}["21ba20"] == (Source.UBOOT,)
+    # Every issue's records are the database's own.
+    records = set(map(id, spiflash.records()))
+    assert all(id(r) in records for i in found for a in i.answers for r in a.records)
+
+
+def test_pages() -> None:
+    db = spiflash.database()
+    slugs = {id(f): f.key.replace(":", "-") for f in db.flashes}
+    pages = generate_all(db, slugs)
+    assert set(pages) == {
+        "index.md",
+        *(f"{k}.md" for k in IssueKind),
+        *(f"source-{s}.md" for s in Source),
+    }
+    index = pages["index.md"]
+    for k in IssueKind:
+        assert f"]({k}.md)" in index
+    # Answers link the upstream lines; a source's page puts its own in bold.
+    assert "https://github.com/" in pages["value.md"]
+    assert "**[" in pages["source-u-boot.md"]
+    assert "**[" not in pages["value.md"]
