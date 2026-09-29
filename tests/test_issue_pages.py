@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import spiflash
 from issue_checks import IssueKind, find
-from issue_pages import generate_all
+from issue_pages import chip_issues, generate_all
 from spiflash import Database, Datasheet
 from spiflash.enums import Source
 from test_db import rec
@@ -131,7 +131,21 @@ def test_pages() -> None:
     index = pages["index.md"]
     for k in IssueKind:
         assert f"]({k}.md)" in index
-    # Answers link the upstream lines; a source's page puts its own in bold.
-    assert "https://github.com/" in pages["value.md"]
-    assert "**[" in pages["source-u-boot.md"]
-    assert "**[" not in pages["value.md"]
+    # Labels link the upstream lines; a source's page rings its own.
+    assert "<https://github.com/" in pages["value.md"]
+    assert "{sfsrcme}`u-boot" in pages["source-u-boot.md"]
+    assert "{sfsrcme}`linux" not in pages["source-u-boot.md"]
+    assert "{sfsrcme}" not in pages["value.md"]
+
+
+def test_chip_page_section() -> None:
+    db = spiflash.database()
+    slugs = {id(f): f.key for f in db.flashes}
+    issues = find(db)
+    (mt,) = [f for f in db.flashes if f.key == "20ba21"]
+    text = "\n".join(chip_issues(db, slugs, mt, issues))
+    assert text.startswith("### Conflicts and errors")
+    assert "](../issues/name-ids.md)" in text
+    assert "MT25QL01G" in text
+    (quiet,) = [f for f in db.flashes if f.key == "ef4018"]
+    assert chip_issues(db, slugs, quiet, [i for i in issues if quiet not in i.flashes]) == []

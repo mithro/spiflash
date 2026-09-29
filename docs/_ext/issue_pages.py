@@ -82,21 +82,29 @@ class _Render:
 
     @staticmethod
     def names(f: Flash) -> str:
-        names = [esc(n) for n in f.names[:4]]
-        return ", ".join(names) + (", …" if len(f.names) > 4 else "")
+        names = [esc(n) for n in f.names[:2]]
+        return ", ".join(names) + (", …" if len(f.names) > 2 else "")
 
     def record(self, r: Record) -> str:
         link = self.db.link(r)
-        text = f"[{esc(r.name)}]({link})" if link else f"{esc(r.name)} ({esc(r.url)})"
-        return f"**{text}**" if r.source == self.focus else text
+        return f"[{esc(r.name)}]({link})" if link else f"{esc(r.name)} ({esc(r.url)})"
 
     def who(self, records: tuple[Record, ...]) -> str:
-        """The records, by source: ``flashrom S25FL256S, ...; Linux ...``."""
-        parts = []
+        """A label per source giving ``records``, linked to its (first) entry
+        upstream, with a count when it has several: the entries themselves
+        are on the chip page."""
+        badges = []
         for s in sorted({r.source for r in records}, key=lambda s: s.priority):
-            mine = ", ".join(self.record(r) for r in records if r.source == s)
-            parts.append(f"{{sfsrc}}`{s}` {mine}")
-        return "; ".join(parts)
+            mine = [r for r in records if r.source == s]
+            label = str(s) + (f" \u00d7{len(mine)}" if len(mine) > 1 else "")
+            link = self.db.link(mine[0])
+            role = "sfsrcme" if s == self.focus else "sfsrc"
+            badges.append(f"{{{role}}}`{label} <{link}>`" if link else f"{{{role}}}`{label}`")
+        return " ".join(badges)
+
+    def entries(self, records: tuple[Record, ...]) -> str:
+        """The entries themselves, linked: for one source's own entries."""
+        return ", ".join(self.record(r) for r in records)
 
     def value(self, issue: Issue, v: Any) -> str:
         if issue.attribute == "voltage":
@@ -107,11 +115,18 @@ class _Render:
             return self.chip(self.chips[v])
         return esc(str(v))
 
-    def answers(self, issue: Issue, extra: Callable[[Answer], str] | None = None) -> str:
+    def answers(
+        self,
+        issue: Issue,
+        extra: Callable[[Answer], str] | None = None,
+        *,
+        by_entry: bool = False,
+    ) -> str:
+        """One line per answer: the value, then who gives it."""
         return "\n\n".join(
             f"**{self.value(issue, a.value)}**"
             + (extra(a) if extra else "")
-            + f": {self.who(a.records)}"
+            + f"\u2003{self.entries(a.records) if by_entry else self.who(a.records)}"
             for a in issue.answers
         )
 
@@ -120,7 +135,7 @@ class _Render:
             return "None found.\n"
         rows: list[list[str]]
         if kind is IssueKind.VALUE:
-            header = ["Chip", "Parts", "Value", "What the sources say"]
+            header = ["Chip", "Parts", "Value", "Each answer, and the sources giving it"]
             rows = [
                 [self.chip(i.flashes[0]), self.names(i.flashes[0]), _attr(i), self.answers(i)]
                 for i in issues
@@ -131,9 +146,9 @@ class _Render:
                 [
                     self.chip(i.flashes[0]),
                     self.names(i.flashes[0]),
-                    f"{{sfsrc}}`{i.sources[0]}`",
+                    self.who(i.answers[0].records[:1]),
                     _attr(i),
-                    self.answers(i),
+                    self.answers(i, by_entry=True),
                 ]
                 for i in issues
             ]
@@ -141,7 +156,7 @@ class _Render:
             header = ["Part", "The ids it is listed under, and by whom"]
             rows = [[esc(i.subject), self.answers(i, self.shown(i))] for i in issues]
         elif kind is IssueKind.MANUFACTURER:
-            header = ["Chip", "Parts", "Manufacturers named"]
+            header = ["Chip", "Parts", "Each manufacturer, and the sources naming it"]
             rows = [
                 [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
             ]
@@ -255,7 +270,7 @@ def source_markdown(r: _Render, source: Source, issues: list[Issue]) -> str:
         f"# {source.label}: data issues\n",
         f"{{bdg-primary}}`{len(mine)} issues` {{sfsrc}}`{source}`\n",
         (
-            f"Every issue {esc(source.label)} is part of; its own entries are in bold. "
+            f"Every issue {esc(source.label)} is part of; its own labels are ringed. "
             "An issue between two sources is on both their pages, and does not say "
             "which is wrong. All the sources: [Data issues](index.md).\n"
         ),
@@ -268,9 +283,49 @@ def source_markdown(r: _Render, source: Source, issues: list[Issue]) -> str:
     return "\n".join(out)
 
 
-def generate_all(db: Database, slugs: dict[int, str]) -> dict[str, str]:
+def chip_issues(db: Database, slugs: dict[int, str], f: Flash, issues: list[Issue]) -> list[str]:
+    """The issues about chip ``f``, for its page's "What each source says"."""
+    mine = [i for i in issues if any(g is f for g in i.flashes)]
+    if not mine:
+        return []
+    r = _Render(db, slugs)
+    rows = []
+    for i in mine:
+        if i.kind is IssueKind.DATASHEET:
+            about = esc(i.part or EM_DASH)
+            sheets = ", ".join(f"[{esc(d.title)}](<{d.url}>)" for d in i.datasheets)
+            answer = (
+                f"Not found in {sheets}\n\nListed under this id by {r.who(i.answers[0].records)}"
+            )
+        elif i.kind is IssueKind.NAME_IDS:
+            about = esc(i.subject)
+            answer = r.answers(i, r.shown(i))
+        elif i.kind is IssueKind.SAME_SOURCE:
+            about = _attr(i)
+            answer = r.who(i.answers[0].records[:1]) + "\n\n" + r.answers(i, by_entry=True)
+        elif i.kind is IssueKind.MANUFACTURER:
+            about = "manufacturer"
+            answer = r.answers(i)
+        else:
+            about = _attr(i)
+            answer = r.answers(i)
+        rows.append([f"[{i.kind.heading}](../issues/{kind_page(i.kind)}.md)", about, answer])
+    return [
+        "### Conflicts and errors\n",
+        (
+            "What the checks behind [Data issues](../issues/index.md) find about this chip. "
+            "Each source label links to its entry upstream.\n"
+        ),
+        list_table(["Kind", "About", "The answers"], rows, "sf-table sf-issues sf-chip-issues"),
+        "",
+    ]
+
+
+def generate_all(
+    db: Database, slugs: dict[int, str], issues: list[Issue] | None = None
+) -> dict[str, str]:
     """Every page of ``docs/issues/``, by file name."""
-    issues = find(db)
+    issues = find(db) if issues is None else issues
     everyone = _Render(db, slugs)
     pages = {"index.md": index_page(everyone, issues)}
     for kind in IssueKind:
