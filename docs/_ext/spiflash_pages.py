@@ -15,6 +15,7 @@ name and id.
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,8 @@ import spiflash
 from issue_checks import Issue, find
 from issue_pages import chip_issues
 from issue_pages import generate_all as issue_pages
+from jep106_pages import generate_all as jep106_pages
+from jep106_pages import jep106_link
 from opcode_pages import generate_all as operation_pages
 from page_markup import (
     EM_DASH,
@@ -38,9 +41,11 @@ from page_markup import (
     badge,
     badge_lines,
     chip_slug,
+    count,
     esc,
     feature_badges,
     list_table,
+    num,
     size_text,
     slug,
     source_badge,
@@ -49,6 +54,7 @@ from page_markup import (
     title_of,
     vendor_link,
     vendor_of,
+    volt,
     volts,
 )
 from spiflash.enums import Feature, OperationKind
@@ -164,10 +170,14 @@ def _identification(db: Database, f: Flash, kind: str) -> list[str]:
             rows.append(["With JEP106 continuation codes", f"{{sfid}}`{spaced(f.jedec_id)}`"])
     else:
         rows.append([f"Legacy id ({f.family.upper()})", f"{{sfid}}`{spaced(f.id_hex)}`"])
-    jep = db.jep106(f.id[0], f.bank)
     rows.append(["Manufacturer", vendor_link(vendor_of(f))])
-    if jep and jep.lower() != vendor_of(f).lower():
-        rows.append([f"JEP106 name of 0x{f.id[0]:02x} (bank {f.bank + 1})", esc(jep)])
+    if db.jep106(f.id[0], f.bank):
+        rows.append(
+            [
+                f"JEP106 name of 0x{f.id[0]:02x} (bank {f.bank + 1})",
+                jep106_link(db, (f.bank, f.id[0])),
+            ]
+        )
     exts = sorted({r.ext_id.hex() for r in f.records if r.ext_id})
     if exts:
         rows.append(
@@ -277,7 +287,7 @@ def _sfdp(f: Flash) -> list[str]:
         ),
     ]
     for d in f.sfdp_dumps:
-        out.append(list_table(["Parameter", "Value"], _sfdp_rows(d), "sf-table", "25 75"))
+        out.append(list_table(["Parameter", "Value"], _sfdp_rows(d), "sf-table"))
         out.append("")
     return out
 
@@ -372,7 +382,7 @@ def _erase_layouts(f: Flash) -> list[str]:
     rows = []
     for r in f.records:
         for e in r.erasers:
-            blocks = ", ".join(f"{b.count} {TIMES} {human_size(b.size)}" for b in e.blocks)
+            blocks = ", ".join(num(f"{b.count:,} {TIMES} {human_size(b.size)}") for b in e.blocks)
             op = e.opcode
             opname = next(
                 (
@@ -413,7 +423,8 @@ def _sources(db: Database, f: Flash) -> list[str]:
                 size_text(r.size),
                 size_text(r.page_size),
                 size_text(r.sector_size),
-                volts(r.voltage),
+                volt(r.voltage[0] if r.voltage else None),
+                volt(r.voltage[1] if r.voltage else None),
                 esc(r.tested or EM_DASH),
                 where,
             ]
@@ -421,7 +432,18 @@ def _sources(db: Database, f: Flash) -> list[str]:
     out = [
         "## What each source says\n",
         list_table(
-            ["Source", "Name", "Ext. id", "Size", "Page", "Sector", "Supply", "Tested", "Where"],
+            [
+                "Source",
+                "Name",
+                "Ext. id",
+                "Size",
+                "Page",
+                "Sector",
+                "V min",
+                "V max",
+                "Tested",
+                "Where",
+            ],
             rows,
             "sf-table sf-sources",
         ),
@@ -457,10 +479,11 @@ def parts_table(
             size_text(f.size),
             *([] if with_vendor else [size_text(f.page_size)]),
             size_text(f.sector_size),
-            volts(f.voltage),
+            volt(f.voltage[0] if f.voltage else None),
+            volt(f.voltage[1] if f.voltage else None),
             feature_badges(f.features & HIGHLIGHTS),
-            str(len(f.opcodes)),
-            str(len(f.sources)),
+            count(len(f.opcodes)),
+            count(len(f.sources)),
         ]
         rows.append(row)
     header = (
@@ -473,7 +496,8 @@ def parts_table(
             "Size",
             *([] if with_vendor else ["Page"]),
             "Sector",
-            "Supply",
+            "V min",
+            "V max",
             "Highlights",
             "Ops",
             "Srcs",
@@ -486,7 +510,7 @@ def parts_table(
 def vendor_page(db: Database, vendor: str, flashes: list[Flash], slugs: dict[int, str]) -> str:
     nor = sum(1 for f in flashes if f.type == "nor")
     nand = len(flashes) - nor
-    ids = Counter(f.id[0] for f in flashes if f.family == "jedec")
+    ids = Counter((f.bank, f.id[0]) for f in flashes if f.family == "jedec")
     out = [f"# {esc(vendor)}\n"]
     counts = [badge(f"{len(flashes)} chip ids", "primary")]
     if nor:
@@ -496,11 +520,11 @@ def vendor_page(db: Database, vendor: str, flashes: list[Flash], slugs: dict[int
     out.append(" ".join(counts) + "\n")
     if ids:
         parts = []
-        for m, _ in ids.most_common():
-            jep = db.jep106(m)
-            text = f"{{sfid}}`{m:02x}`"
-            if jep and jep.lower() != vendor.lower():
-                text += f" (JEP106 lists this byte as {esc(jep)})"
+        for (bank, m), _ in ids.most_common():
+            jep = db.jep106(m, bank)
+            text = f"{{sfid}}`{m:02x}`" + (f" (bank {bank + 1})" if bank else "")
+            if jep:
+                text += f" (JEP106: {jep106_link(db, (bank, m))})"
             parts.append(text)
         noun = "byte" if len(parts) == 1 else "bytes"
         out.append(f"Manufacturer id {noun}: {', '.join(parts)}.\n")
@@ -563,7 +587,7 @@ def opcodes_table(flashes: list[Flash]) -> str:
                 f"{{sfop}}`0x{op.opcode:02x}`",
                 f"[`{op.name}`](opcodes/{op.name}.md)",
                 esc(op.description),
-                str(uses.get(op.name, 0)),
+                count(uses.get(op.name, 0)),
             ]
             for op in OPERATIONS.values()
             if op.kind == kind
@@ -598,7 +622,7 @@ def sources_table(db: Database) -> str:
             if name == "jep106"
             else f"{{sfsrc}}`{name} <{base}>`"
         )
-        rows.append([label, commit, f"{s.date:%Y-%m-%d}", f"{s.records:,}", esc(s.license)])
+        rows.append([label, commit, f"{s.date:%Y-%m-%d}", count(s.records), esc(s.license)])
     return list_table(["Source", "Commit", "Date", "Entries", "Licence"], rows, "sf-table")
 
 
@@ -652,6 +676,7 @@ def generate(srcdir: Path) -> None:
     issues = find(db)
     chips_dir, vendors_dir, ops_dir = srcdir / "chips", srcdir / "vendors", srcdir / "opcodes"
     issues_dir = srcdir / "issues"
+    jep106_dir = srcdir / "jep106"
     wanted: set[Path] = set()
 
     def page(path: Path, text: str) -> None:
@@ -668,13 +693,15 @@ def generate(srcdir: Path) -> None:
         page(ops_dir / name, text)
     for name, text in issue_pages(db, slugs, issues).items():
         page(issues_dir / name, text)
+    for name, text in jep106_pages(db, slugs).items():
+        page(jep106_dir / name, text)
     # Fragments the hand-written pages include (docs/_generated is excluded
     # from the build as pages of its own).
     _write(srcdir / "_generated" / "opcodes-table.md", opcodes_table(list(db.flashes)))
     _write(srcdir / "_generated" / "sources-table.md", sources_table(db))
     _write(srcdir / "_generated" / "files-read.md", files_read_table(db))
     # A chip id that left the database leaves no stale page behind.
-    for d in (chips_dir, vendors_dir, ops_dir, issues_dir):
+    for d in (chips_dir, vendors_dir, ops_dir, issues_dir, jep106_dir):
         for old in d.glob("*.md"):
             if old not in wanted:
                 old.unlink()
@@ -719,6 +746,58 @@ class SourceRole(SphinxRole):
         return [
             nodes.reference(self.rawtext, "", badge, refuri=target, classes=["sf-src-link"])
         ], []
+
+
+class NumberRole(SphinxRole):
+    """``{sfnum}`16 MiB``` as spans for its parts, so the numbers of a column
+    line up. Besides a number and its unit it takes a count of blocks before
+    a multiplication sign (an erase layout), a range with an en dash (a
+    supply), thousands separators (``1,234``) and an em dash for a missing
+    value, which is aligned where the number would be. The CSS gives each
+    part a fixed width by unit: whole sizes, volts with a decimal part, and
+    plain counts."""
+
+    PARTS = re.compile(
+        r"^(?:(?P<count>[\d,]+) \u00d7 )?"
+        r"(?P<a>[\d,]+|\u2014)(?:\.(?P<af>\d+))?"
+        r"(?:\u2013(?P<b>[\d,]+)(?:\.(?P<bf>\d+))?)?"
+        r"(?: (?P<unit>\S+))?$"
+    )
+
+    def run(self) -> tuple[list[nodes.Node], list[nodes.system_message]]:
+        m = self.PARTS.match(self.text)
+        if not m:
+            return [nodes.inline(self.rawtext, self.text, classes=["sf-num"])], []
+        unit = m["unit"] or ""
+        kind = "volt" if unit == "V" else "plain" if not unit else "size"
+        number = nodes.inline(self.rawtext, "", classes=["sf-num", f"sf-num-{kind}"])
+
+        def part(text: str, css: str) -> None:
+            number.append(nodes.inline(text, text, classes=[css]))
+
+        if m["count"]:
+            part(m["count"], "sf-n-count")
+            part(" \u00d7 ", "sf-n-times")
+        for whole, frac, sep in ((m["a"], m["af"], ""), (m["b"], m["bf"], "\u2013")):
+            if whole is None:
+                continue
+            if sep:
+                part(sep, "sf-n-sep")
+            part(whole, "sf-n-int")
+            if kind == "volt":
+                part(f".{frac}" if frac else "", "sf-n-frac")
+        if unit:
+            # A missing value keeps the unit's room but not its text.
+            part("" if m["a"] == "\u2014" else f" {unit}", "sf-n-unit")
+        return [number], []
+
+
+class MoreRole(SphinxRole):
+    """``{sfmore}`a, b, c``` as an ellipsis whose tooltip is the text: what
+    a shortened list leaves out."""
+
+    def run(self) -> tuple[list[nodes.Node], list[nodes.system_message]]:
+        return [nodes.abbreviation(self.rawtext, "\u2026", explanation=self.text)], []
 
 
 REPO_URL = "https://github.com/mithro/spiflash"
@@ -814,6 +893,8 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_role("sfkind", SpanRole("sf-kind"))
     app.add_role("sfsrc", SourceRole())
     app.add_role("sfsrcme", SourceRole(mine=True))
+    app.add_role("sfnum", NumberRole())
+    app.add_role("sfmore", MoreRole())
     app.add_role("repo", RepoRole())
     app.add_role("upstream", UpstreamRole())
     app.add_role("github", GithubRole())

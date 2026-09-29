@@ -12,8 +12,10 @@ from typing import TYPE_CHECKING, Any
 from issue_checks import ATTRIBUTES, IssueKind, find
 from page_markup import (
     EM_DASH,
+    count,
     esc,
     list_table,
+    more,
     size_text,
     spaced,
     vendor_link,
@@ -107,8 +109,7 @@ class _Render:
 
     @staticmethod
     def names(f: Flash) -> str:
-        names = [esc(n) for n in f.names[:2]]
-        return ", ".join(names) + (", …" if len(f.names) > 2 else "")
+        return more([esc(n) for n in f.names[:2]], list(f.names[2:]))
 
     def record(self, r: Record) -> str:
         link = self.db.link(r)
@@ -251,8 +252,8 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
     rows = [
         [
             f"[{kind.heading}]({kind_page(kind)}.md)",
-            str(len(_of(issues, kind))),
-            *(str(len(_involving(_of(issues, kind), s))) for s in Source),
+            count(len(_of(issues, kind))),
+            *(count(len(_involving(_of(issues, kind), s))) for s in Source),
         ]
         for kind in IssueKind
     ]

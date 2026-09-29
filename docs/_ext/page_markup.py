@@ -160,12 +160,38 @@ def feature_badges(features: frozenset[str] | set[str]) -> str:
     return " ".join(badge(*FEATURE_TEXT[x]) for x in FEATURE_TEXT if x in features)
 
 
+def num(text: str) -> str:
+    """A number for a table: ``{sfnum}`16 MiB``` lines up with the numbers
+    above and below it (units, decimal points and dashes in a column); see
+    ``NumberRole``. ``"— MiB"`` is a missing size, aligned as one."""
+    return f"{{sfnum}}`{text}`"
+
+
 def volts(v: tuple[int, int] | None) -> str:
-    return f"{v[0] / 1000:g}{EN_DASH}{v[1] / 1000:g} V" if v else EM_DASH
+    """A supply range: its two ends, an en dash between, one unit."""
+    return num(f"{v[0] / 1000:g}{EN_DASH}{v[1] / 1000:g} V" if v else f"{EM_DASH} V")
+
+
+def volt(mv: int | None) -> str:
+    """One end of a supply range, for a column of its own: ``2.7 V``."""
+    return num(f"{mv / 1000:g} V" if mv else f"{EM_DASH} V")
 
 
 def size_text(n: int | None) -> str:
-    return human_size(n) if n else EM_DASH
+    return num(human_size(n) if n else f"{EM_DASH} B")
+
+
+def count(n: int) -> str:
+    """A count: ``1,234``, right-aligned in its column."""
+    return num(f"{n:,}")
+
+
+def more(shown: list[str], hidden: list[str], sep: str = ", ") -> str:
+    """``shown``, then an ellipsis whose tooltip lists ``hidden``."""
+    text = sep.join(shown)
+    if not hidden:
+        return text
+    return f"{text}{sep}{{sfmore}}`{', '.join(hidden)}`"
 
 
 def list_table(

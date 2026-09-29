@@ -206,8 +206,8 @@ table.sf-parts.sf-with-vendor td:nth-child(2) { white-space: normal; }
    Vendor as column 2 and drops Page, moving them to 3 and 8. */
 table.sf-parts:not(.sf-with-vendor) td:nth-child(2),
 table.sf-parts.sf-with-vendor td:nth-child(3) { white-space: normal; min-width: 12em; }
-table.sf-parts:not(.sf-with-vendor) td:nth-child(9),
-table.sf-parts.sf-with-vendor td:nth-child(9) { white-space: normal; min-width: 7em; }
+table.sf-parts:not(.sf-with-vendor) td:nth-child(10),
+table.sf-parts.sf-with-vendor td:nth-child(10) { white-space: normal; min-width: 7em; }
 table.sf-sources td { white-space: nowrap; }
 
 table.sf-parts { font-size: 0.86em; }
@@ -236,3 +236,25 @@ table.sf-issues td:last-child { min-width: 22em; }
 table.sf-issues td:last-child p { margin: 0.15em 0; line-height: 1.9; }
 table.sf-issues td:last-child p + p { border-top: 1px dashed var(--color-background-border, #ddd); padding-top: 0.15em; }
 table.sf-chip-issues td:first-child { white-space: normal; min-width: 9em; }
+
+/* Numbers ({sfnum}): each part has a fixed width, so the numbers of a column
+   line up on their units, decimal points and dashes. */
+.sf-num {
+  display: inline-flex;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.sf-num > span { display: inline-block; }
+.sf-n-int { text-align: right; }
+.sf-num-size .sf-n-int { min-width: 4ch; }
+.sf-num-plain .sf-n-int { min-width: 5ch; }
+.sf-num-volt .sf-n-int { min-width: 1ch; }
+.sf-n-frac { width: 4ch; text-align: left; }
+.sf-n-unit { white-space: pre; }
+.sf-num-size .sf-n-unit { width: 3.2em; text-align: left; }
+.sf-num-volt .sf-n-unit { width: 1.4em; text-align: left; }
+.sf-n-count { min-width: 5ch; text-align: right; }
+.sf-n-sep { padding: 0 0.1em; }
+/* A shortened list's ellipsis: the rest is in its tooltip. */
+abbr[title] { cursor: help; text-decoration: underline dotted; }
+.sf-toggle { margin: 0 1em; white-space: nowrap; cursor: pointer; }

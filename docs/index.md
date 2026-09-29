@@ -131,6 +131,7 @@ vendors/index
 chips/index
 opcodes
 issues/index
+jep106/index
 ```
 
 ```{toctree}

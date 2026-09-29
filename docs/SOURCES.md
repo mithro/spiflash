@@ -25,7 +25,7 @@ Facts about chips:
   records): byte for byte what those parts answer to the SFDP command, as
   {sfsrc}`qemu` records them, which is data rather than code.
 
-The JEP106 manufacturer names come from {sfsrc}`openocd`'s copy of the
+The [JEP106 manufacturer names](jep106/index.md) come from {sfsrc}`openocd`'s copy of the
 [JEDEC list](https://www.jedec.org/standards-documents/docs/jep-106ab)
 ({upstream}`openocd:src/helper/jep106.inc`).
 
@@ -67,7 +67,7 @@ numbers it covers and whether it gives the chip's id bytes itself.
 - {sfsrc}`u-boot` kept {sfsrc}`linux`'s pre-6.8 table format and has parts {sfsrc}`linux` dropped or
   never had.
 - {sfsrc}`openocd` gives read, quad read, page program, sector and chip erase
-  opcodes per part, and the JEP106 list.
+  opcodes per part, and the [JEP106 list](jep106/index.md).
 - {sfsrc}`openfpgaloader` gives the block-protection layout (the `flags` of its
   records: `bp_len`, `bp_offset`, `tb_register`, `quad_register`, ...).
 - {sfsrc}`qemu` keeps a 2012 copy of {sfsrc}`linux`'s table for the parts its boards
