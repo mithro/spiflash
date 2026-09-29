@@ -16,8 +16,10 @@ class Source(StrEnum):
     The members are declared in priority order: when sources disagree on a
     value and are otherwise tied, the earlier one wins. flashrom and
     flashprog come first (their entries are per part, tested on hardware and
-    carry the most detail), OpenOCD and openFPGALoader last (their tables are
-    the smallest and the least specific)."""
+    carry the most detail), then OpenOCD and openFPGALoader (their tables are
+    the smallest and the least specific), and Zephyr last: it has no table of
+    parts, only boards describing the chip each carries, whose values are
+    written (and copied between boards) by each board's porter."""
 
     FLASHROM = "flashrom"
     FLASHPROG = "flashprog"
@@ -25,6 +27,7 @@ class Source(StrEnum):
     UBOOT = "u-boot"
     OPENOCD = "openocd"
     OPENFPGALOADER = "openfpgaloader"
+    ZEPHYR = "zephyr"
 
     @property
     def priority(self) -> int:
@@ -46,6 +49,7 @@ _SOURCE_LABELS = {
     Source.UBOOT: "U-Boot",
     Source.OPENOCD: "OpenOCD",
     Source.OPENFPGALOADER: "openFPGALoader",
+    Source.ZEPHYR: "Zephyr",
 }
 
 

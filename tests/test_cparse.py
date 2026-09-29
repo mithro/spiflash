@@ -33,6 +33,9 @@ def test_matching_and_unbalanced() -> None:
     assert cparse.matching("(a(b)c)", 0) == 6
     with pytest.raises(ValueError, match="unbalanced"):
         cparse.matching("(a", 0)
+    assert cparse.matching('(")")', 0) == 4
+    with pytest.raises(ValueError, match="unterminated string at 1"):
+        cparse.matching('("a', 0)
 
 
 def test_braced_items_and_array_body() -> None:

@@ -66,6 +66,15 @@ _OPEN = {"{": "}", "(": ")", "[": "]"}
 _CLOSE = {"}", ")", "]"}
 
 
+def string_end(text: str, start: int) -> int:
+    """The index just past the string literal starting at ``text[start]``."""
+    m = _STRING.match(text, start)
+    if m is None:
+        msg = f"unterminated string at {start}"
+        raise ValueError(msg)
+    return m.end()
+
+
 def matching(text: str, start: int) -> int:
     """The index of the bracket closing the one at ``text[start]``.
 
@@ -75,11 +84,7 @@ def matching(text: str, start: int) -> int:
     while i < len(text):
         c = text[i]
         if c == '"':
-            m = _STRING.match(text, i)
-            if m is None:
-                msg = f"unterminated string at {i}"
-                raise ValueError(msg)
-            i = m.end()
+            i = string_end(text, i)
             continue
         if c in _OPEN:
             depth += 1
@@ -251,6 +256,10 @@ _FUNCS: dict[str, Callable[..., int]] = {
     "BIT": lambda n: 1 << n,
     "BIT_ULL": lambda n: 1 << n,
     "GENMASK": lambda h, lo: ((1 << (h - lo + 1)) - 1) << lo,
+    # Zephyr's devicetree sizes (dts/common/mem.h).
+    "DT_SIZE_K": lambda n: n * 1024,
+    "DT_SIZE_M": lambda n: n * 1024**2,
+    "DT_SIZE_G": lambda n: n * 1024**3,
 }
 
 

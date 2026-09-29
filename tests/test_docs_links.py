@@ -82,6 +82,10 @@ def test_link_roles() -> None:
     assert upstream_url("linux", "drivers/mtd/spi-nor/*.c") == (
         f"https://github.com/torvalds/linux/tree/{commit}/drivers/mtd/spi-nor"
     )
+    commit = spiflash.sources()["zephyr"].commit
+    assert upstream_url("zephyr", "boards/**/*.dts") == (
+        f"https://github.com/zephyrproject-rtos/zephyr/tree/{commit}/boards"
+    )
     assert upstream_url("flashprog", "flashchips.c").startswith(
         "https://github.com/SourceArcade/flashprog/blob/"
     )
