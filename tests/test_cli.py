@@ -175,6 +175,25 @@ def test_sfdp_from_stdin(
     assert "SFDP 1.6 (JESD216B)" in out
 
 
+def test_sfdp_of_a_chip(capsys: pytest.CaptureFixture[str]) -> None:
+    # QEMU has different dumps for two parts answering c22019: a part name
+    # picks its own, the id shows both.
+    code, out = run(capsys, "sfdp", "MX25L25635F")
+    assert code == 0
+    assert out.startswith("c22019  Macronix")
+    assert "    from qemu: MX25L25635F\nSFDP 1.0 (JESD216)" in out
+    assert "MX25L25635E\n" not in out
+    _, both = run(capsys, "sfdp", "c22019")
+    assert both.count("SFDP 1.0 (JESD216)") == 2
+    assert "from qemu: MX25L25635E\n" in both
+    _, js = run(capsys, "sfdp", "--json", "MX25L25635F")
+    (doc,) = json.loads(js)
+    assert (doc["chip"], doc["source"], doc["parts"]) == ("c22019", "qemu", ["MX25L25635F"])
+    _, summary = run(capsys, "id", "c22019")
+    assert "    sfdp: JESD216 (BFPT 1.0, vendor table (0xc2) 1.0)  [qemu: MX25L25635E]" in summary
+    assert "[qemu: MX25L25635F]" in summary
+
+
 def test_sfdp_of_a_chip_without_a_dump(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["sfdp", "w25q128jv"]) == 1
     out, err = capsys.readouterr()

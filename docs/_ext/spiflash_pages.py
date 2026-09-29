@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from sphinx.application import Sphinx
     from sphinx.config import Config
 
-    from spiflash import Database, Flash
+    from spiflash import Database, Flash, SfdpDump
 
 
 def chip_page(db: Database, f: Flash, vendor_slug: str) -> str:
@@ -190,19 +190,32 @@ def _capabilities(f: Flash) -> list[str]:
 
 
 def _sfdp(f: Flash) -> list[str]:
-    s = f.sfdp
-    if s is None or f.sfdp_source is None:
+    if not f.sfdp_dumps:
         return []
+    out = [
+        "## SFDP\n",
+        (
+            "The part's SFDP (JESD216) tables, as the sources carry them: what one part "
+            "answered, decoded by {py:mod}`spiflash.sfdp`; `spiflash sfdp` prints every "
+            "field. SFDP says nothing about the vendor, voltage or protection, and Linux "
+            "keeps fixups for tables that are wrong, so read it as the part's own claim.\n"
+        ),
+    ]
+    for d in f.sfdp_dumps:
+        out.append(list_table(["Parameter", "Value"], _sfdp_rows(d), "sf-table", "25 75"))
+        out.append("")
+    return out
+
+
+def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
+    """One dump's table: whose it is, then what it says. Parts sharing an id
+    can carry different dumps, so each names its parts."""
+    s = d.tables
     tables = ", ".join(f"{esc(h.name)} {h.revision}" for h in s.headers)
-    intro = (
-        f"The part's SFDP (JESD216) tables, as {source_badge(f.sfdp_source)} has them: "
-        f"{esc(s.revision_name)}, with {tables}. What one part answered, decoded by "
-        "{py:mod}`spiflash.sfdp`; `spiflash sfdp` prints every field. "
-        "SFDP says nothing about the vendor, voltage or protection, and Linux keeps "
-        "fixups for tables that are wrong, so read it as the part's own claim.\n"
-    )
-    out = ["## SFDP\n", intro]
-    rows: list[list[str]] = []
+    rows = [
+        ["Dump of", f"{source_badge(d.source)} {esc(', '.join(d.parts))}"],
+        ["Revision", f"{esc(s.revision_name)}, with {tables}"],
+    ]
     geometry = [size_text(s.size)]
     if s.page_size is not None:
         geometry.append(f"{size_text(s.page_size)} pages")
@@ -241,9 +254,7 @@ def _sfdp(f: Flash) -> list[str]:
             rows.append(["Soft reset", esc("; ".join(bfpt.soft_reset))])
     if s.warnings:
         rows.append(["Warnings", esc("; ".join(s.warnings))])
-    out.append(list_table(["Parameter", "Value"], rows, "sf-table", "25 75"))
-    out.append("")
-    return out
+    return rows
 
 
 def _opcodes(f: Flash) -> list[str]:

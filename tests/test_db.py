@@ -475,19 +475,30 @@ def test_record_sfdp_dump() -> None:
     tables = with_dump.sfdp_tables()
     assert tables is not None
     assert tables.size == 64 << 20
-    db = Database([plain, with_dump, rec(source="openfpgaloader", sfdp=MX25L25635E.hex())])
+    other = rec(source="openfpgaloader", name="w25q128jv", sfdp=MX25L25635E.hex())
+    same = rec(source="qemu", name="w25q128fv", sfdp=W25Q512JV.hex())
+    db = Database([plain, with_dump, other, same])
     (f,) = db.flashes
     assert f.sfdp is not None
     assert f.sfdp.revision_name == "JESD216B"  # OpenOCD outranks openFPGALoader
     assert f.sfdp_source == "openocd"
+    # Parts sharing an id can carry different dumps: each is kept, with its parts.
+    assert [(d.source, d.parts, d.tables.revision_name) for d in f.sfdp_dumps] == [
+        ("openocd", ("W25Q128", "W25Q128FV"), "JESD216B"),
+        ("openfpgaloader", ("W25Q128JV",), "JESD216"),
+    ]
+    assert [r.source for r in f.sfdp_dumps[0].records] == ["openocd", "qemu"]
     doc = f.to_json()
-    assert doc["sfdp"]["source"] == "openocd"
-    assert doc["sfdp"]["size"] == 64 << 20
+    assert [(d["source"], d["parts"], d["size"]) for d in doc["sfdp"]] == [
+        ("openocd", ["W25Q128", "W25Q128FV"], 64 << 20),
+        ("openfpgaloader", ["W25Q128JV"], 32 << 20),
+    ]
     json.dumps(doc)
     (none,) = Database([plain]).flashes
     assert none.sfdp is None
     assert none.sfdp_source is None
-    assert none.to_json()["sfdp"] is None
+    assert none.sfdp_dumps == ()
+    assert none.to_json()["sfdp"] == []
 
 
 def test_every_shipped_sfdp_dump_decodes() -> None:

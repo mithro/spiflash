@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from .db import Database, Manufacturer, SourceInfo, database
 from .enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
-from .model import Datasheet, Eraser, Flash, Record, Voltage, parse_id
+from .model import Datasheet, Eraser, Flash, Record, SfdpDump, Voltage, parse_id
 from .sfdp import Sfdp
 from .sfdp import parse as parse_sfdp
 
@@ -43,6 +43,7 @@ __all__ = [
     "OperationKind",
     "Record",
     "Sfdp",
+    "SfdpDump",
     "Source",
     "SourceInfo",
     "Voltage",

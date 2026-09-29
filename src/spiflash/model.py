@@ -61,6 +61,24 @@ class Claim(NamedTuple):
     via: str
 
 
+class SfdpDump(NamedTuple):
+    """One SFDP area the sources carry for a chip id, decoded, and the
+    records carrying it, the best source first."""
+
+    tables: Sfdp
+    records: tuple[Record, ...]
+
+    @property
+    def source(self) -> Source:
+        """The best source carrying the dump."""
+        return self.records[0].source
+
+    @property
+    def parts(self) -> tuple[str, ...]:
+        """The part numbers of the records carrying it."""
+        return tuple(dict.fromkeys(n for r in self.records for n in r.part_names))
+
+
 def parse_id(value: str | bytes | bytearray | int | Iterable[int]) -> bytes:
     """Id bytes from any of ``"ef4018"``, ``"0xEF4018"``, ``"ef 40 18"``,
     ``b"\\xef\\x40\\x18"``, ``[0xef, 0x40, 0x18]`` or ``0xef4018`` (an int is
@@ -410,23 +428,29 @@ class Flash:
         }
 
     @cached_property
-    def sfdp(self) -> Sfdp | None:
-        """The chip's SFDP tables, decoded, from the highest-priority source
-        that carries a dump of them (:attr:`sfdp_source`); ``None`` when no
-        source does. What a dump says is what one part answered, and parts
-        sharing an id can differ."""
+    def sfdp_dumps(self) -> tuple[SfdpDump, ...]:
+        """Every distinct SFDP dump the sources carry for this id, decoded,
+        each with the records carrying it; the best source's first. What a
+        dump says is what one part answered, and parts sharing an id can
+        answer differently: QEMU has one dump for the MX25L25635E and
+        another for the MX25L25635F, both ``c22019``."""
+        carrying: dict[bytes, list[Record]] = {}
         for r in sorted(self.records, key=lambda r: r.source.priority):
             if r.sfdp:
-                return r.sfdp_tables()
-        return None
+                carrying.setdefault(r.sfdp, []).append(r)
+        return tuple(SfdpDump(parse_sfdp(d), tuple(rs)) for d, rs in carrying.items())
+
+    @property
+    def sfdp(self) -> Sfdp | None:
+        """The chip's SFDP tables, decoded: the first of :attr:`sfdp_dumps`,
+        from the highest-priority source that carries one
+        (:attr:`sfdp_source`); ``None`` when no source does."""
+        return self.sfdp_dumps[0].tables if self.sfdp_dumps else None
 
     @property
     def sfdp_source(self) -> Source | None:
         """Which source :attr:`sfdp` comes from."""
-        for r in sorted(self.records, key=lambda r: r.source.priority):
-            if r.sfdp:
-                return r.source
-        return None
+        return self.sfdp_dumps[0].source if self.sfdp_dumps else None
 
     def supports(self, operation: str) -> bool:
         """Whether any source says the chip has ``operation`` (``"READ_1_1_4"``)."""
@@ -522,5 +546,8 @@ class Flash:
                 }
                 for r in self.records
             ],
-            "sfdp": {"source": self.sfdp_source, **self.sfdp.to_json()} if self.sfdp else None,
+            "sfdp": [
+                {"source": d.source, "parts": list(d.parts), **d.tables.to_json()}
+                for d in self.sfdp_dumps
+            ],
         }

@@ -15,11 +15,11 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from . import __version__
 from .db import Database, database
-from .model import Flash, parse_id
+from .model import Flash, SfdpDump, parse_id
 from .sfdp import SIGNATURE, Sfdp
 from .sfdp import parse as parse_sfdp
 from .units import human_size
@@ -74,8 +74,10 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    {r.source:15} {r.name}{ext}  [{r.url}]")
     else:
         lines.append("    from: " + ", ".join(f.sources))
-    if f.sfdp is not None:
-        lines.append(f"    sfdp: {sfdp_summary(f.sfdp)}  [{f.sfdp_source}]")
+    lines.extend(
+        f"    sfdp: {sfdp_summary(d.tables)}  [{d.source}: {', '.join(d.parts)}]"
+        for d in f.sfdp_dumps
+    )
     # The best datasheet, or all of them with -v.
     lines.extend(f"    datasheet: {d.url}" for d in f.datasheets[: None if verbose else 1])
     if opcodes:
@@ -90,27 +92,51 @@ def sfdp_summary(s: Sfdp) -> str:
     return f"{s.revision_name} ({tables})"
 
 
-def _sfdp_input(db: Database, source: str) -> tuple[list[tuple[str | None, Sfdp]], bool]:
+class _SfdpShown(NamedTuple):
+    """A dump ``spiflash sfdp`` prints, and the chip it was shipped for
+    (``None`` for a dump given directly)."""
+
+    tables: Sfdp
+    chip: Flash | None = None
+    dump: SfdpDump | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        if self.chip is None or self.dump is None:
+            return self.tables.to_json()
+        return {
+            "chip": self.chip.key,
+            "source": self.dump.source,
+            "parts": list(self.dump.parts),
+            **self.tables.to_json(),
+        }
+
+
+def _sfdp_input(db: Database, source: str) -> list[_SfdpShown]:
     """What ``spiflash sfdp`` was given: a file, ``-`` for stdin, hex bytes,
-    or a chip (id or part name) whose shipped dump to show. Each dump comes
-    with the chip's header line, or ``None`` for a dump given directly; the
-    flag says a chip was named."""
+    or a chip (id or part name) whose shipped dumps to show. A part name
+    shows that part's dump where parts sharing its id have different ones;
+    an id shows them all."""
     if source == "-":
-        return [(None, parse_sfdp(sys.stdin.buffer.read()))], False
+        return [_SfdpShown(parse_sfdp(sys.stdin.buffer.read()))]
     try:
         data = parse_id(source)
     except ValueError:
         data = b""
     if data[:4] == SIGNATURE:
-        return [(None, parse_sfdp(data))], False
+        return [_SfdpShown(parse_sfdp(data))]
     try:
         is_file = Path(source).is_file()
     except OSError:  # a long hex string is not a usable file name
         is_file = False
     if is_file:
-        return [(None, parse_sfdp(Path(source).read_bytes()))], False
-    found = _resolve(db, source)
-    return [(header(f), f.sfdp) for f in found if f.sfdp is not None], True
+        return [_SfdpShown(parse_sfdp(Path(source).read_bytes()))]
+    part = source.strip().upper()
+    out: list[_SfdpShown] = []
+    for f in _resolve(db, source):
+        dumps = f.sfdp_dumps
+        named = [d for d in dumps if part in d.parts]
+        out.extend(_SfdpShown(d.tables, f, d) for d in named or dumps)
+    return out
 
 
 def _emit(
@@ -218,18 +244,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             return 0
         if args.command == "sfdp":
-            dumps, named = _sfdp_input(db, args.source)
-            if not dumps:
+            shown = _sfdp_input(db, args.source)
+            if not shown:
                 print(f"spiflash: no SFDP dump for {args.source}", file=sys.stderr)
                 return 1
             if args.json:
-                json.dump([s.to_json() for _, s in dumps], sys.stdout, indent=1)
+                json.dump([d.to_json() for d in shown], sys.stdout, indent=1)
                 sys.stdout.write("\n")
                 return 0
-            for head, tables in dumps:
-                if named and head:
-                    print(head)
-                print(tables.describe(verbose=args.verbose))
+            for d in shown:
+                if d.chip is not None and d.dump is not None:
+                    print(header(d.chip))
+                    print(f"    from {d.dump.source}: {', '.join(d.dump.parts)}")
+                print(d.tables.describe(verbose=args.verbose))
                 print()
             return 0
         if args.command == "jep106":

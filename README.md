@@ -18,7 +18,8 @@ Together that is 779 distinct chip ids (652 SPI NOR, 127 SPI NAND) from 38
 manufacturers, 462 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
 from, and where the sources disagree (60 ids do) both answers are kept.
-Thirteen chips also carry their complete SFDP (JESD216) tables, decoded.
+Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
+(JESD216) tables, decoded.
 
 `spiflash sources` (or `spiflash.sources()`) names the exact upstream commits
 the shipped data was extracted from.
@@ -207,6 +208,7 @@ source carries a part's SFDP dump (QEMU's flash model does, for thirteen
 parts) the record keeps it whole and the chip gets it decoded:
 
 ```python
+chip = spiflash.find("W25Q512JV")[0]
 t = chip.sfdp                            # None unless a source has a dump; chip.sfdp_source says which
 t.revision_name, t.size, t.page_size     # ('JESD216B', 67108864, 256)
 [(e.size, e.opcode, e.opcode_4b) for e in t.erase_types]   # [(4096, 0x20, 0x21), ...]
@@ -214,6 +216,11 @@ t.reads["1-4-4"].dummy_clocks            # 6: the part's own number, not a defau
 t.bfpt.quad_enable_description           # 'SR2 bit 1, written with a 2-byte WRSR ...'
 t.features(), list(t.operations())       # as spiflash names them
 ```
+
+Parts sharing an id can answer different tables (QEMU has one for the
+MX25L25635E and another for the MX25L25635F, both `c22019`): `chip.sfdp` is
+the best source's first, and `chip.sfdp_dumps` lists every distinct dump with
+the parts it belongs to.
 
 The same decoder reads a dump from a real chip, such as the one Linux
 exposes at `/sys/bus/spi/devices/*/spi-nor/sfdp`:

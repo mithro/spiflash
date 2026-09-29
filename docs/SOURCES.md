@@ -17,8 +17,9 @@ opcodes (OpenOCD), supply voltage range (flashrom, flashprog), the names of the
 capability flags each upstream sets, and each upstream's test status. The
 JEP106 manufacturer names come from OpenOCD's copy of the JEDEC list. From
 QEMU, the SFDP (JESD216) tables its flash model answers for thirteen parts are
-kept whole (the `sfdp` of those records): they are the bytes a real chip
-returned, not code.
+kept whole (the `sfdp` of those records): byte for byte what those parts
+answer to the SFDP command, as QEMU records them, which is data rather than
+code.
 
 No code is copied: the tables are parsed, and the database holds the values.
 The one exception is `notes`, which keeps the short comments an upstream
