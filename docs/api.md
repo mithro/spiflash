@@ -8,6 +8,8 @@ import spiflash
 
 (chip,) = spiflash.lookup("ef4018")      # by JEDEC id: b"\xef\x40\x18", 0xef4018, ... too
 spiflash.find("W25Q128JV")               # by part name
+spiflash.find_glob("W25Q128*"), spiflash.find_regex("^MX25[LU]128")
+spiflash.find_nearest("W25Q128JVSIQ")    # the closest names, scored
 chip.manufacturer, chip.names, chip.size, chip.features
 chip.supports("READ_1_1_4"), chip.opcodes["SE"].opcode
 spiflash.database().link(chip.records[0])   # the upstream line it came from
