@@ -2,6 +2,8 @@
 
 spiflash id ef4018            which chip answers this JEDEC id?
 spiflash find w25q128jv       which ids does this part answer?
+spiflash find 'W25Q128*'      every part a glob matches (or --regex '^W25Q(64|128)J')
+spiflash find --nearest W25Q128JVSIQ   the closest part names (a marking, a typo)
 spiflash list --manufacturer winbond
 spiflash opcodes ef4018       which opcodes does it support? (an id or a part name)
 spiflash sfdp sfdp.bin        decode an SFDP dump (a file, hex, or a chip with a shipped one)
@@ -18,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from . import __version__
-from .db import Database, database
+from .db import Database, NameMatch, database
 from .model import Flash, SfdpDump, parse_id
 from .sfdp import SIGNATURE, Sfdp
 from .sfdp import parse as parse_sfdp
@@ -150,6 +152,40 @@ def _emit(
     return 0 if found else 1
 
 
+def nearest_line(m: NameMatch, width: int) -> str:
+    """One chip :meth:`Database.find_nearest` found: the score, the part
+    name, the id, the maker and why."""
+    f = m.flash
+    return f"{m.score:3}  {m.name:<{width}}  {f.key:10} {f.manufacturer or '?':14} {m.reason}"
+
+
+def _find(db: Database, args: argparse.Namespace) -> int:
+    """``spiflash find``: by name, glob, regular expression or nearness."""
+    if args.nearest:
+        near = db.find_nearest(args.name, args.count)
+        if args.json:
+            json.dump([m.to_json() for m in near], sys.stdout, indent=1)
+            sys.stdout.write("\n")
+            return 0 if near else 1
+        width = max((len(m.name) for m in near), default=0)
+        for m in near:
+            print(nearest_line(m, width))
+            if args.verbose or args.opcodes:
+                print(describe(m.flash, verbose=args.verbose, opcodes=args.opcodes) + "\n")
+        return 0 if near else 1
+    if args.regex:
+        found = db.find_regex(args.name)
+    elif args.glob or any(c in args.name for c in "*?["):
+        found = db.find_glob(args.name)
+    else:
+        found = db.find(args.name)
+        near = [] if found else db.find_nearest(args.name, 3)
+        if near:
+            close = ", ".join(f"{m.name} ({m.flash.key})" for m in near)
+            print(f"spiflash: no part {args.name}; the closest: {close}", file=sys.stderr)
+    return _emit(found, as_json=args.json, verbose=args.verbose, opcodes=args.opcodes)
+
+
 def _resolve(db: Database, query: str) -> list[Flash]:
     """An id if ``query`` reads as one and matches, else a part name."""
     try:
@@ -180,7 +216,16 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--type", choices=["nor", "nand"])
 
     p = sub.add_parser("find", parents=[common], help="look up a part name")
-    p.add_argument("name")
+    p.add_argument("name", help="a part name; with * ? or [...] in it, a glob (W25Q128*)")
+    how = p.add_mutually_exclusive_group()
+    how.add_argument(
+        "--regex", action="store_true", help="NAME is a regular expression: ^W25Q(64|128)J[VW]$"
+    )
+    how.add_argument("--glob", action="store_true", help="NAME is a glob: MX25?12835F, S25FL*S")
+    how.add_argument(
+        "--nearest", action="store_true", help="list the chips with the closest part names"
+    )
+    p.add_argument("-n", "--count", type=int, default=10, help="how many --nearest lists (10)")
 
     p = sub.add_parser("list", parents=[common], help="list chips")
     p.add_argument("--manufacturer")
@@ -217,9 +262,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 opcodes=args.opcodes,
             )
         if args.command == "find":
-            return _emit(
-                db.find(args.name), as_json=args.json, verbose=args.verbose, opcodes=args.opcodes
-            )
+            return _find(db, args)
         if args.command == "opcodes":
             found = _resolve(db, args.query)
             if args.json:

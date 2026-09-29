@@ -62,6 +62,57 @@ def test_find(capsys: pytest.CaptureFixture[str]) -> None:
     assert "ef4018" in out
 
 
+def test_find_unknown_suggests_the_closest(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["find", "W25Q182JV"]) == 1
+    err = capsys.readouterr().err
+    assert "no part W25Q182JV; the closest: W25Q128JV (ef4018), W25Q128JV (ef7018)" in err
+
+
+def test_find_glob(capsys: pytest.CaptureFixture[str]) -> None:
+    # A name with * ? or [ in it is a glob; --glob says so outright.
+    code, out = run(capsys, "find", "MX25?12835F")
+    assert code == 0
+    assert out.startswith("c22018  Macronix")
+    assert run(capsys, "find", "--glob", "MX25?12835F") == (0, out)
+    assert run(capsys, "find", "--glob", "W25Q128")[1] != run(capsys, "find", "W25Q128*")[1]
+    assert run(capsys, "find", "NOPE*")[0] == 1
+
+
+def test_find_regex(capsys: pytest.CaptureFixture[str]) -> None:
+    code, out = run(capsys, "find", "--regex", "--json", "^W25Q(64|128)J[VW]$")
+    assert code == 0
+    assert {"ef4017", "ef4018", "ef6018", "ef8018"} <= {d["jedec_id"] for d in json.loads(out)}
+    assert cli.main(["find", "--regex", "("]) == 2
+    assert "spiflash: not a regular expression: '('" in capsys.readouterr().err
+
+
+def test_find_nearest(capsys: pytest.CaptureFixture[str]) -> None:
+    code, out = run(capsys, "find", "--nearest", "-n", "3", "W25Q128JVSIQ")
+    assert code == 0
+    lines = out.splitlines()
+    assert len(lines) == 3
+    assert lines[0] == "  3  W25Q128JV  ef4018     Winbond        the query adds SIQ"
+    _, js = run(capsys, "find", "--nearest", "--json", "-n", "2", "w25q128jvsiq")
+    docs = json.loads(js)
+    assert [(d["name"], d["score"], d["chip"]["jedec_id"]) for d in docs] == [
+        ("W25Q128JV", 3, "ef4018"),
+        ("W25Q128JV", 3, "ef7018"),
+    ]
+    _, verbose = run(capsys, "find", "--nearest", "-n", "1", "--opcodes", "W25Q128JVSIQ")
+    assert "\nef4018  Winbond  " in verbose
+    assert "0x9f  RDID" in verbose
+    assert run(capsys, "find", "--nearest", "--", "--")[0] == 1
+    assert run(capsys, "find", "--nearest", "--json", "--", "--") == (1, "[]\n")
+    assert cli.main(["find", "--nearest", "-n", "0", "W25Q"]) == 2
+    assert "count must be at least 1" in capsys.readouterr().err
+
+
+def test_find_modes_are_exclusive(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["find", "--regex", "--nearest", "W25Q"])
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
 def test_list(capsys: pytest.CaptureFixture[str]) -> None:
     code, out = run(capsys, "list", "--manufacturer", "win", "--type", "nor")
     assert code == 0
