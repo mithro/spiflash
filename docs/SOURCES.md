@@ -13,9 +13,10 @@ at the commit the shipped data was read from:
 
 Facts about chips: the id bytes a part answers, its part and manufacturer
 names, its size, page and sector sizes, erase opcodes and block layouts, other
-opcodes (OpenOCD), supply voltage range (flashrom, flashprog), the names of the
-capability flags each upstream sets, and each upstream's test status. The
-JEP106 manufacturer names come from OpenOCD's copy of the JEDEC list.
+opcodes (OpenOCD, and the SFDP tables Zephyr's boards copy), supply voltage
+range (flashrom, flashprog), the names of the capability flags each upstream
+sets, and each upstream's test status. The JEP106 manufacturer names come
+from OpenOCD's copy of the JEDEC list.
 
 No code is copied: the tables are parsed, and the database holds the values.
 The one exception is `notes`, which keeps the short comments an upstream
@@ -23,10 +24,11 @@ attached to an entry or its id `#define` ("supports SFDP", "uniform 256 kB
 sectors", "W25Q128BV; W25Q128FV in SPI mode (default)"), each traceable to its
 file and line through the record's `file` and `line`.
 
-The package is Apache-2.0. Whether a compilation of facts extracted from GPL
-sources carries any obligation is a question for your own lawyer; the
-provenance of every value is recorded so that anyone who needs to can find, or
-drop, what came from where ({py:func}`spiflash.records` filtered by `source`).
+The package is Apache-2.0, as are openFPGALoader and Zephyr. Whether a
+compilation of facts extracted from GPL sources carries any obligation is a
+question for your own lawyer; the provenance of every value is recorded so
+that anyone who needs to can find, or drop, what came from where
+({py:func}`spiflash.records` filtered by `source`).
 
 ## Datasheet links
 
@@ -54,3 +56,27 @@ numbers it covers and whether it gives the chip's id bytes itself.
   opcodes per part, and the JEP106 list.
 - **openFPGALoader** gives the block-protection layout (the `flags` of its
   records: `bp_len`, `bp_offset`, `tb_register`, `quad_register`, ...).
+- **Zephyr** has no table of parts: its boards describe the flash chip each
+  carries, in devicetree, for the driver to check at start-up. Every node
+  with a `jedec-id` in {upstream}`zephyr:boards/` and {upstream}`zephyr:dts/`
+  gives the id, the size (in bits in those bindings), and, where the board
+  sets them, the page size, the read and program modes it uses (`readoc`,
+  `writeoc`, the MSPI I/O mode) and what the chip needs (`has-dpd`,
+  `quad-enable-requirements`, `enter-4byte-addr`, ...), kept in the record's
+  `flags`. About a quarter of the nodes carry a copy of the chip's own SFDP
+  Basic Flash Parameter table (`sfdp-bfp`), which gives its density, fast
+  reads, erase types and page size as the chip itself reports them; where
+  the board's own values disagree with it, the record's `notes` say so.
+  Devicetree has no field for the part name: it is the node's name, a label,
+  a comment on the `jedec-id` line or a descriptive `compatible`, whichever
+  first looks like a part number, and a node none of them names is left out.
+  The maker is named only where a `compatible` does (`"issi,is25lp128"`,
+  `"mxicy,mx25u"`), so a chip only Zephyr has may have no manufacturer. Boards
+  often share a chip: nodes that give the same values are one record, at the
+  first file, with a note listing the others. The values are written, and
+  copied between boards, by each board's porter, and some are wrong (a
+  size given in bytes where bits are meant, an id copied from another board),
+  which is why Zephyr comes last when sources are tied, and why its
+  disagreements are worth reading on the data issues pages. Only
+  `boards/` and `dts/` are read: the overlays in `samples/` and `tests/`
+  configure test set-ups, some with placeholder ids.

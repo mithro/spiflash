@@ -1,0 +1,62 @@
+/*
+ * Copyright (c) 2022 Byte-Lab d.o.o. <dev@byte-lab.com>
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+#include <st/h7/stm32h7b3Xi.dtsi>
+#include <st/h7/stm32h7b3lihxq-pinctrl.dtsi>
+#include <zephyr/dt-bindings/memory-attr/memory-attr-arm.h>
+#include "arduino_r3_connector.dtsi"
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+&octospi1 {
+	compatible = "st,stm32-ospi-controller";
+	status = "okay";
+	clock-frequency = <DT_FREQ_M(50)>;
+	op-mode = "MSPI_OP_MODE_CONTROLLER";
+	duplex = "MSPI_HALF_DUPLEX";
+	dqs-support;
+	pinctrl-0 = <&octospim_p1_clk_pb2 &octospim_p1_ncs_pg6
+		     &octospim_p1_io0_pd11 &octospim_p1_io1_pf9
+		     &octospim_p1_io2_pf7 &octospim_p1_io3_pf6
+		     &octospim_p1_io4_pc1 &octospim_p1_io5_ph3
+		     &octospim_p1_io6_pg9 &octospim_p1_io7_pd7
+		     &octospim_p1_dqs_pc5>;
+	pinctrl-names = "default";
+	st,io-low-port = "IOPORT_1_LOW";
+	st,io-high-port = "IOPORT_1_HIGH";
+	st,clk-port = <1>;
+	st,dqs-port = <1>;
+	st,ncs-port = <1>;
+
+	ext_flash_ctrl: nor-flash-controller@0 {
+		compatible = "mxicy,mx25u", "jedec,nor";
+		reg = <0>;
+		size = <DT_SIZE_M(512)>; /* 512 Mbits */
+		status = "okay";
+
+		mspi-max-frequency = <DT_FREQ_M(50)>;
+		mspi-io-mode = "MSPI_IO_MODE_OCTAL";
+		mspi-data-rate = "MSPI_DATA_RATE_SINGLE";
+		mspi-hardware-ce-num = <0>;
+
+		read-command = <0xec13>;
+		write-command = <0x12ed>;
+		command-length = "INSTR_2_BYTE";
+		rx-dummy = <20>;
+		jedec-id = [c2 85 3a]; /* MX25LM51245 */
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "storage";
+				reg = <0x0 DT_SIZE_M(64)>;
+			};
+		};
+	};
+};

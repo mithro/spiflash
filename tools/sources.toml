@@ -53,3 +53,11 @@ branch = "master"
 commit = "676e53ec73d2261c974d610b7cf0693117c8d2ef"
 paths = ["src/spiFlashdb.hpp", "src/spiFlash.cpp"]
 license = "Apache-2.0"
+
+[zephyr]
+url = "https://github.com/zephyrproject-rtos/zephyr"
+branch = "main"
+commit = "9f0253dcc66ccecc92a699dd81cb1034c3f6875b"
+# Only the devicetree files: boards/ is mostly photographs.
+paths = ["boards/**/*.dts", "boards/**/*.dtsi", "boards/**/*.overlay", "dts/**/*.dtsi"]
+license = "Apache-2.0"

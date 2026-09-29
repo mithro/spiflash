@@ -660,11 +660,13 @@ def repo_url(path: str) -> str:
 
 def upstream_url(source: str, path: str) -> str:
     """An upstream's page for ``path`` at the commit the data came from. A
-    glob (``drivers/mtd/spi-nor/*.c``) links to its directory."""
+    glob (``drivers/mtd/spi-nor/*.c``, ``boards/**/*.dts``) links to the
+    directory above its first wildcard."""
     info = spiflash.sources()[source]
     base = info.browse.rstrip("/")
     if "*" in path:
-        path = path.rsplit("/", 1)[0] + "/"
+        parts = path.split("/")
+        path = "/".join(parts[: next(i for i, p in enumerate(parts) if "*" in p)]) + "/"
     kind = "tree" if _is_dir(path) else "blob"
     return f"{base}/{kind}/{info.commit}/{path.rstrip('/')}"
 

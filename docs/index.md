@@ -1,7 +1,8 @@
 # spiflash
 
 **A database of SPI flash chips**, merged from the flash tables of Linux,
-U-Boot, flashrom, flashprog, OpenOCD and openFPGALoader: JEDEC ids, part
+U-Boot, flashrom, flashprog, OpenOCD and openFPGALoader, and the flash chips
+Zephyr's boards describe: JEDEC ids, part
 names, sizes, page and sector sizes, erase layouts, supply voltages,
 capabilities and opcodes, every value traced back to the upstream line it
 came from.
@@ -101,10 +102,10 @@ Every part name and id is in the site's search: try `W25Q128JV` or `ef 40 18`.
 ```console
 $ pip install spiflash
 $ spiflash id ef4018
-ef4018  Winbond  W25Q128, W25Q128.V, W25Q128FV, W25Q128JV  (nor)
+ef4018  Winbond  W25Q128, W25Q128JV, W25Q128.V, W25Q128FV, W25Q128BV  (nor)
     size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
-    features: dual_read erase_32k erase_4k erase_64k fast_read lock otp quad_read sfdp
-    from: flashrom, flashprog, linux, u-boot, openocd, openfpgaloader
+    features: dual_read erase_32k erase_4k erase_64k fast_read lock otp quad_pp quad_read sfdp
+    from: flashrom, flashprog, linux, u-boot, openocd, openfpgaloader, zephyr
 ```
 
 See [Using spiflash](usage.md) for the command and the Python library, and
