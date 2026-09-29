@@ -67,10 +67,19 @@ def linux_tree(tmp_path: Path) -> Path:
     )
 
 
+def test_part_case() -> None:
+    assert record.part_case("w25q128fv/jv") == "W25Q128FV/JV"
+    assert record.part_case("n25q256 1.8v") == "N25Q256 1.8V"
+    assert record.part_case("S25FL128S_UL Uniform 128 kB Sectors") == (
+        "S25FL128S_UL Uniform 128 kB Sectors"
+    )
+    assert record.part_case("sst25vf512") == "SST25VF512"
+
+
 def test_linux_nor(linux_tree: Path) -> None:
     recs = linux.extract_nor(linux_tree)
     r = by_name(recs)
-    w = r["w25q128"]
+    w = r["W25Q128"]
     assert w["id"] == "ef4018"
     assert w["ext_id"] is None
     assert w["vendor"] == "winbond"
@@ -103,21 +112,21 @@ def test_linux_nor(linux_tree: Path) -> None:
 
     assert "RDSFDP" in ops(j)
     assert "SE" not in ops(j)
-    big = r["w25q512jvq"]
+    big = r["W25Q512JVQ"]
     assert {"4byte_addr", "4byte_opcodes", "otp"} <= set(big["features"])
     assert ops(big)["READ_1_1_1_4B"] == (0x13, "SPI_NOR_4B_OPCODES")
     assert ops(big)["SE_4B"] == (0xDC, "SPI_NOR_4B_OPCODES")
     assert ops(big)["PP_1_1_1_4B"] == (0x12, "SPI_NOR_4B_OPCODES")
 
     # Neither a name nor a comment: named by vendor and id.
-    assert r["winbond-ef60"]["notes"] == ["Linux gives this entry no name"]
+    assert r["WINBOND-EF60"]["notes"] == ["Linux gives this entry no name"]
 
-    s = r["s25fl128s1"]
+    s = r["S25FL128S1"]
     assert s["id"] == "012018"
     assert s["ext_id"] == "4d0180"
     assert "USE_CLSR" in s["flags"]
 
-    n = r["everspin-nonjedec"]
+    n = r["EVERSPIN-NONJEDEC"]
     assert n["id"] is None
     assert n["id_method"] is None
     assert "no_erase" in n["features"]
@@ -177,8 +186,8 @@ UBOOT_IDS = fixture("u-boot/drivers/mtd/spi/spi-nor-ids.c")
 def test_uboot(tmp_path: Path) -> None:
     write(tmp_path, {uboot.IDS: UBOOT_IDS, uboot.FLAGS_H: UBOOT_FLAGS, uboot.SPINOR_H: SPINOR_H})
     r = by_name(uboot.extract(tmp_path))
-    assert set(r) == {"w25q128", "w25q512", "s25fl128s", "s25sl12800", "mb85rs256ty"}
-    w = r["w25q128"]
+    assert set(r) == {"W25Q128", "W25Q512", "S25FL128S", "S25SL12800", "MB85RS256TY"}
+    w = r["W25Q128"]
     assert w["vendor"] == "winbond"
     assert w["id"] == "ef4018"
     assert w["size"] == 16 << 20
@@ -194,18 +203,18 @@ def test_uboot(tmp_path: Path) -> None:
         "CHIP_ERASE",
     }
     # SPI_NOR_QUAD_READ gives U-Boot's PP_1_1_4 too; 4B_OPCODES the 4-byte forms.
-    w512 = ops(r["w25q512"])
+    w512 = ops(r["W25Q512"])
     assert w512["PP_1_1_4"] == (0x32, "SPI_NOR_QUAD_READ")
     assert w512["PP_1_1_4_4B"] == (0x34, "SPI_NOR_4B_OPCODES")
-    assert "READ_1_1_1_FAST" not in ops(r["s25fl128s"])  # SPI_NOR_NO_FR
-    assert {"4byte_addr", "4byte_opcodes", "quad_read"} <= set(r["w25q512"]["features"])
-    s = r["s25fl128s"]
+    assert "READ_1_1_1_FAST" not in ops(r["S25FL128S"])  # SPI_NOR_NO_FR
+    assert {"4byte_addr", "4byte_opcodes", "quad_read"} <= set(r["W25Q512"]["features"])
+    s = r["S25FL128S"]
     assert s["vendor"] == "spansion"
     assert s["ext_id"] == "4d0180"
     assert "fast_read" not in s["features"]
-    assert r["s25sl12800"]["ext_id"] == "0300"
-    assert r["s25sl12800"]["sector_size"] == 256 * 1024
-    f = r["mb85rs256ty"]
+    assert r["S25SL12800"]["ext_id"] == "0300"
+    assert r["S25SL12800"]["sector_size"] == 256 * 1024
+    f = r["MB85RS256TY"]
     assert f["vendor"] == "fujitsu"
     assert f["id"] == "047f25"
     assert f["size"] == 32 * 1024
@@ -359,13 +368,13 @@ def test_openocd(tmp_path: Path) -> None:
         {openocd.SPI_C: OPENOCD_SPI_C, openocd.SPI_H: OPENOCD_SPI_H, openocd.JEP106: JEP106_INC},
     )
     r = by_name(openocd.extract(tmp_path))
-    assert set(r) == {"w25q128fv/jv", "is25wp512m", "gd25q512", "s25fl008", "fm25v02"}
+    assert set(r) == {"W25Q128FV/JV", "IS25WP512M", "GD25Q512", "S25FL008", "FM25V02"}
     # A byte OpenOCD holds that is no known operation is noted, not guessed.
-    s008 = r["s25fl008"]
+    s008 = r["S25FL008"]
     assert "OpenOCD's qread_cmd is 0x08, which is not a known operation" in s008["notes"]
     assert "quad_read" not in s008["features"]
-    assert set(ops(r["fm25v02"])) == {"RDID", "READ_1_1_1", "PP_1_1_1"}
-    w = r["w25q128fv/jv"]
+    assert set(ops(r["FM25V02"])) == {"RDID", "READ_1_1_1", "PP_1_1_1"}
+    w = r["W25Q128FV/JV"]
     assert w["vendor"] == "win"
     assert w["id"] == "ef4018"
     assert ops(w) == {
@@ -376,17 +385,17 @@ def test_openocd(tmp_path: Path) -> None:
         "SE": (0xD8, "erase_cmd"),
         "CHIP_ERASE": (0xC7, "chip_erase_cmd"),
     }
-    assert ops(r["is25wp512m"])["READ_1_4_4_4B"] == (0xEC, "qread_cmd")
+    assert ops(r["IS25WP512M"])["READ_1_4_4_4B"] == (0xEC, "qread_cmd")
     assert w["erasers"] == [
         {"opcode": 0xD8, "blocks": [[65536, 256]]},
         {"opcode": 0xC7, "blocks": [[16 << 20, 1]]},
     ]
     assert w["features"] == ["erase_64k", "quad_read"]
-    assert "4byte_addr" in r["is25wp512m"]["features"]
-    g = r["gd25q512"]
+    assert "4byte_addr" in r["IS25WP512M"]["features"]
+    g = r["GD25Q512"]
     assert g["features"] == ["erase_4k"]
     assert "CHIP_ERASE" not in ops(g)
-    f = r["fm25v02"]
+    f = r["FM25V02"]
     assert f["id"] == "7f7f7f7f7f7fc22200"
     assert f["features"] == ["no_erase"]
     assert f["notes"] == ["exists ?", "FRAM"]

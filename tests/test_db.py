@@ -131,8 +131,8 @@ def test_extended_id_narrows_variants() -> None:
     (everything,) = spiflash.lookup("012018")
     (s1,) = spiflash.lookup("01 20 18 4d 01 80")
     names = {r.name for r in s1.records}
-    assert "s25fl128s1" in names
-    assert "s25fl128s0" not in names  # ext 4d0080: a different variant
+    assert "S25FL128S1" in names
+    assert "S25FL128S0" not in names  # ext 4d0080: a different variant
     assert len(s1.records) < len(everything.records)
     # Records with no extended id cover every variant, so they stay.
     assert any(r.ext_id is None for r in s1.records)
