@@ -1,5 +1,6 @@
 """A database of SPI flash chips, merged from the tables in Linux, U-Boot,
-flashrom, flashprog, OpenOCD and openFPGALoader.
+flashrom, flashprog, OpenOCD and openFPGALoader, and the flash chips Zephyr's
+boards describe.
 
 >>> import spiflash
 >>> [f.manufacturer for f in spiflash.lookup("ef4018")]

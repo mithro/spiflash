@@ -18,10 +18,12 @@ and `8D` marks double transfer rate.
 | U-Boot | the same from its {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | OpenOCD | the columns of its table: read, fastest read, page program, sector erase and chip erase |
 | openFPGALoader | what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
+| Zephyr | the board's devicetree: the reads and erase types in the chip's own SFDP table where the board copies it (`sfdp-bfp`, JESD216's Basic Flash Parameter table), and the read and program modes the board uses (`readoc`, `writeoc`, `use-fast-read`, `enter-4byte-addr`, ...) |
 
 The opcode values themselves are read from each upstream's own headers
-(`SPINOR_OP_*`, `JEDEC_*`, `SPIFLASH_READ_ID`, `FLASH_*`) and checked against
-the table below when the data is built: a disagreement fails the build.
+(`SPINOR_OP_*`, `JEDEC_*`, `SPIFLASH_READ_ID`, `FLASH_*`), or from the SFDP
+table (Zephyr), and checked against the table below when the data is built:
+a disagreement fails the build.
 
 :::{important}
 A listed operation is one some source says the part has. **An operation that

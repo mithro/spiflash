@@ -12,11 +12,12 @@ merged from the flash tables of every project that keeps one:
 | [flashprog](https://review.sourcearcade.org/flashprog.git) | [`flashchips.c`](https://github.com/SourceArcade/flashprog/blob/main/flashchips.c) (SPI chips only) | 480 |
 | [OpenOCD](https://github.com/openocd-org/openocd) | [`src/flash/nor/spi.c`](https://github.com/openocd-org/openocd/blob/master/src/flash/nor/spi.c), and [`src/helper/jep106.inc`](https://github.com/openocd-org/openocd/blob/master/src/helper/jep106.inc) for manufacturer names | 190 |
 | [openFPGALoader](https://github.com/trabucayre/openFPGALoader) | [`src/spiFlashdb.hpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlashdb.hpp) | 53 |
+| [Zephyr](https://github.com/zephyrproject-rtos/zephyr) | the devicetree of its [boards](https://github.com/zephyrproject-rtos/zephyr/tree/main/boards) and [SoCs](https://github.com/zephyrproject-rtos/zephyr/tree/main/dts): each flash node with a `jedec-id` | 99 |
 
-Together that is 778 distinct chip ids (651 SPI NOR, 127 SPI NAND) from 37
-manufacturers, 459 of them described by more than one source, plus the full
+Together that is 786 distinct chip ids (659 SPI NOR, 127 SPI NAND) from 37
+manufacturers, 466 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
-from, and where the sources disagree (60 ids do) both answers are kept.
+from, and where the sources disagree (66 ids do) both answers are kept.
 
 `spiflash sources` (or `spiflash.sources()`) names the exact upstream commits
 the shipped data was extracted from.
@@ -60,10 +61,10 @@ What answered `9f` with `ef 40 18`?
 
 ```console
 $ spiflash id ef4018
-ef4018  Winbond  W25Q128, W25Q128.V, W25Q128FV, W25Q128JV  (nor)
+ef4018  Winbond  W25Q128, W25Q128JV, W25Q128.V, W25Q128FV, W25Q128BV  (nor)
     size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
-    features: dual_read erase_32k erase_4k erase_64k fast_read lock otp quad_read sfdp
-    from: flashrom, flashprog, linux, u-boot, openocd, openfpgaloader
+    features: dual_read erase_32k erase_4k erase_64k fast_read lock otp quad_pp quad_read sfdp
+    from: flashrom, flashprog, linux, u-boot, openocd, openfpgaloader, zephyr
 ```
 
 `-v` lists every upstream entry with its file and line, `--json` prints it all
@@ -89,8 +90,8 @@ Which opcodes does a part support?
 
 ```console
 $ spiflash opcodes W25Q128JV           # or by id: spiflash opcodes ef4018
-ef4018  Winbond  W25Q128, W25Q128.V, W25Q128FV, W25Q128JV  (nor)
-    0x9f  RDID             Read JEDEC id  [flashrom, flashprog, linux, u-boot, openocd, openfpgaloader]
+ef4018  Winbond  W25Q128, W25Q128JV, W25Q128.V, W25Q128FV, W25Q128BV  (nor)
+    0x9f  RDID             Read JEDEC id  [flashrom, flashprog, linux, u-boot, openocd, openfpgaloader, zephyr]
     0x5a  RDSFDP           Read SFDP (JESD216) parameters  [flashrom, flashprog]
     0x03  READ_1_1_1       Read data (low frequency)  [flashrom, flashprog, linux, u-boot, openocd, openfpgaloader]
     0x0b  READ_1_1_1_FAST  Fast read  [flashprog, linux, u-boot]
@@ -99,7 +100,7 @@ ef4018  Winbond  W25Q128, W25Q128.V, W25Q128FV, W25Q128JV  (nor)
     0x6b  READ_1_1_4       Quad output fast read  [flashprog, linux, u-boot]
     0xeb  READ_1_4_4       Quad I/O fast read  [flashprog, openocd]
     0x02  PP_1_1_1         Page program  [flashrom, flashprog, linux, u-boot, openocd, openfpgaloader]
-    0x32  PP_1_1_4         Quad input page program  [u-boot]
+    0x32  PP_1_1_4         Quad input page program  [u-boot, zephyr]
     0x20  BE_4K            Erase a 4 KiB sector  [flashrom, flashprog, linux, u-boot, openfpgaloader]
     ...
 ```
@@ -123,7 +124,7 @@ import spiflash
 
 (chip,) = spiflash.lookup("ef4018")      # or b"\xef\x40\x18", 0xef4018, [0xef, 0x40, 0x18]
 chip.manufacturer                        # 'Winbond'
-chip.names                               # ('W25Q128', 'W25Q128.V', 'W25Q128FV', 'W25Q128JV')
+chip.names                               # ('W25Q128', 'W25Q128JV', 'W25Q128.V', 'W25Q128FV', 'W25Q128BV')
 chip.size, chip.page_size, chip.sector_size   # (16777216, 256, 65536)
 chip.voltage                             # (2700, 3600), in mV
 "quad_read" in chip.features             # True
@@ -141,7 +142,7 @@ A `Flash` is one chip id, and several parts can share one (a W25Q128BV, FV and
 JV all answer `ef4018`), so it lists every name the sources give. Its single
 values (`size`, `page_size`, `sector_size`, `voltage`, `manufacturer`) are what
 most sources agree on, ties going to flashrom, then flashprog, Linux, U-Boot,
-OpenOCD and openFPGALoader; `values("size")` shows who says what. `features`
+OpenOCD, openFPGALoader and Zephyr; `values("size")` shows who says what. `features`
 is everything any source claims, from this list:
 
 | feature | meaning |
@@ -182,9 +183,11 @@ Each source's list is what that source says, from what it says it:
 | U-Boot | the same from its [`spi-nor-core.c`](https://github.com/u-boot/u-boot/blob/master/drivers/mtd/spi/spi-nor-core.c) (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | OpenOCD | the table's own opcode columns: read, fastest read, page program, sector and chip erase |
 | openFPGALoader | what its [`spiFlash.cpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlash.cpp) sends: read, page program, and the erases its table allows |
+| Zephyr | the board's devicetree: the reads and erase types of the chip's own SFDP table where the board copies it (`sfdp-bfp`), and the read and program modes the board uses (`readoc`, `writeoc`, `use-fast-read`, ...) |
 
 The opcode values are read from each upstream's own headers (`SPINOR_OP_*`,
-`JEDEC_*`, `FLASH_*`) and checked against the table when the data is built.
+`JEDEC_*`, `FLASH_*`), or from the SFDP table, and checked against the table
+when the data is built.
 
 So a listed operation is one some source says the part has. An operation that
 is not listed may still be supported: no source here describes every opcode of

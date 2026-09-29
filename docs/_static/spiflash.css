@@ -42,6 +42,7 @@ h1 + p .sf-id { font-size: 1em; }
 .sf-src-u-boot { background: #7c3aed; }
 .sf-src-openocd { background: #0f766e; }
 .sf-src-openfpgaloader { background: #be185d; }
+.sf-src-zephyr { background: #4d7c0f; }
 
 /* Summary cards on a chip page. */
 .sf-cards { margin: 1rem 0 1.5rem; }
