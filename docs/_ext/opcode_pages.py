@@ -30,28 +30,28 @@ if TYPE_CHECKING:
 # Where the timing numbers come from, as the pages cite it.
 TIMING_TEXT = {
     TimingSource.LINUX_DEFAULT: (
-        "Linux's `spi_nor_init_default_params()` in "
+        "{sfsrc}`linux`'s `spi_nor_init_default_params()` in "
         "{upstream}`linux:drivers/mtd/spi-nor/core.c` sets up, for every part, read "
         "(0x03) with no dummy clocks, fast read (0x0b) with 8, and page program (0x02); "
         "and quad page program (0x32) for parts flagged `SPI_NOR_QUAD_PP`."
     ),
     TimingSource.LINUX_NO_SFDP: (
-        "Linux's `spi_nor_no_sfdp_init_params()` in "
+        "{sfsrc}`linux`'s `spi_nor_no_sfdp_init_params()` in "
         "{upstream}`linux:drivers/mtd/spi-nor/core.c` gives the 1-1-2, 1-1-4 and 1-1-8 "
         "reads 8 dummy clocks, and octal DTR reads 20, for parts that have no SFDP tables."
     ),
     TimingSource.LINUX_4B: (
-        "Linux's `spi_nor_convert_3to4_read()` and its siblings in "
+        "{sfsrc}`linux`'s `spi_nor_convert_3to4_read()` and its siblings in "
         "{upstream}`linux:drivers/mtd/spi-nor/core.c` map each 3-byte-address operation "
         "to its 4-byte form, which keeps the same dummy clocks."
     ),
     TimingSource.FLASHPROG_FEATURES: (
-        "flashprog's `FEATURE_*` definitions in {upstream}`flashprog:include/flash.h` "
+        "{sfsrc}`flashprog`'s `FEATURE_*` definitions in {upstream}`flashprog:include/flash.h` "
         "give the dummy clocks: 8 for fast read (0x0b), dual output (0x3b) and quad "
         "output (0x6b), 4 for dual I/O (0xbb), 6 for quad I/O (0xeb)."
     ),
     TimingSource.FLASHROM_SIZES: (
-        "flashrom's `JEDEC_*_OUTSIZE` and `_INSIZE` definitions in "
+        "{sfsrc}`flashrom`'s `JEDEC_*_OUTSIZE` and `_INSIZE` definitions in "
         "{upstream}`flashrom:include/spi.h` give the bytes sent and received: the "
         "command, the address, any dummy bytes, and the data."
     ),
@@ -71,7 +71,7 @@ NOTES = {
     "RDID": (
         "The flash answers with its JEDEC id: the manufacturer's JEP106 code, then two "
         "device bytes (usually the memory type and the capacity). Many parts carry on "
-        "with extended id bytes if the host keeps clocking; Linux matches up to six. "
+        "with extended id bytes if the host keeps clocking; {sfsrc}`linux` matches up to six. "
         "Manufacturers in later JEP106 banks should send `0x7f` continuation codes "
         "first, but many parts leave them out."
     ),
@@ -89,13 +89,13 @@ NOTES = {
     ),
     "RES": (
         "Wakes the flash from deep power-down; after three dummy bytes it answers its "
-        "one-byte electronic signature (flashrom's RES1; RES2 parts answer two bytes). "
+        "one-byte electronic signature ({sfsrc}`flashrom`'s RES1; RES2 parts answer two bytes). "
         "Older parts use this in place of the JEDEC id."
     ),
     "RDSFDP": (
         "Reads the Serial Flash Discoverable Parameters (JESD216) from the given "
         "address: tables describing the part's size, erase types, read modes and "
-        "dummy clocks. Linux reads them to set up most modern parts."
+        "dummy clocks. {sfsrc}`linux` reads them to set up most modern parts."
     ),
     "WRSR": (
         "Writes status register 1, and on many parts status register 2 as a second "

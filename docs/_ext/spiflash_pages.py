@@ -35,6 +35,7 @@ from page_markup import (
     KIND_TITLE,
     TIMES,
     badge,
+    badge_lines,
     chip_slug,
     esc,
     feature_badges,
@@ -42,7 +43,6 @@ from page_markup import (
     size_text,
     slug,
     source_badge,
-    source_label,
     spaced,
     table_id,
     title_of,
@@ -360,7 +360,7 @@ def _opcodes(f: Flash) -> list[str]:
     out.append("")
     out.append(":::{dropdown} Why each source lists each opcode\n:class-container: sf-why\n")
     for o in f.opcodes.values():
-        reasons = "; ".join(f"{source_label(s)}: {esc(via)}" for s, via in o.because)
+        reasons = "; ".join(f"{source_badge(s)} {esc(via)}" for s, via in o.because)
         out.append(f"- [`{o.name}`](../opcodes/{o.name}.md) (0x{o.opcode:02x}): {reasons}")
     out.append(":::\n")
     return out
@@ -429,7 +429,7 @@ def _sources(db: Database, f: Flash) -> list[str]:
     if notes:
         out.append(":::{dropdown} Upstream comments\n:class-container: sf-why\n")
         for r, n in notes:
-            out.append(f"- {source_label(r.source)} ({esc(r.name)}): {esc(n)}")
+            out.append(f"- {source_badge(r.source)} {esc(r.name)}: {esc(n)}")
         out.append(":::\n")
     return out
 
@@ -591,10 +591,12 @@ def sources_table(db: Database) -> str:
             if base.startswith("https://github.com/")
             else f"`{s.commit[:12]}`"
         )
-        label = "JEP106 (OpenOCD)" if name == "jep106" else source_label(name)
-        rows.append(
-            [f"[{label}]({base})", commit, f"{s.date:%Y-%m-%d}", f"{s.records:,}", esc(s.license)]
+        label = (
+            f"JEP106 ({{sfsrc}}`openocd <{base}>`)"
+            if name == "jep106"
+            else f"{{sfsrc}}`{name} <{base}>`"
         )
+        rows.append([label, commit, f"{s.date:%Y-%m-%d}", f"{s.records:,}", esc(s.license)])
     return list_table(["Source", "Commit", "Date", "Entries", "Licence"], rows, "sf-table")
 
 
@@ -605,7 +607,7 @@ def files_read_table(db: Database) -> str:
         if name == "jep106":
             continue  # the same OpenOCD checkout; its file is in OpenOCD's row
         files = ", ".join(f"{{upstream}}`{name}:{path}`" for path in s.paths)
-        rows.append([source_label(name), files, esc(s.license)])
+        rows.append([source_badge(name), files, esc(s.license)])
     return list_table(["Source", "Files read", "Licence of those files"], rows, "sf-table")
 
 
@@ -704,9 +706,12 @@ class SourceRole(SphinxRole):
     def run(self) -> tuple[list[nodes.Node], list[nodes.system_message]]:
         has_link, title, target = split_explicit_title(self.text)
         source, _, count = title.partition(" ")
-        label = source_label(source) + (f" {count}" if count else "")
+        lines = badge_lines(source, count)
         classes = ["sf-src", f"sf-src-{slug(source)}"] + (["sf-src-mine"] if self.mine else [])
-        badge = nodes.inline(self.rawtext, label, classes=classes)
+        if len(lines) > 1:
+            classes.append("sf-src-split")
+        badge = nodes.inline(self.rawtext, "", classes=classes)
+        badge += [nodes.inline(line, line) for line in lines]
         if not has_link:
             return [badge], []
         return [

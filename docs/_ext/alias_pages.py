@@ -53,7 +53,7 @@ from sphinx.builders.html import StandaloneHTMLBuilder
 from sphinx.util import logging
 
 import spiflash
-from page_markup import chip_slug, slug, source_label, spaced, title_of, vendor_of
+from page_markup import chip_slug, slug, source_badge_html, spaced, title_of, vendor_of
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -115,6 +115,7 @@ def _head(title: str) -> list[str]:
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         '<meta name="color-scheme" content="light dark">',
         '<link rel="icon" href="../_static/logo.svg">',
+        '<link rel="stylesheet" href="../_static/spiflash.css">',
         f"<title>{escape(title)} - spiflash</title>",
     ]
 
@@ -146,8 +147,9 @@ def _id_text(f: Flash) -> str:
 
 
 def _listed_by(f: Flash, name: str) -> str:
+    """The sources listing ``name`` under ``f``, as the site's labels (HTML)."""
     sources = {r.source for r in f.records if name in r.part_names}
-    return ", ".join(source_label(s) for s in f.sources if s in sources)
+    return " ".join(source_badge_html(s) for s in f.sources if s in sources)
 
 
 # The disambiguation page stands alone, outside the theme.
@@ -178,7 +180,7 @@ def choice_page(name: str, chips: Iterable[Flash], suffix: str = ".html") -> str
             f'<td><a href="../vendors/{escape(slug(vendor_of(f)))}.html">'
             f"{escape(vendor_of(f))}</a></td>"
             f"<td>{kind}</td>"
-            f"<td>{escape(_listed_by(f, name))}</td>"
+            f"<td>{_listed_by(f, name)}</td>"
             "</tr>"
         )
     return "\n".join(

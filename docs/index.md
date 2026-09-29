@@ -1,11 +1,11 @@
 # spiflash
 
-**A database of SPI flash chips**, merged from the flash tables of Linux,
-U-Boot, flashrom, flashprog, OpenOCD, openFPGALoader and QEMU, and the flash
-chips Zephyr's boards describe: JEDEC ids, part
+**A database of SPI flash chips**, merged from the flash tables of {sfsrc}`linux`,
+{sfsrc}`u-boot`, {sfsrc}`flashrom`, {sfsrc}`flashprog`, {sfsrc}`openocd`, {sfsrc}`openfpgaloader` and {sfsrc}`qemu`, and the flash
+chips {sfsrc}`zephyr`'s boards describe: JEDEC ids, part
 names, sizes, page and sector sizes, erase layouts, supply voltages,
 capabilities and opcodes, every value traced back to the upstream line it
-came from, and the SFDP (JESD216) tables of the parts QEMU has them for.
+came from, and the SFDP (JESD216) tables of the parts {sfsrc}`qemu` has them for.
 
 ::::{grid} 2 3 3 3
 :gutter: 3

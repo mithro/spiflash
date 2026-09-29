@@ -5,6 +5,7 @@ written."""
 from __future__ import annotations
 
 import re
+from html import escape
 from typing import TYPE_CHECKING
 
 from spiflash.enums import Source
@@ -22,6 +23,25 @@ TIMES = "\N{MULTIPLICATION SIGN}"
 def source_label(name: str) -> str:
     """A source's name as its project writes it (``u-boot`` is U-Boot)."""
     return Source(name).label if name in set(Source) else name
+
+
+#: Labels too long for one line of a badge, and where they break.
+SPLIT_LABELS = {"openfpgaloader": ("openFPGA", "Loader")}
+
+
+def badge_lines(name: str, count: str = "") -> tuple[str, ...]:
+    """A source's badge text, one or two lines, with an optional count
+    (``"\u00d73"``) after it."""
+    lines = SPLIT_LABELS.get(name, (source_label(name),))
+    return (*lines[:-1], lines[-1] + (f" {count}" if count else ""))
+
+
+def source_badge_html(name: str) -> str:
+    """A source's badge as raw HTML, for pages Sphinx does not write."""
+    lines = badge_lines(name)
+    classes = f"sf-src sf-src-{escape(slug(name))}" + (" sf-src-split" if len(lines) > 1 else "")
+    inner = "".join(f"<span>{escape(line)}</span>" for line in lines)
+    return f'<span class="{classes}">{inner}</span>'
 
 
 # What each feature means, and the badge colour for its group.

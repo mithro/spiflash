@@ -81,6 +81,11 @@ def source_page(source: Source) -> str:
     return f"source-{source}"
 
 
+def source_link(source: Source) -> str:
+    """A source's label, linked to its data issues page (from ``issues/``)."""
+    return f"{{sfsrc}}`{source} <{source_page(source)}.html>`"
+
+
 class _Render:
     """Markdown for issues, for pages in ``docs/issues/``."""
 
@@ -241,7 +246,7 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
         ),
         "## Summary\n",
     ]
-    header = ["Kind", "All", *(f"[{s.label}]({source_page(s)}.md)" for s in Source)]
+    header = ["Kind", "All", *(source_link(s) for s in Source)]
     rows = [
         [
             f"[{kind.heading}]({kind_page(kind)}.md)",
@@ -268,12 +273,7 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
         )
         out.append(r.section(kind, found, 4))
     out.append("(by-source)=\n## By source\n")
-    out.append(
-        " · ".join(
-            f"[{s.label}]({source_page(s)}.md) ({len(_involving(issues, s))})" for s in Source
-        )
-        + "\n"
-    )
+    out.append(" · ".join(f"{source_link(s)} {len(_involving(issues, s))}" for s in Source) + "\n")
     pages = [kind_page(k) for k in IssueKind] + [source_page(s) for s in Source]
     out.append("```{toctree}\n:hidden:\n\n" + "\n".join(pages) + "\n```\n")
     return "\n".join(out)
@@ -287,9 +287,7 @@ def kind_markdown(r: _Render, kind: IssueKind, issues: list[Issue]) -> str:
             f"{{bdg-primary}}`{len(found)} found`\n",
             f"{kind.description} {KIND_NOTES[kind]}\n",
             "By source: "
-            + ", ".join(
-                f"[{s.label}]({source_page(s)}.md) {len(_involving(found, s))}" for s in Source
-            )
+            + ", ".join(f"{source_link(s)} {len(_involving(found, s))}" for s in Source)
             + ". All the kinds: [Data issues](index.md).\n",
             "Type in the box to filter.\n",
             r.section(kind, found, 2),
@@ -300,10 +298,10 @@ def kind_markdown(r: _Render, kind: IssueKind, issues: list[Issue]) -> str:
 def source_markdown(r: _Render, source: Source, issues: list[Issue]) -> str:
     mine = _involving(issues, source)
     out = [
-        f"# {source.label}: data issues\n",
+        f"# Data issues: {{sfsrc}}`{source}`\n",
         f"{{bdg-primary}}`{len(mine)} issues` {{sfsrc}}`{source}`\n",
         (
-            f"Every issue {esc(source.label)} is part of; its own labels are ringed. "
+            f"Every issue {{sfsrc}}`{source}` is part of; its own labels are ringed. "
             "An issue between two sources is on both their pages, and does not say "
             "which is wrong. All the sources: [Data issues](index.md).\n"
         ),
