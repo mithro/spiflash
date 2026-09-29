@@ -127,6 +127,8 @@ table.sf-ext-ids td { white-space: nowrap; }
 table.sf-ext-ids td:nth-child(2), table.sf-ext-ids td:nth-child(3) { white-space: normal; }
 table.sf-ext-ids td:last-child { white-space: normal; min-width: 16em; }
 table.sf-parts td:first-child .sf-kind { display: block; min-width: 0; }
+/* A sub-row of a table: indented under the row above. */
+.sf-sub { display: inline-block; padding-left: 1.5em; }
 .table-wrapper { overflow-x: auto; }
 
 /* Sorting and filtering (tables.js). */

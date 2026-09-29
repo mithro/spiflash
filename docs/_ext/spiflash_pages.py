@@ -891,6 +891,7 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_role("sfop", SpanRole("sf-op"))
     app.add_role("sfyes", SpanRole("sf-yes"))
     app.add_role("sfkind", SpanRole("sf-kind"))
+    app.add_role("sfsub", SpanRole("sf-sub"))
     app.add_role("sfsrc", SourceRole())
     app.add_role("sfsrcme", SourceRole(mine=True))
     app.add_role("sfnum", NumberRole())

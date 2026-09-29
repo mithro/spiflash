@@ -35,12 +35,25 @@
         var asc = th.getAttribute("aria-sort") !== "ascending";
         heads.forEach(function (h) { h.removeAttribute("aria-sort"); });
         th.setAttribute("aria-sort", asc ? "ascending" : "descending");
-        var rows = Array.prototype.slice.call(body.rows);
-        rows.sort(function (r1, r2) {
+        function order(r1, r2) {
           var c = compare(key(r1.cells[col]), key(r2.cells[col]));
           return asc ? c : -c;
+        }
+        // A sub-row (its first cell an sf-sub) stays under the row above
+        // it, sorted among its siblings.
+        var groups = [];
+        Array.prototype.forEach.call(body.rows, function (r) {
+          if (groups.length && r.cells[0].querySelector(".sf-sub")) {
+            groups[groups.length - 1].subs.push(r);
+          } else {
+            groups.push({ row: r, subs: [] });
+          }
         });
-        rows.forEach(function (r) { body.appendChild(r); });
+        groups.sort(function (g1, g2) { return order(g1.row, g2.row); });
+        groups.forEach(function (g) {
+          body.appendChild(g.row);
+          g.subs.sort(order).forEach(function (r) { body.appendChild(r); });
+        });
       }
       th.addEventListener("click", sort);
       th.addEventListener("keydown", function (e) {

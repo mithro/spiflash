@@ -163,6 +163,8 @@ def test_values_grouped_by_what_disagrees() -> None:
         "## Sector size",
         "## Supply voltage",
     ]
+    # Each has a target, an HTML id as it is: no underscores.
+    assert "(value-page-size)=" in page
     counts = sum(int(h.split("(")[1].rstrip(")")) for h in headings)
     assert counts == len([i for i in find(db) if i.kind is IssueKind.VALUE])
 
@@ -173,8 +175,8 @@ def test_summary_has_a_row_per_value() -> None:
     pages = generate_all(db, slugs)
     rows = [line for line in pages["index.md"].splitlines() if line.startswith("* - ")]
     # Voltage has an issue, so a section to link to; size has none.
-    assert f"* - {EM_SPACE}{{ref}}`Supply voltage <value-voltage>`" in rows
-    assert f"* - {EM_SPACE}Size" in rows
+    assert "* - {sfsub}`Supply voltage <value.html#value-voltage>`" in rows
+    assert "* - {sfsub}`Size`" in rows
     # Only the value page has the targets.
     assert "(value-voltage)=" in pages["value.md"]
     assert "(value-voltage)=" not in pages["index.md"]

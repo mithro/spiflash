@@ -77,6 +77,12 @@ VALUE_TITLES = {
 }
 
 
+def value_target(attr: str) -> str:
+    """The value page's target for the section on ``attr``: its HTML id
+    too, which is why it has no underscores (Sphinx makes them dashes)."""
+    return f"value-{attr.replace('_', '-')}"
+
+
 def kind_page(kind: IssueKind) -> str:
     return str(kind)
 
@@ -172,7 +178,7 @@ class _Render:
             mine = [i for i in issues if i.attribute == attr]
             if mine:
                 if targets:
-                    out.append(f"(value-{attr})=")
+                    out.append(f"({value_target(attr)})=")
                 out.append(f"{'#' * level} {VALUE_TITLES[attr]} ({len(mine)})\n")
                 out.append(self.table(kind, mine))
         return "\n".join(out)
@@ -272,8 +278,8 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
                 mine = [i for i in found if i.attribute == attr]
                 title = VALUE_TITLES[attr]
                 if mine:  # only then has it a section to link to
-                    title = f"{{ref}}`{title} <value-{attr}>`"
-                rows.append(_summary_row(f"{EM_SPACE}{title}", mine))
+                    title += f" <{kind_page(kind)}.html#{value_target(attr)}>"
+                rows.append(_summary_row(f"{{sfsub}}`{title}`", mine))
     rows.append(
         ["**All**", f"**{len(issues)}**", *(f"**{len(_involving(issues, s))}**" for s in Source)]
     )
