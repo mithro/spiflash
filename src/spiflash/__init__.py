@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .db import Database, Manufacturer, SourceInfo, database
+from .db import Database, Manufacturer, NameMatch, SourceInfo, database
 from .enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
 from .model import Datasheet, Eraser, Flash, Record, SfdpDump, Voltage, parse_id
 from .sfdp import Sfdp
@@ -40,6 +40,7 @@ __all__ = [
     "IdFamily",
     "IdMethod",
     "Manufacturer",
+    "NameMatch",
     "OperationKind",
     "Record",
     "Sfdp",
@@ -50,6 +51,9 @@ __all__ = [
     "__version__",
     "database",
     "find",
+    "find_glob",
+    "find_nearest",
+    "find_regex",
     "flashes",
     "jep106",
     "lookup",
@@ -68,6 +72,24 @@ def lookup(chip_id: str | bytes | int | Iterable[int], **kwargs: str) -> list[Fl
 def find(name: str) -> list[Flash]:
     """The chips matching part name ``name``; see :meth:`Database.find`."""
     return database().find(name)
+
+
+def find_regex(pattern: str) -> list[Flash]:
+    """The chips with a part name matching regular expression ``pattern``;
+    see :meth:`Database.find_regex`."""
+    return database().find_regex(pattern)
+
+
+def find_glob(pattern: str) -> list[Flash]:
+    """The chips with a part name matching ``pattern`` (``W25Q128*``); see
+    :meth:`Database.find_glob`."""
+    return database().find_glob(pattern)
+
+
+def find_nearest(name: str, count: int = 10) -> list[NameMatch]:
+    """The chips with the part names closest to ``name``; see
+    :meth:`Database.find_nearest`."""
+    return database().find_nearest(name, count)
 
 
 def flashes() -> tuple[Flash, ...]:

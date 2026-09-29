@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -11,7 +13,16 @@ from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from .enums import FlashType, IdFamily
-from .model import Datasheet, Flash, Record, name_matches, parse_id, strip_continuation
+from .model import (
+    Datasheet,
+    Flash,
+    Record,
+    name_distance,
+    name_matches,
+    parse_id,
+    squash_name,
+    strip_continuation,
+)
 from .vendors import canonical
 
 if TYPE_CHECKING:
@@ -71,6 +82,47 @@ def _read(name: str) -> dict[str, Any]:
         msg = f"{name}: unsupported format {data.get('format')!r}"
         raise ValueError(msg)
     return data
+
+
+@dataclass(frozen=True, slots=True)
+class NameMatch:
+    """A chip :meth:`Database.find_nearest` found: its part name closest to
+    the query, the :func:`~spiflash.model.name_distance` cost (0 for the
+    same part), and why, in words."""
+
+    flash: Flash
+    name: str
+    score: int
+    reason: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "score": self.score,
+            "reason": self.reason,
+            "chip": self.flash.to_json(),
+        }
+
+
+def _reason(query: str, name: str, common: int) -> str:
+    """What differs between ``query`` and part ``name``, which share their
+    first ``common`` characters (as :func:`squash_name` writes them)."""
+    a, b = squash_name(query), squash_name(name, wildcards=True)
+    if common == len(a) == len(b):
+        return "the same part"
+    if common == len(b):
+        return f"the query adds {a[common:]}"
+    if common == len(a):
+        return f"the name adds {b[common:]}"
+    if common:
+        return f"differs after {a[:common]}"
+    return "differs from the first character"
+
+
+def _glob(pattern: str) -> re.Pattern[str]:
+    """A shell-style pattern (``*``, ``?``, ``[...]``) for a whole part name,
+    ignoring case and spaces."""
+    return re.compile(fnmatch.translate(re.sub(r"\s", "", pattern)), re.IGNORECASE)
 
 
 def _rank(part: str, query: str) -> int | None:
@@ -203,6 +255,60 @@ class Database:
                 ranked.append((min(ranks), f))
         ranked.sort(key=lambda t: t[0])  # stable: equal ranks keep database order
         return [f for _, f in ranked]
+
+    def find_regex(self, pattern: str | re.Pattern[str]) -> list[Flash]:
+        """The chips with a part name ``pattern`` matches, in database order.
+
+        The pattern is searched for anywhere in each of :attr:`Flash.names`
+        (anchor it with ``^`` and ``$``), ignoring case unless it is already
+        compiled: ``^W25Q(64|128)J[VW]$``. The names are as the sources give
+        them, so flashrom's ``W25Q128.V`` is matched as written. A pattern
+        that is not a regular expression raises :class:`ValueError`."""
+        if isinstance(pattern, str):
+            try:
+                pattern = re.compile(pattern, re.IGNORECASE)
+            except re.error as e:
+                msg = f"not a regular expression: {pattern!r} ({e})"
+                raise ValueError(msg) from e
+        return [f for f in self.flashes if any(pattern.search(n) for n in f.names)]
+
+    def find_glob(self, pattern: str) -> list[Flash]:
+        """The chips with a part name matching the shell-style ``pattern``, in
+        database order: ``*`` is any run of characters, ``?`` any one,
+        ``[...]`` one of a set (``[!...]`` one not in it). The pattern covers
+        the whole name, ignoring case and spaces: ``W25Q128*``, ``MX25?12835F``,
+        ``S25FL*S``."""
+        rx = _glob(pattern)
+        return [f for f in self.flashes if any(rx.fullmatch(n) for n in f.names)]
+
+    def find_nearest(self, name: str, count: int = 10) -> list[NameMatch]:
+        """The ``count`` chips with the part names closest to ``name``, the
+        closest first, each with its closest name: for a marking read off a
+        chip, an order code, or a typo.
+
+        The score is :func:`~spiflash.model.name_distance`: an edit distance
+        on the names' letters and digits, where a character one name has past
+        the end of the other costs a quarter of an edit, since part numbers
+        end in their least important parts (package, temperature, ordering).
+        Equal scores go to the name sharing more leading characters, then to
+        a name without flashrom's wildcards, then alphabetically."""
+        if count < 1:
+            msg = f"count must be at least 1, not {count}"
+            raise ValueError(msg)
+        if not squash_name(name):
+            return []
+
+        def key(part: str) -> tuple[int, int, bool, str]:
+            cost, common = name_distance(name, part)
+            return cost, -common, "." in part, part
+
+        # Each chip's closest name, then the chips by it (stable: database
+        # order last).
+        ranked = sorted(((min(map(key, f.names)), f) for f in self.flashes), key=lambda t: t[0])
+        return [
+            NameMatch(f, part, cost, _reason(name, part, -common))
+            for (cost, common, _, part), f in ranked[:count]
+        ]
 
     def link(self, record: Record) -> str | None:
         """A web link to the upstream line a record came from, at the commit

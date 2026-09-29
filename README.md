@@ -169,6 +169,53 @@ is everything any source claims, from this list:
 The upstream's own flags (`SPI_NOR_HAS_TB`, `FEATURE_WRSR2`, ...) are kept on
 each record's `flags` for anything this list does not capture.
 
+## Searching part names
+
+Besides `find`, part names can be searched by glob, by regular expression, and
+for the nearest name to one that is not in the database:
+
+```console
+$ spiflash find 'MX25?12835F'            # a glob: * any run, ? any one, [...] one of a set
+$ spiflash find --regex '^W25Q(64|128)J[VW]$'
+$ spiflash find --nearest W25Q128JVSIQ   # -n 5 for five, --json for JSON
+  3  W25Q128JV  ef4018     Winbond        the query adds SIQ
+  3  W25Q128JV  ef7018     Winbond        the query adds SIQ
+  7  W25Q128JW  ef6018     Winbond        differs after W25Q128J
+  ...
+```
+
+```python
+spiflash.find_glob("S25FL*S")            # [Flash, ...], in database order
+spiflash.find_regex("^W25Q(64|128)J")    # searched for anywhere; anchor it with ^ and $
+for m in spiflash.find_nearest("W25Q128JVSIQ", 5):
+    print(m.score, m.name, m.flash.jedec_id, m.reason)
+```
+
+A glob covers the whole name and a regular expression is searched for in it;
+both ignore case (unless a compiled pattern is given) and see the names as the
+sources write them, flashrom's `W25Q128.V` included. A name with `*`, `?` or
+`[` in it is a glob without `--glob`, and a `find` that matches nothing names
+the three nearest parts.
+
+The nearest names are for a marking read off a chip, a full order code, or a
+typo. The score is an edit distance on the names' letters and digits (case,
+`-`, `_`, `/` and spaces ignored; a `.` in a flashrom name matches any
+character) where an edit (a character changed, added, dropped, or two swapped)
+costs 4, and a character that one name has past the end of the other costs 1.
+Part numbers go from the general to the specific: vendor, family, density,
+variant, then package, temperature and ordering suffixes. So an order code is
+close to its part (`W25Q128JVSIQ` is 3 from `W25Q128JV`), while a different
+variant or density costs a full edit (`W25Q128FV`: 7). Equal scores go to the
+name sharing more leading characters. Each chip is listed once, by its closest
+name.
+
+On the site, the [All chips](https://spiflash.readthedocs.io/en/latest/chips/)
+page has a box that lists the nearest names as you type, scored the same way.
+The filter box above every table of parts takes the same patterns: words are
+matched anywhere in the row, a word with `*`, `?` or `[...]` is a glob for a
+part name (`W25Q128*`), and `/.../` is a regular expression on the part names
+(`/^MX25[LU]128/`).
+
 ## Opcodes
 
 ```python

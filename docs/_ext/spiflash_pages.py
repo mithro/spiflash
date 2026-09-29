@@ -465,6 +465,15 @@ def _sources(db: Database, f: Flash) -> list[str]:
     return out
 
 
+#: What the filter box above a table of parts takes (tables.js).
+FILTER_SYNTAX = (
+    "Every word must be somewhere in the row (an id, a part, a vendor, a "
+    "size); a word with `*`, `?` or `[...]` in it is a glob for a whole part "
+    "name (`W25Q128*`, `MX25?12835F`); `/.../` is a regular expression "
+    "searched for in the part names (`/^MX25[LU]128/`)."
+)
+
+
 def parts_table(
     flashes: list[Flash],
     slugs: dict[int, str],
@@ -472,7 +481,10 @@ def parts_table(
     *,
     with_vendor: bool = False,
     vendor_prefix: str = "../vendors/",
+    nearest: bool = False,
 ) -> str:
+    """The table of chips on the vendor and All chips pages; with
+    ``nearest``, tables.js puts a nearest-part-name box above it."""
     rows = []
     for f in flashes:
         link = table_id(f, f"{prefix}{slugs[id(f)]}.md")
@@ -511,6 +523,8 @@ def parts_table(
         ]
     )
     classes = "sf-table sf-filterable sf-parts" + (" sf-with-vendor" if with_vendor else "")
+    if nearest:
+        classes += " sf-nearest"
     return list_table(header, rows, classes)
 
 
@@ -538,7 +552,7 @@ def vendor_page(db: Database, vendor: str, flashes: list[Flash], slugs: dict[int
     sizes = sorted({f.size for f in flashes if f.size})
     if sizes:
         out.append(f"Capacities from {human_size(sizes[0])} to {human_size(sizes[-1])}.\n")
-    out.append("Type in the box to filter; click a heading to sort.\n")
+    out.append(f"Type in the box to filter. {FILTER_SYNTAX} Click a heading to sort.\n")
     out.append(parts_table(flashes, slugs, "../chips/"))
     out.append(
         "\n```{toctree}\n:hidden:\n\n"
@@ -575,12 +589,19 @@ def chips_index(flashes: list[Flash], slugs: dict[int, str]) -> str:
     return "\n".join(
         [
             "# All chips\n",
+            f"Every one of the {len(flashes)} chip ids in the database.\n",
             (
-                f"Every one of the {len(flashes)} chip ids in the database. "
-                "Type in the box to filter (by id, part, vendor or size); "
-                "click a heading to sort.\n"
+                "For a part name that is not here (a marking read off a chip, an "
+                "order code, a typo), type it in the first box: it lists the chips "
+                "with the closest names, the closest first, scored as "
+                "`spiflash find --nearest` scores them "
+                "([how](../usage.md#searching-part-names)).\n"
             ),
-            parts_table(flashes, slugs, "", with_vendor=True),
+            (
+                f"Type in the second box to filter the table. {FILTER_SYNTAX} "
+                "Click a heading to sort.\n"
+            ),
+            parts_table(flashes, slugs, "", with_vendor=True, nearest=True),
         ]
     )
 

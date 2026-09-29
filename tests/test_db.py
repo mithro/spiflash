@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from datetime import UTC, datetime
 from importlib import resources
@@ -20,9 +21,11 @@ from spiflash.model import (
     Flash,
     Record,
     Voltage,
+    name_distance,
     name_matches,
     parse_id,
     part_names,
+    squash_name,
     strip_continuation,
 )
 from spiflash.opcodes import OPERATIONS
@@ -515,3 +518,134 @@ def test_every_shipped_sfdp_dump_decodes() -> None:
         assert tables.bfpt is not None, r.name
         assert tables.features() <= r.features, r.name
         assert "sfdp" in r.features
+
+
+# --- searching part names ----------------------------------------------------
+
+
+def test_find_regex() -> None:
+    found = spiflash.find_regex("^W25Q(64|128)J[VW]$")
+    assert {"ef4017", "ef4018", "ef6018", "ef8018"} <= {f.key for f in found}
+    assert all(any(n.startswith(("W25Q64J", "W25Q128J")) for n in f.names) for f in found)
+    # Unanchored and case-blind, like grep -i; the names are as written.
+    assert spiflash.find_regex("25q128jv") == spiflash.find_regex("W25Q128JV")
+    assert "ef4018" in [f.key for f in spiflash.find_regex(r"^W25Q128\.V$")]
+    assert spiflash.find_regex("^NOT-A-PART$") == []
+
+
+def test_find_regex_compiled_keeps_its_flags() -> None:
+    db = spiflash.database()
+    assert db.find_regex(re.compile("w25q128jv")) == []
+    assert db.find_regex(re.compile("W25Q128JV"))
+
+
+def test_find_regex_error() -> None:
+    with pytest.raises(ValueError, match=r"not a regular expression: '\(' \(missing \)"):
+        spiflash.find_regex("(")
+
+
+@pytest.mark.parametrize(
+    ("pattern", "chip"),
+    [
+        ("W25Q128*", "ef4018"),
+        ("w25q128?v", "ef4018"),
+        ("MX25?12835F", "c22018"),
+        ("S25FL*S", "010220"),
+        ("W25N01G[VW]", "efaa21"),  # SPI NAND
+        ("SST25VF040B.REMS", "rems:bf8d"),  # a legacy id
+        ("W25Q 128 JV", "ef4018"),
+    ],
+)
+def test_find_glob(pattern: str, chip: str) -> None:
+    assert chip in [f.key for f in spiflash.find_glob(pattern)]
+
+
+def test_find_glob_covers_the_whole_name() -> None:
+    assert spiflash.find_glob("25Q128JV") == []
+    assert len(spiflash.find_glob("W25Q128")) < len(spiflash.find_glob("W25Q128*"))
+    for f in spiflash.find_glob("W25Q[!0-9]*"):
+        assert any(n[4].isalpha() for n in f.names if n.startswith("W25Q"))
+    assert spiflash.find_glob("") == []
+    assert spiflash.find_glob("[") == []  # a lone [ is itself
+
+
+def test_find_nearest_order_code() -> None:
+    near = spiflash.find_nearest("W25Q128JVSIQ", 4)
+    assert [(m.flash.key, m.name, m.score) for m in near[:2]] == [
+        ("ef4018", "W25Q128JV", 3),
+        ("ef7018", "W25Q128JV", 3),
+    ]
+    assert near[0].reason == "the query adds SIQ"
+    assert [m.score for m in near] == sorted(m.score for m in near)
+    # flashrom's wildcards cover the whole of an order code.
+    (m,) = spiflash.find_nearest("S25FL128SAGMFI001", 1)
+    assert (m.name, m.flash.key, m.score, m.reason) == (
+        "S25FL128S......0",
+        "012018",
+        1,
+        "the query adds 1",
+    )
+
+
+def test_find_nearest_typos_and_separators() -> None:
+    (m,) = spiflash.find_nearest("W25Q182JV", 1)  # two digits swapped: one edit
+    assert (m.name, m.score, m.reason) == ("W25Q128JV", 4, "differs after W25Q1")
+    (m,) = spiflash.find_nearest("mx25l6406e", 1)
+    assert (m.name, m.flash.key, m.score, m.reason) == ("MX25L6406E", "c22017", 0, "the same part")
+    (m,) = spiflash.find_nearest("W25Q16JV IM", 1)  # the database has W25Q16JV-IM
+    assert (m.name, m.score) == ("W25Q16JV-IM", 0)
+    (m,) = spiflash.find_nearest("W25N01GVZEIG", 1)  # SPI NAND
+    assert (m.name, m.flash.key, m.flash.type) == ("W25N01GV", "efaa21", "nand")
+    (m,) = spiflash.find_nearest("GD25Q6", 1)
+    assert (m.name, m.reason) == ("GD25Q64", "the name adds 4")
+    assert spiflash.find_nearest("25Q64", 1)[0].reason == "differs from the first character"
+
+
+def test_find_nearest_one_per_chip() -> None:
+    near = spiflash.find_nearest("W25Q128JV", 50)
+    keys = [m.flash.key for m in near]
+    assert len(keys) == len(set(keys)) == 50
+    # Equal scores: the longer shared start, then a name without wildcards.
+    assert near[0].name == "W25Q128JV"
+
+
+def test_find_nearest_edge_cases() -> None:
+    assert spiflash.find_nearest("") == []
+    assert spiflash.find_nearest("--") == []
+    assert len(spiflash.find_nearest("W25Q")) == 10
+    with pytest.raises(ValueError, match="count must be at least 1, not 0"):
+        spiflash.find_nearest("W25Q", 0)
+
+
+@pytest.mark.parametrize(
+    ("query", "name", "cost", "common"),
+    [
+        ("W25Q128JV", "W25Q128JV", 0, 9),
+        ("w25q128-jv", "W25Q128JV", 0, 9),
+        ("W25Q128JV", "W25Q128.V", 0, 9),
+        ("W25Q128JVSIQ", "W25Q128JV", 3, 9),
+        ("W25Q128JVSIQ", "W25Q128", 5, 7),
+        ("W25Q128JVSIQ", "W25Q128JW", 7, 8),
+        ("W25Q128JVSIQ", "W25Q128FV", 7, 7),
+        ("W25Q128", "W25Q128JV", 2, 7),
+        ("W25Q182JV", "W25Q128JV", 4, 5),
+        ("X25Q128JV", "W25Q128JV", 4, 0),
+        ("", "W25Q", 4, 0),
+    ],
+)
+def test_name_distance(query: str, name: str, cost: int, common: int) -> None:
+    assert name_distance(query, name) == (cost, common)
+
+
+def test_squash_name() -> None:
+    assert squash_name("w25q16jv-im") == "W25Q16JVIM"
+    assert squash_name("N25Q128_3V / x") == "N25Q1283VX"
+    assert squash_name("W25Q128.V") == "W25Q128V"
+    assert squash_name("W25Q128.V", wildcards=True) == "W25Q128.V"
+
+
+def test_name_match_to_json() -> None:
+    (m,) = spiflash.find_nearest("W25Q128JVSIQ", 1)
+    doc = m.to_json()
+    assert (doc["name"], doc["score"], doc["reason"]) == ("W25Q128JV", 3, "the query adds SIQ")
+    assert doc["chip"]["jedec_id"] == "ef4018"

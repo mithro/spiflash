@@ -171,6 +171,19 @@ table.sf-sortable th[aria-sort="descending"]::after { content: " ▼"; color: va
 }
 .sf-filter input:focus { outline: 2px solid var(--sf-accent); outline-offset: 1px; }
 .sf-filter .sf-count { color: var(--sf-muted); font-size: 0.85em; }
+.sf-filter input[aria-invalid="true"] { outline: 2px solid #dc2626; outline-offset: 1px; }
+/* The nearest part names (the All chips page), the closest first. */
+.sf-nearest-list { margin: 0 0 1em; padding-left: 0; list-style: none; }
+.sf-nearest-list li { margin: 0.2em 0; }
+.sf-nearest-score {
+  display: inline-block;
+  min-width: 2.5ch;
+  margin-right: 0.6em;
+  text-align: right;
+  color: var(--sf-muted);
+  font-variant-numeric: tabular-nums;
+}
+.sf-nearest-name { font-weight: 600; margin-right: 0.3em; }
 
 .sf-why ul { margin-top: 0.3em; }
 .sf-why li { margin: 0.15em 0; }
