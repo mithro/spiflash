@@ -19,11 +19,12 @@ and `8D` marks double transfer rate.
 | OpenOCD | the columns of its table: read, fastest read, page program, sector erase and chip erase |
 | openFPGALoader | what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
 | QEMU | what its model ({upstream}`qemu:hw/block/m25p80.c`) decodes for every part (read, fast read, page program, sector erase, and chip erase as 0xc7 and 0x60), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for ({upstream}`qemu:hw/block/m25p80_sfdp.c`), everything those tables list, with the part's own dummy clocks |
+| Zephyr | the board's devicetree: the reads and erase types in the chip's own SFDP table where the board copies it (`sfdp-bfp`, JESD216's Basic Flash Parameter table), and the read and program modes the board uses (`readoc`, `writeoc`, `use-fast-read`, `enter-4byte-addr`, ...) |
 
 The opcode values themselves are read from each upstream's own headers
 (`SPINOR_OP_*`, `JEDEC_*`, `SPIFLASH_READ_ID`, `FLASH_*`, QEMU's `FlashCMD`
-enum) or SFDP dumps, and checked against the table below when the data is
-built: a disagreement fails the build.
+enum), or from the SFDP tables (QEMU, Zephyr), and checked against the table
+below when the data is built: a disagreement fails the build.
 
 :::{important}
 A listed operation is one some source says the part has. **An operation that

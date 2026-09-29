@@ -33,6 +33,7 @@ _ALIASES = {
     "gd": "GigaDevice",
     "gigadevice": "GigaDevice",
     "heyangtek": "HeYangTek",
+    "infineon": "Infineon",
     "intel": "Intel",
     "intel/numonyx": "Intel",  # QEMU's heading for the S33 parts
     "issi": "ISSI",
@@ -42,6 +43,7 @@ _ALIASES = {
     "micron": "Micron",
     "micron/numonyx/st": "Micron",
     "mt35xu": "Micron",  # U-Boot's CONFIG_SPI_FLASH_MT35XU block
+    "mxicy": "Macronix",  # Macronix's devicetree vendor prefix (Zephyr)
     "nantronics": "Nantronics",
     "paragon": "Paragon",
     "pmc": "PMC",

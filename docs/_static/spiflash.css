@@ -43,7 +43,7 @@ h1 + p .sf-id { font-size: 1em; }
 .sf-src-openocd { background: #0f766e; }
 .sf-src-openfpgaloader { background: #be185d; }
 .sf-src-qemu { background: #f97316; }
-
+.sf-src-zephyr { background: #4d7c0f; }
 /* A linked label (to the upstream line) and the page's own source. */
 a.sf-src-link { text-decoration: none; }
 a.sf-src-link:hover .sf-src { filter: brightness(1.2); text-decoration: underline; }

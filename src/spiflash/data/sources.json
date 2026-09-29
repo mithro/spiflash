@@ -112,6 +112,21 @@
    ],
    "records": 334,
    "url": "https://github.com/u-boot/u-boot"
+  },
+  "zephyr": {
+   "branch": "main",
+   "browse": "https://github.com/zephyrproject-rtos/zephyr",
+   "commit": "9f0253dcc66ccecc92a699dd81cb1034c3f6875b",
+   "date": "2026-09-28T19:40:46-04:00",
+   "license": "Apache-2.0",
+   "paths": [
+    "boards/**/*.dts",
+    "boards/**/*.dtsi",
+    "boards/**/*.overlay",
+    "dts/**/*.dtsi"
+   ],
+   "records": 99,
+   "url": "https://github.com/zephyrproject-rtos/zephyr"
   }
  }
 }

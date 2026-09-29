@@ -67,9 +67,11 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`tools/update_db.py` | fetch, extract, write the data |
 | {repo}`tools/import_datasheets.py` | write the datasheet links from a datasheet manifest |
 | {repo}`tools/spiflash_extract/cparse.py` | just enough C: find tables, split initialisers, evaluate integer expressions (`SZ_16M`, `BIT(3)`, `64 * 1024`) |
+| {repo}`tools/spiflash_extract/dts.py` | just enough devicetree source: the nodes of a `.dts`, `.dtsi` or `.overlay`, their labels and properties, without the C preprocessor |
+| {repo}`tools/spiflash_extract/sfdp.py` | a JESD216 Basic Flash Parameter table (SFDP), decoded |
 | {repo}`tools/spiflash_extract/record.py` | the common record every extractor writes |
 | {repo}`tools/spiflash_extract/ops.py` | each record's opcodes, values checked against {repo}`src/spiflash/opcodes.py` |
-| {repo}`linux.py <tools/spiflash_extract/linux.py>`, {repo}`uboot.py <tools/spiflash_extract/uboot.py>`, {repo}`flashrom.py <tools/spiflash_extract/flashrom.py>`, {repo}`openocd.py <tools/spiflash_extract/openocd.py>`, {repo}`openfpgaloader.py <tools/spiflash_extract/openfpgaloader.py>`, {repo}`qemu.py <tools/spiflash_extract/qemu.py>` | one extractor per upstream format |
+| {repo}`linux.py <tools/spiflash_extract/linux.py>`, {repo}`uboot.py <tools/spiflash_extract/uboot.py>`, {repo}`flashrom.py <tools/spiflash_extract/flashrom.py>`, {repo}`openocd.py <tools/spiflash_extract/openocd.py>`, {repo}`openfpgaloader.py <tools/spiflash_extract/openfpgaloader.py>`, {repo}`qemu.py <tools/spiflash_extract/qemu.py>`, {repo}`zephyr.py <tools/spiflash_extract/zephyr.py>` | one extractor per upstream format |
 | {repo}`tools/spiflash_extract/fetch.py` | sparse, blobless, depth-1 fetch of one commit |
 | {repo}`tests/fixtures/` | cut-down copies of each upstream file, verbatim |
 | {repo}`docs/` | the Read the Docs site, and {repo}`docs/_ext/spiflash_pages.py`, which writes its generated pages: {repo}`opcode_pages.py <docs/_ext/opcode_pages.py>` the operation pages, {repo}`opcode_timing.py <docs/_ext/opcode_timing.py>` their WaveDrom diagrams, {repo}`issue_checks.py <docs/_ext/issue_checks.py>` and {repo}`issue_pages.py <docs/_ext/issue_pages.py>` the data issues checks and pages, {repo}`page_markup.py <docs/_ext/page_markup.py>` the Markdown helpers they share; {repo}`alias_pages.py <docs/_ext/alias_pages.py>` writes `chips/<PART>.html` for each part name after the build, a redirect to its chip's page or, for a name several ids share, a page listing them |
@@ -130,11 +132,12 @@ A new vendor spelling fails `test_vendor_spellings_all_canonical`: add it to
    {py:data}`update_db.EXTRACTORS`.
 3. Tests on a miniature tree in {repo}`tests/fixtures/` and
    {repo}`tests/test_extract.py`.
-4. Its place in the `Source` enum ({repo}`src/spiflash/enums.py`; the members
-   are in priority order, and each has a label) and a badge colour in
-   {repo}`docs/_static/spiflash.css`; a row in the README and
-   {repo}`docs/SOURCES.md`; the source sets in {repo}`tests/test_db.py`; and
-   any new vendor spelling in {repo}`src/spiflash/vendors.py`.
+4. A member of `Source` ({repo}`src/spiflash/enums.py`), declared in its place
+   in the priority order, with its label; a badge colour
+   (`.sf-src-<name>` in {repo}`docs/_static/spiflash.css`); a row in the
+   README and {repo}`docs/SOURCES.md`; the source sets in
+   {repo}`tests/test_db.py`; and any new vendor spelling in
+   {repo}`src/spiflash/vendors.py`.
 
 ## Building the Debian package locally
 

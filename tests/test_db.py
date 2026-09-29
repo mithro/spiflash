@@ -67,6 +67,7 @@ def test_every_source_is_present() -> None:
         "openocd",
         "openfpgaloader",
         "qemu",
+        "zephyr",
         "jep106",
     }
     for name, s in spiflash.sources().items():
@@ -103,6 +104,7 @@ def test_w25q128() -> None:
         "u-boot",
         "openocd",
         "openfpgaloader",
+        "zephyr",
     }
     assert f.type == "nor"
     assert f.family == "jedec"
@@ -192,7 +194,9 @@ def test_by_manufacturer_uses_any_spelling() -> None:
 def test_every_jedec_flash_has_a_name_and_manufacturer() -> None:
     for f in spiflash.flashes():
         assert f.names, f.id_hex
-        assert f.manufacturer, f.id_hex
+        # Zephyr's devicetree often names no maker, and the id's first byte
+        # is not taken as naming one; every other source names one.
+        assert f.manufacturer or set(f.sources) == {Source.ZEPHYR}, f.id_hex
 
 
 def test_vendor_spellings_all_canonical() -> None:
@@ -265,7 +269,8 @@ def test_unknown_source_is_rejected() -> None:
 def test_sources_are_in_priority_order() -> None:
     assert [s.priority for s in Source] == list(range(len(Source)))
     assert Source.FLASHROM.priority < Source.LINUX.priority < Source.OPENFPGALOADER.priority
-    assert Source.QEMU.priority == len(Source) - 1
+    # QEMU, then Zephyr last: board descriptions, not a curated table of parts.
+    assert list(Source)[-2:] == [Source.QEMU, Source.ZEPHYR]
     assert Source.QEMU.label == "QEMU"
     assert Source.UBOOT.label == "U-Boot"
     assert Source("u-boot") is Source.UBOOT

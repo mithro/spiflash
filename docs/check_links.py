@@ -34,7 +34,8 @@ PATH = re.compile(r"^(?:\.?[\w.*-]+/[\w.*-]+/[\w./*-]*|[\w.*-]+/[\w.*-]*/|[\w.*-
 # GitHub repositories (owner/repo) in inline code, for the owners these docs
 # mention.
 REPO = re.compile(
-    r"^(?:mithro|litex-hub|torvalds|u-boot|flashrom|SourceArcade|openocd-org|trabucayre|qemu)"
+    r"^(?:mithro|litex-hub|torvalds|u-boot|flashrom|SourceArcade|openocd-org|trabucayre"
+    r"|qemu|zephyrproject-rtos)"
     r"/[\w.-]+$"
 )
 # A file path in running text.
