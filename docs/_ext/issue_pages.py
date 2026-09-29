@@ -49,9 +49,10 @@ KIND_NOTES = {
         "when one side has it, the other side is likely wrong."
     ),
     IssueKind.MANUFACTURER: (
-        "Mostly company history rather than errors: Atmel's serial flash went to "
-        "Adesto, then to Dialog and Renesas; Spansion merged with Cypress, which "
-        "Infineon bought. The site uses the name most sources give."
+        f"Mostly company history rather than errors: {vendor_link('Atmel')}'s serial "
+        f"flash went to {vendor_link('Adesto')}, then to Dialog and Renesas; "
+        f"{vendor_link('Spansion')} merged with {vendor_link('Cypress')}, which Infineon "
+        "bought. The site uses the name most sources give."
     ),
     IssueKind.DATASHEET: (
         "The check looks for the id's bytes in the text of each of the part's "
