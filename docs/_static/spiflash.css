@@ -43,6 +43,10 @@ h1 + p .sf-id { font-size: 1em; }
 .sf-src-openocd { background: #0f766e; }
 .sf-src-openfpgaloader { background: #be185d; }
 .sf-src-zephyr { background: #4d7c0f; }
+/* A linked label (to the upstream line) and the page's own source. */
+a.sf-src-link { text-decoration: none; }
+a.sf-src-link:hover .sf-src { filter: brightness(1.2); text-decoration: underline; }
+.sf-src-mine { box-shadow: 0 0 0 2px var(--color-background-primary, #fff), 0 0 0 4px currentColor; color: #fff; outline: 2px solid #111827; outline-offset: 1px; }
 
 /* Summary cards on a chip page. */
 .sf-cards { margin: 1rem 0 1.5rem; }
@@ -192,3 +196,7 @@ table.sf-datasheets td:first-child { min-width: 16em; }
 /* Data issues: the id stays on one line; the answers wrap. */
 table.sf-issues td:first-child { white-space: nowrap; }
 table.sf-issues td:last-child { min-width: 22em; }
+/* One answer per line: the value, then the sources' labels. */
+table.sf-issues td:last-child p { margin: 0.15em 0; line-height: 1.9; }
+table.sf-issues td:last-child p + p { border-top: 1px dashed var(--color-background-border, #ddd); padding-top: 0.15em; }
+table.sf-chip-issues td:first-child { white-space: normal; min-width: 9em; }

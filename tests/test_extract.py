@@ -77,10 +77,19 @@ def linux_tree(tmp_path: Path) -> Path:
     )
 
 
+def test_part_case() -> None:
+    assert record.part_case("w25q128fv/jv") == "W25Q128FV/JV"
+    assert record.part_case("n25q256 1.8v") == "N25Q256 1.8V"
+    assert record.part_case("S25FL128S_UL Uniform 128 kB Sectors") == (
+        "S25FL128S_UL Uniform 128 kB Sectors"
+    )
+    assert record.part_case("sst25vf512") == "SST25VF512"
+
+
 def test_linux_nor(linux_tree: Path) -> None:
     recs = linux.extract_nor(linux_tree)
     r = by_name(recs)
-    w = r["w25q128"]
+    w = r["W25Q128"]
     assert w["id"] == "ef4018"
     assert w["ext_id"] is None
     assert w["vendor"] == "winbond"
@@ -113,21 +122,21 @@ def test_linux_nor(linux_tree: Path) -> None:
 
     assert "RDSFDP" in ops(j)
     assert "SE" not in ops(j)
-    big = r["w25q512jvq"]
+    big = r["W25Q512JVQ"]
     assert {"4byte_addr", "4byte_opcodes", "otp"} <= set(big["features"])
     assert ops(big)["READ_1_1_1_4B"] == (0x13, "SPI_NOR_4B_OPCODES")
     assert ops(big)["SE_4B"] == (0xDC, "SPI_NOR_4B_OPCODES")
     assert ops(big)["PP_1_1_1_4B"] == (0x12, "SPI_NOR_4B_OPCODES")
 
     # Neither a name nor a comment: named by vendor and id.
-    assert r["winbond-ef60"]["notes"] == ["Linux gives this entry no name"]
+    assert r["WINBOND-EF60"]["notes"] == ["Linux gives this entry no name"]
 
-    s = r["s25fl128s1"]
+    s = r["S25FL128S1"]
     assert s["id"] == "012018"
     assert s["ext_id"] == "4d0180"
     assert "USE_CLSR" in s["flags"]
 
-    n = r["everspin-nonjedec"]
+    n = r["EVERSPIN-NONJEDEC"]
     assert n["id"] is None
     assert n["id_method"] is None
     assert "no_erase" in n["features"]
@@ -187,8 +196,8 @@ UBOOT_IDS = fixture("u-boot/drivers/mtd/spi/spi-nor-ids.c")
 def test_uboot(tmp_path: Path) -> None:
     write(tmp_path, {uboot.IDS: UBOOT_IDS, uboot.FLAGS_H: UBOOT_FLAGS, uboot.SPINOR_H: SPINOR_H})
     r = by_name(uboot.extract(tmp_path))
-    assert set(r) == {"w25q128", "w25q512", "s25fl128s", "s25sl12800", "mb85rs256ty"}
-    w = r["w25q128"]
+    assert set(r) == {"W25Q128", "W25Q512", "S25FL128S", "S25SL12800", "MB85RS256TY"}
+    w = r["W25Q128"]
     assert w["vendor"] == "winbond"
     assert w["id"] == "ef4018"
     assert w["size"] == 16 << 20
@@ -204,18 +213,18 @@ def test_uboot(tmp_path: Path) -> None:
         "CHIP_ERASE",
     }
     # SPI_NOR_QUAD_READ gives U-Boot's PP_1_1_4 too; 4B_OPCODES the 4-byte forms.
-    w512 = ops(r["w25q512"])
+    w512 = ops(r["W25Q512"])
     assert w512["PP_1_1_4"] == (0x32, "SPI_NOR_QUAD_READ")
     assert w512["PP_1_1_4_4B"] == (0x34, "SPI_NOR_4B_OPCODES")
-    assert "READ_1_1_1_FAST" not in ops(r["s25fl128s"])  # SPI_NOR_NO_FR
-    assert {"4byte_addr", "4byte_opcodes", "quad_read"} <= set(r["w25q512"]["features"])
-    s = r["s25fl128s"]
+    assert "READ_1_1_1_FAST" not in ops(r["S25FL128S"])  # SPI_NOR_NO_FR
+    assert {"4byte_addr", "4byte_opcodes", "quad_read"} <= set(r["W25Q512"]["features"])
+    s = r["S25FL128S"]
     assert s["vendor"] == "spansion"
     assert s["ext_id"] == "4d0180"
     assert "fast_read" not in s["features"]
-    assert r["s25sl12800"]["ext_id"] == "0300"
-    assert r["s25sl12800"]["sector_size"] == 256 * 1024
-    f = r["mb85rs256ty"]
+    assert r["S25SL12800"]["ext_id"] == "0300"
+    assert r["S25SL12800"]["sector_size"] == 256 * 1024
+    f = r["MB85RS256TY"]
     assert f["vendor"] == "fujitsu"
     assert f["id"] == "047f25"
     assert f["size"] == 32 * 1024
@@ -369,13 +378,13 @@ def test_openocd(tmp_path: Path) -> None:
         {openocd.SPI_C: OPENOCD_SPI_C, openocd.SPI_H: OPENOCD_SPI_H, openocd.JEP106: JEP106_INC},
     )
     r = by_name(openocd.extract(tmp_path))
-    assert set(r) == {"w25q128fv/jv", "is25wp512m", "gd25q512", "s25fl008", "fm25v02"}
+    assert set(r) == {"W25Q128FV/JV", "IS25WP512M", "GD25Q512", "S25FL008", "FM25V02"}
     # A byte OpenOCD holds that is no known operation is noted, not guessed.
-    s008 = r["s25fl008"]
+    s008 = r["S25FL008"]
     assert "OpenOCD's qread_cmd is 0x08, which is not a known operation" in s008["notes"]
     assert "quad_read" not in s008["features"]
-    assert set(ops(r["fm25v02"])) == {"RDID", "READ_1_1_1", "PP_1_1_1"}
-    w = r["w25q128fv/jv"]
+    assert set(ops(r["FM25V02"])) == {"RDID", "READ_1_1_1", "PP_1_1_1"}
+    w = r["W25Q128FV/JV"]
     assert w["vendor"] == "win"
     assert w["id"] == "ef4018"
     assert ops(w) == {
@@ -386,17 +395,17 @@ def test_openocd(tmp_path: Path) -> None:
         "SE": (0xD8, "erase_cmd"),
         "CHIP_ERASE": (0xC7, "chip_erase_cmd"),
     }
-    assert ops(r["is25wp512m"])["READ_1_4_4_4B"] == (0xEC, "qread_cmd")
+    assert ops(r["IS25WP512M"])["READ_1_4_4_4B"] == (0xEC, "qread_cmd")
     assert w["erasers"] == [
         {"opcode": 0xD8, "blocks": [[65536, 256]]},
         {"opcode": 0xC7, "blocks": [[16 << 20, 1]]},
     ]
     assert w["features"] == ["erase_64k", "quad_read"]
-    assert "4byte_addr" in r["is25wp512m"]["features"]
-    g = r["gd25q512"]
+    assert "4byte_addr" in r["IS25WP512M"]["features"]
+    g = r["GD25Q512"]
     assert g["features"] == ["erase_4k"]
     assert "CHIP_ERASE" not in ops(g)
-    f = r["fm25v02"]
+    f = r["FM25V02"]
     assert f["id"] == "7f7f7f7f7f7fc22200"
     assert f["features"] == ["no_erase"]
     assert f["notes"] == ["exists ?", "FRAM"]
@@ -498,17 +507,17 @@ ZEPHYR = FIXTURES / "zephyr"
 def test_zephyr() -> None:
     r = by_name(zephyr.extract(ZEPHYR))
     assert set(r) == {
-        "mx25r6435f",
-        "is25wp064",
-        "w25q128jw",
-        "mx25lm51245",
-        "is25lp128",
-        "gd25lq32d",
-        "mx25l3233f",
+        "MX25R6435F",
+        "IS25WP064",
+        "W25Q128JW",
+        "MX25LM51245",
+        "IS25LP128",
+        "GD25LQ32D",
+        "MX25L3233F",
     }
     # nordic,qspi-nor with the chip's own SFDP table: size in bits, page and
     # erase types from the table, readoc/writeoc as the modes used.
-    m = r["mx25r6435f"]
+    m = r["MX25R6435F"]
     assert (m["file"], m["line"]) == ("boards/nordic/nrf52840dk/nrf52840dk_nrf52840.dts", 20)
     assert (m["id"], m["vendor"], m["size"], m["page_size"]) == ("c22817", None, 8 << 20, 256)
     assert m["erasers"] == [
@@ -533,10 +542,10 @@ def test_zephyr() -> None:
         "MX25R64 supports all readoc options",
     ]
     # flexspi: DT_SIZE_M(8 * 8) bits; the name from the soc-nv-flash inside.
-    assert r["is25wp064"]["size"] == 8 << 20
+    assert r["IS25WP064"]["size"] == 8 << 20
     # The overlay leaves the compatible to the board's .dts, and deletes and
     # replaces the node inside.
-    w = r["w25q128jw"]
+    w = r["W25Q128JW"]
     assert (w["file"], w["line"]) == (
         "boards/nxp/mimxrt1060_evk/mimxrt1060_evk_mimxrt1062_qspi_C.overlay",
         53,
@@ -544,21 +553,21 @@ def test_zephyr() -> None:
     assert (w["id"], w["size"]) == ("ef6018", 16 << 20)
     # The name from the comment on the jedec-id line; the maker from a
     # one-maker binding; the MSPI mode.
-    x = r["mx25lm51245"]
+    x = r["MX25LM51245"]
     assert (x["vendor"], x["size"], x["features"]) == ("mxicy", 64 << 20, ["octal_read"])
     assert "mspi-io-mode=MSPI_IO_MODE_OCTAL" in x["flags"]
     # A descriptive compatible names the part and its maker (here with an id
     # that is not ISSI's, kept as the board has it).
-    i = r["is25lp128"]
+    i = r["IS25LP128"]
     assert (i["vendor"], i["id"], i["size"]) == ("issi", "966018", 16 << 20)
     # bflb: no size; use-sfdp says the part answers SFDP.
-    g = r["gd25lq32d"]
+    g = r["GD25LQ32D"]
     assert (g["size"], g["features"]) == (None, ["erase_4k", "sfdp"])
     assert "erase-block-size=4096" in g["flags"]
     assert set(ops(g)) == {"RDID", "RDSFDP"}
     # Two boards with the same node are one record, which names the other.
     # Its table is JESD216's first: nine DWORDs, no page size.
-    f = r["mx25l3233f"]
+    f = r["MX25L3233F"]
     assert (f["size"], f["page_size"]) == (4 << 20, None)
     assert f["notes"] == ["Also in boards/particle/boron/dts/mesh_feather.dtsi:21"]
 
@@ -585,7 +594,7 @@ def test_zephyr_node_values(tmp_path: Path) -> None:
             dpd-wakeup-sequence = <30000>, <20>, <30000>;
         };""",
     )
-    assert (r["name"], r["id"], r["ext_id"], r["page_size"]) == ("w25q256jv", "ef4019", "00", 256)
+    assert (r["name"], r["id"], r["ext_id"], r["page_size"]) == ("W25Q256JV", "ef4019", "00", 256)
     assert r["size"] is None  # size-in-bytes is nordic,qspi-nor's alone
     assert r["features"] == ["4byte_addr", "4byte_opcodes", "fast_read", "lock"]
     assert set(ops(r)) == {"RDID", "READ_1_1_1_FAST", "RDFSR", "EN4B"}
@@ -676,7 +685,7 @@ def test_zephyr_skips(tmp_path: Path) -> None:
         };""",
     )
     assert (nand["name"], nand["type"], nand["size"], nand["opcodes"]) == (
-        "w25n01gv",
+        "W25N01GV",
         "nand",
         128 << 20,
         [],

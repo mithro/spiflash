@@ -24,6 +24,8 @@ from sphinx.util.docutils import SphinxRole
 from sphinx.util.nodes import split_explicit_title
 
 import spiflash
+from issue_checks import Issue, find
+from issue_pages import chip_issues
 from issue_pages import generate_all as issue_pages
 from opcode_pages import generate_all as operation_pages
 from page_markup import (
@@ -57,7 +59,9 @@ if TYPE_CHECKING:
     from spiflash import Database, Flash
 
 
-def chip_page(db: Database, f: Flash, vendor_slug: str) -> str:
+def chip_page(
+    db: Database, f: Flash, vendor_slug: str, slugs: dict[int, str], issues: list[Issue]
+) -> str:
     out: list[str] = []
     kind = "SPI NAND" if f.type == "nand" else "SPI NOR"
     out.append(f"# {esc(title_of(f))}\n")
@@ -80,8 +84,8 @@ def chip_page(db: Database, f: Flash, vendor_slug: str) -> str:
     out += _capabilities(f)
     out += _opcodes(f)
     out += _erase_layouts(f)
-    out += _disagreements(f)
     out += _sources(db, f)
+    out += chip_issues(db, slugs, f, issues)
     out.append(f"\n[All {esc(vendor_of(f))} parts](../vendors/{vendor_slug}.md)\n")
     return "\n".join(out)
 
@@ -253,30 +257,6 @@ def _erase_layouts(f: Flash) -> list[str]:
         list_table(["Source", "As", "Opcode", "Operation", "Blocks"], rows, "sf-table"),
         "",
     ]
-
-
-def _conflict_value(attr: str, value: Any) -> str:
-    if attr == "voltage":
-        return volts(value)
-    return size_text(value) if isinstance(value, int) else esc(str(value))
-
-
-def _disagreements(f: Flash) -> list[str]:
-    if not f.conflicts:
-        return []
-    out = [":::{warning}\nThe sources disagree:\n"]
-    for attr, vals in f.conflicts.items():
-        said = "; ".join(
-            f"{_conflict_value(attr, v)} ({', '.join(source_label(s) for s in ss)})"
-            for v, ss in vals.items()
-        )
-        out.append(f"- **{attr.replace('_', ' ')}**: {said}")
-    out.append(
-        "\nParts sharing an id often differ in these; the values above are what most "
-        "sources give. [Data issues](../issues/index.md) lists every such "
-        "disagreement.\n:::\n"
-    )
-    return out
 
 
 def _sources(db: Database, f: Flash) -> list[str]:
@@ -518,6 +498,7 @@ def generate(srcdir: Path) -> None:
         msg = "two chips share a page name"
         raise ValueError(msg)
 
+    issues = find(db)
     chips_dir, vendors_dir, ops_dir = srcdir / "chips", srcdir / "vendors", srcdir / "opcodes"
     issues_dir = srcdir / "issues"
     wanted: set[Path] = set()
@@ -529,12 +510,12 @@ def generate(srcdir: Path) -> None:
     for v, fl in vendors.items():
         page(vendors_dir / f"{vslug[v]}.md", vendor_page(db, v, fl, slugs))
         for f in fl:
-            page(chips_dir / f"{slugs[id(f)]}.md", chip_page(db, f, vslug[v]))
+            page(chips_dir / f"{slugs[id(f)]}.md", chip_page(db, f, vslug[v], slugs, issues))
     page(vendors_dir / "index.md", vendors_index(vendors, vslug))
     page(chips_dir / "index.md", chips_index(list(db.flashes), slugs))
     for name, text in operation_pages(db).items():
         page(ops_dir / name, text)
-    for name, text in issue_pages(db, slugs).items():
+    for name, text in issue_pages(db, slugs, issues).items():
         page(issues_dir / name, text)
     # Fragments the hand-written pages include (docs/_generated is excluded
     # from the build as pages of its own).
@@ -560,12 +541,25 @@ class SpanRole(SphinxRole):
 
 
 class SourceRole(SphinxRole):
-    """``{sfsrc}`linux``` as a coloured label naming the source."""
+    """``{sfsrc}`linux``` as a coloured label naming the source. A count
+    and a link are optional: ``{sfsrc}`linux <count> <https://...>```. With
+    ``mine``, the label is ringed: the source a page is about."""
+
+    def __init__(self, *, mine: bool = False) -> None:
+        super().__init__()
+        self.mine = mine
 
     def run(self) -> tuple[list[nodes.Node], list[nodes.system_message]]:
-        label = source_label(self.text)
-        classes = ["sf-src", f"sf-src-{slug(self.text)}"]
-        return [nodes.inline(self.rawtext, label, classes=classes)], []
+        has_link, title, target = split_explicit_title(self.text)
+        source, _, count = title.partition(" ")
+        label = source_label(source) + (f" {count}" if count else "")
+        classes = ["sf-src", f"sf-src-{slug(source)}"] + (["sf-src-mine"] if self.mine else [])
+        badge = nodes.inline(self.rawtext, label, classes=classes)
+        if not has_link:
+            return [badge], []
+        return [
+            nodes.reference(self.rawtext, "", badge, refuri=target, classes=["sf-src-link"])
+        ], []
 
 
 REPO_URL = "https://github.com/mithro/spiflash"
@@ -660,6 +654,7 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_role("sfyes", SpanRole("sf-yes"))
     app.add_role("sfkind", SpanRole("sf-kind"))
     app.add_role("sfsrc", SourceRole())
+    app.add_role("sfsrcme", SourceRole(mine=True))
     app.add_role("repo", RepoRole())
     app.add_role("upstream", UpstreamRole())
     app.add_role("github", GithubRole())
