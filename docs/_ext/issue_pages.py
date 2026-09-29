@@ -1,4 +1,4 @@
-"""The data issues pages: every conflict or error :mod:`spiflash.issues`
+"""The data issues pages: every conflict or error :mod:`issue_checks`
 finds in the source data, all on one page, by kind, and by source.
 
 Each issue is shown with every answer the sources give and the records
@@ -9,15 +9,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from issue_checks import IssueKind, find
 from page_markup import EM_DASH, esc, list_table, size_text, spaced, volts
-from spiflash.enums import IdFamily, IssueKind, Source
-from spiflash.issues import find
+from spiflash.enums import IdFamily, Source
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from issue_checks import Answer, Issue
     from spiflash import Database, Flash, Record
-    from spiflash.issues import Answer, Issue
 
 #: Per kind: why such issues arise, and how far to trust one.
 KIND_NOTES = {
@@ -185,7 +185,7 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
     out = [
         "# Data issues\n",
         (
-            "Everything the checks in {py:mod}`spiflash.issues` find wrong or "
+            "Everything the checks find wrong or "
             "contradictory in the source data: where the upstream tables disagree with "
             "each other, with themselves, or with the datasheets. Every answer links to "
             "the upstream line that gives it. There is a page for "

@@ -1,33 +1,79 @@
-"""Conflicts and errors in the source data.
+"""The checks behind the data issues pages: conflicts and errors in the
+source data.
 
-:func:`find` checks the database for the kinds of problem in
-:class:`~spiflash.enums.IssueKind`. Each :class:`Issue` is one question (a
-chip id's size, the id a part number answers) and the different answers the
-sources give, each with the records giving it, so every claim can be traced
-to its upstream file and line (:meth:`spiflash.Database.link`).
-
->>> from spiflash import issues
->>> found = issues.find()
->>> sorted({i.kind for i in found}) == sorted(issues.IssueKind)
-True
+:func:`find` checks the database for each :class:`IssueKind`. Each
+:class:`Issue` is one question (a chip id's size, the id a part number
+answers) and the different answers the sources give, each with the records
+giving it, so every claim can be traced to its upstream file and line
+(:meth:`spiflash.Database.link`). The site shows them (:mod:`issue_pages`);
+they are not part of the ``spiflash`` package.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from .db import database
-from .enums import IdFamily, IssueKind, Source
+from spiflash import database
+from spiflash.enums import IdFamily, Source
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
-    from .db import Database
-    from .model import Datasheet, Flash, Record
+    from spiflash import Database, Datasheet, Flash, Record
 
-__all__ = ["ATTRIBUTES", "Answer", "Issue", "IssueKind", "find"]
+
+class IssueKind(StrEnum):
+    """A kind of conflict or error in the source data; the members are in
+    the order the site lists them."""
+
+    VALUE = "value"
+    SAME_SOURCE = "same-source"
+    NAME_IDS = "name-ids"
+    MANUFACTURER = "manufacturer"
+    DATASHEET = "datasheet"
+
+    @property
+    def heading(self) -> str:
+        return _ISSUE_TITLES[self][0]
+
+    @property
+    def description(self) -> str:
+        """What the check looks for, in a sentence."""
+        return _ISSUE_TITLES[self][1]
+
+
+_ISSUE_TITLES = {
+    IssueKind.VALUE: (
+        "Sources disagree on a value",
+        "Two sources give one chip id a different size, page size, sector size or supply voltage.",
+    ),
+    IssueKind.SAME_SOURCE: (
+        "One source, two values",
+        (
+            "One source lists a chip id more than once, with different values, and "
+            "nothing in the id (no extended id) tells the entries apart."
+        ),
+    ),
+    IssueKind.NAME_IDS: (
+        "One part, several ids",
+        "The same part number is listed under different chip ids.",
+    ),
+    IssueKind.MANUFACTURER: (
+        "Sources disagree on the manufacturer",
+        "Sources name different manufacturers for one chip id.",
+    ),
+    IssueKind.DATASHEET: (
+        "Ids the datasheets don't give",
+        (
+            "A datasheet was found for the part, but the chip id the sources list it "
+            "under was not found in it."
+        ),
+    ),
+}
+
 
 #: The values sources are compared on.
 ATTRIBUTES = ("size", "page_size", "sector_size", "voltage")
@@ -75,7 +121,7 @@ class Issue:
 
 def find(db: Database | None = None) -> list[Issue]:
     """Every issue in ``db`` (the shipped database by default), by kind in
-    :class:`~spiflash.enums.IssueKind` order, then by chip id or part number."""
+    :class:`IssueKind` order, then by chip id or part number."""
     db = db or database()
     return [
         *_values(db.flashes),

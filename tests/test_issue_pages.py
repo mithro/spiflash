@@ -1,12 +1,12 @@
-"""spiflash.issues: the checks, on small databases, and the pages about them."""
+"""The data issues checks, on small databases, and the pages about them."""
 
 from __future__ import annotations
 
 import spiflash
+from issue_checks import IssueKind, find
 from issue_pages import generate_all
 from spiflash import Database, Datasheet
-from spiflash.enums import IssueKind, Source
-from spiflash.issues import find
+from spiflash.enums import Source
 from test_db import rec
 
 

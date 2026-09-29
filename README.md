@@ -208,24 +208,6 @@ that gives the id's bytes comes first, then the manufacturer's own, then the
 newest. `spiflash id` prints the best one, and `-v` prints them all. Only the
 links are shipped, not the documents.
 
-## Conflicts and errors in the sources
-
-```python
-from spiflash import issues
-
-for i in issues.find():                  # everything the checks find
-    print(i.kind, i.subject, [(a.value, [str(s) for s in a.sources]) for a in i.answers])
-# ...
-# name-ids MT25QL01G [('20ba21', ['flashrom', 'flashprog']), ('21ba20', ['u-boot'])]
-```
-
-`issues.find()` looks for sources disagreeing on a chip's size, page, sector
-or supply voltage; one source listing an id twice with different values; one
-part number under several ids; sources naming different manufacturers; and
-parts whose datasheets do not give the id the sources list them under. Each
-answer carries the records giving it, so every claim traces to its upstream
-file and line.
-
 <!-- usage-end -->
 
 ## Updating the data
