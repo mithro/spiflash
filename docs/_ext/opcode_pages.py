@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING
 from opcode_timing import diagram
 from page_markup import (
     EM_DASH,
+    JEP106,
+    JESD216,
+    JESD251,
     KIND_TITLE,
     badge,
     chip_slug,
@@ -56,8 +59,7 @@ TIMING_TEXT = {
         "command, the address, any dummy bytes, and the data."
     ),
     TimingSource.JESD216: (
-        "[JEDEC JESD216](https://www.jedec.org/standards-documents/docs/jesd216b) (SFDP) "
-        "specifies a 3-byte address and 8 dummy clocks."
+        f"[JEDEC JESD216]({JESD216}) (SFDP) specifies a 3-byte address and 8 dummy clocks."
     ),
     TimingSource.PART: (
         "The details vary by part: check its datasheet. Where the dummy clocks are "
@@ -69,15 +71,16 @@ TIMING_TEXT = {
 # What some operations do beyond what their timing says.
 NOTES = {
     "RDID": (
-        "The flash answers with its JEDEC id: the manufacturer's JEP106 code, then two "
-        "device bytes (usually the memory type and the capacity). Many parts carry on "
-        "with extended id bytes if the host keeps clocking; {sfsrc}`linux` matches up to six. "
+        f"The flash answers with its JEDEC id: the manufacturer's [JEP106]({JEP106}) code, "
+        "then two device bytes (usually the memory type and the capacity). Many parts "
+        "carry on with extended id bytes if the host keeps clocking; {sfsrc}`linux` matches "
+        "up to six. "
         "Manufacturers in later JEP106 banks should send `0x7f` continuation codes "
         "first, but many parts leave them out."
     ),
     "RDID_ATMEL": (
-        "Older Atmel AT25F parts answer 0x15 (0x1d on some) instead of the JEDEC read-id, "
-        "with a manufacturer byte and one device byte."
+        "Older Atmel AT25F parts answer 0x15 (0x1d on some) instead of the JEDEC read-id "
+        "([`RDID`](RDID.md)), with a manufacturer byte and one device byte."
     ),
     "RDID_M95": (
         "ST's M95 SPI EEPROMs read an identification page: the address is 2 bytes on "
@@ -90,19 +93,22 @@ NOTES = {
     "RES": (
         "Wakes the flash from deep power-down; after three dummy bytes it answers its "
         "one-byte electronic signature ({sfsrc}`flashrom`'s RES1; RES2 parts answer two bytes). "
-        "Older parts use this in place of the JEDEC id."
+        "Older parts use this in place of the JEDEC id ([`RDID`](RDID.md))."
     ),
     "RDSFDP": (
-        "Reads the Serial Flash Discoverable Parameters (JESD216) from the given "
+        f"Reads the Serial Flash Discoverable Parameters ([JESD216]({JESD216})) from the given "
         "address: tables describing the part's size, erase types, read modes and "
         "dummy clocks. {sfsrc}`linux` reads them to set up most modern parts."
     ),
     "WRSR": (
         "Writes status register 1, and on many parts status register 2 as a second "
         "byte. The host sends Write Enable (0x06) first, or on some SST parts Enable "
-        "Write Status Register (0x50)."
+        "Write Status Register ([`EWSR`](EWSR.md), 0x50)."
     ),
-    "EWSR": "SST parts need this, rather than Write Enable (0x06), before Write Status Register.",
+    "EWSR": (
+        "SST parts need this, rather than Write Enable (0x06), before Write Status "
+        "Register ([`WRSR`](WRSR.md))."
+    ),
     "WRSR2": "Writes status register 2 on its own (Winbond and compatible parts).",
     "WRSR3": "Writes status register 3 on its own (Winbond and compatible parts).",
     "RDFSR": (
@@ -123,26 +129,33 @@ NOTES = {
         "commands on parts larger than 16 MiB. On some parts bit 7 switches to 4-byte "
         "addresses."
     ),
-    "RDEAR": "Reads the extended address register.",
+    "RDEAR": "Reads the extended address register (written by [`WREAR`](WREAR.md)).",
     "BRWR": (
         "Writes Spansion's bank address register, which does the extended address "
-        "register's job on its parts."
+        "register's job ([`WREAR`](WREAR.md)) on its parts."
     ),
-    "BRRD": "Reads Spansion's bank address register.",
+    "BRRD": "Reads Spansion's bank address register (written by [`BRWR`](BRWR.md)).",
     "EQPI_38": (
         "Switches Winbond, GigaDevice and compatible parts to QPI, where every command, "
         "address and data byte goes over all four lines."
     ),
     "EQPI_35": "Switches Macronix, ISSI and SST parts to QPI.",
-    "RSTQIO_FF": "Leaves QPI mode; sent in QPI mode, so on all four lines.",
-    "RSTQIO_F5": "Leaves QPI mode on the parts that enter it with 0x35.",
-    "BP": "Programs one byte per command, for parts without page program.",
+    "RSTQIO_FF": (
+        "Leaves QPI mode (entered with [`EQPI_38`](EQPI_38.md)); sent in QPI mode, so on "
+        "all four lines."
+    ),
+    "RSTQIO_F5": "Leaves QPI mode on the parts that enter it with 0x35 ([`EQPI_35`](EQPI_35.md)).",
+    "BP": (
+        "Programs one byte per command, for parts without page program ([`PP_1_1_1`](PP_1_1_1.md))."
+    ),
     "AAI_WP": (
         "SST's auto-address-increment program: the first command carries the address and "
         "two bytes, each following one only the next two bytes, and Write Disable (0x04) "
         "ends the sequence."
     ),
-    "BE_4K_PMC": "PMC's opcode for the 4 KiB sector erase other parts do with 0x20.",
+    "BE_4K_PMC": (
+        "PMC's opcode for the 4 KiB sector erase other parts do with 0x20 ([`BE_4K`](BE_4K.md))."
+    ),
     "BE_ALT1": "A block erase some older parts use this opcode for.",
     "BE_ALT2": "A block or page erase some parts use this opcode for.",
     "BE_40": (
@@ -152,18 +165,20 @@ NOTES = {
     "BE_256": "Erases one 256-byte page.",
     "DIE_ERASE": (
         "Erases one die of a stacked part (Micron); the address selects the die. On "
-        "single-die parts chip erase does the same."
+        "single-die parts chip erase ([`CHIP_ERASE`](CHIP_ERASE.md)) does the same."
     ),
-    "CHIP_ERASE_ALT": "Most parts accept this as well as 0xc7.",
+    "CHIP_ERASE_ALT": "Most parts accept this as well as 0xc7 ([`CHIP_ERASE`](CHIP_ERASE.md)).",
     "CHIP_ERASE_ATMEL": "Atmel AT25F parts' chip erase.",
     "READ_8D_8D_8D": (
-        "Octal DTR (xSPI, JESD251) sends two bytes per clock, one on each edge, over all "
-        "eight lines. The command is two bytes, the opcode and an extension byte (the "
+        f"Octal DTR (xSPI, [JESD251]({JESD251})) sends two bytes per clock, one on each "
+        "edge, over all eight lines. The command is two bytes, the opcode and an "
+        "extension byte (the "
         "opcode repeated or inverted, as the part's SFDP says), and the flash drives a "
         "data strobe (DS) with its data."
     ),
     "PP_8D_8D_8D": (
-        "Octal DTR (xSPI, JESD251) page program; it keeps the legacy page program opcode."
+        f"Octal DTR (xSPI, [JESD251]({JESD251})) page program; it keeps the legacy page "
+        "program opcode ([`PP_1_1_1`](PP_1_1_1.md))."
     ),
 }
 
@@ -281,9 +296,10 @@ def operation_page(op: Operation, flashes: list[Flash], slugs: dict[int, str]) -
 
     out += ["## Timing\n", "```{wavedrom}", json.dumps(diagram(op), indent=1), "```\n"]
     out.append(
-        "SPI mode 0: the clock idles low, and data changes on its falling edge and is "
-        "sampled on its rising edge. Long phases are shortened at the gaps. "
-        "`z` (the middle level) is a line nobody drives; the hatched cells are don't-care.\n"
+        "- SPI mode 0: the clock idles low, and data changes on its falling edge and is "
+        "sampled on its rising edge.\n"
+        "- Long phases are shortened at the gaps.\n"
+        "- `z` (the middle level) is a line nobody drives; the hatched cells are don't-care.\n"
     )
     out.append(list_table(["Phase", "Lines", "Clocks", "What"], phases(op), "sf-table"))
     out.append("")

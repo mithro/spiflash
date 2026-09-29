@@ -35,6 +35,7 @@ from page_markup import (
     EM_DASH,
     FEATURE_TEXT,
     HIGHLIGHTS,
+    JESD216,
     KIND_TITLE,
     TIMES,
     badge,
@@ -278,10 +279,11 @@ def _sfdp(f: Flash) -> list[str]:
     out = [
         "## SFDP\n",
         (
-            "The part's SFDP (JESD216) tables, as the sources carry them: what one part "
-            "answered, decoded by {py:mod}`spiflash.sfdp`; `spiflash sfdp` prints every "
-            "field. SFDP says nothing about the vendor, voltage or protection, and Linux "
-            "keeps fixups for tables that are wrong, so read it as the part's own claim.\n"
+            f"The part's SFDP ([JESD216]({JESD216})) tables, as the sources carry them: "
+            "what one part answered, decoded by {py:mod}`spiflash.sfdp`; `spiflash sfdp` "
+            "prints every field. SFDP says nothing about the vendor, voltage or protection, "
+            "and {sfsrc}`linux` keeps fixups for tables that are wrong, so read it as the "
+            "part's own claim.\n"
         ),
     ]
     for d in f.sfdp_dumps:

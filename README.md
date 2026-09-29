@@ -25,11 +25,17 @@ Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
 `spiflash sources` (or `spiflash.sources()`) names the exact upstream commits
 the shipped data was extracted from.
 
-Browse it at **<https://spiflash.readthedocs.io/>**: a page per vendor with a
-table of all its parts, a page per chip (with links to its datasheets), a
-page per SPI operation (what it does, a WaveDrom timing diagram, and every part
-that supports it), and the [data issues](https://spiflash.readthedocs.io/en/latest/issues/):
-every conflict or error found in the source data, by kind and by source.
+Browse it at **<https://spiflash.readthedocs.io/>**:
+
+- [a page per vendor](https://spiflash.readthedocs.io/en/latest/vendors/), with a table of all
+  its parts;
+- [a page per chip](https://spiflash.readthedocs.io/en/latest/chips/), with links to its
+  datasheets;
+- [a page per SPI operation](https://spiflash.readthedocs.io/en/latest/opcodes.html): what it
+  does, a [WaveDrom](https://wavedrom.com/) timing diagram, and every part
+  that supports it;
+- the [data issues](https://spiflash.readthedocs.io/en/latest/issues/): every conflict or error
+  found in the source data, by kind and by source.
 
 <!-- usage-start: docs/usage.md includes from here -->
 
@@ -68,6 +74,7 @@ ef4018  Winbond  W25Q128, W25Q128JV, W25Q128.V, W25Q128FV, W25Q128BV  (nor)
     size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
     features: dual_read erase_32k erase_4k erase_64k fast_read lock otp quad_pp quad_read sfdp
     from: flashrom, flashprog, linux, u-boot, openocd, openfpgaloader, zephyr
+    datasheet: https://www.winbond.com/resource-files/W25Q128JV%20RevH%2003102021%20Plus.pdf
 ```
 
 `-v` lists every upstream entry with its file and line, `--json` prints it all
@@ -86,8 +93,8 @@ c84017  GigaDevice  GD25Q64, GD25Q64C  (nor)
 ```
 
 A family (`W25Q128`), a part (`W25Q128JV`) or a full order code
-(`S25FL128SAGMFI001`) all work; flashrom's `.` wildcards (`W25Q128.V`) are
-understood.
+(`S25FL128SAGMFI001`) all work; [flashrom](https://www.flashrom.org/)'s `.`
+wildcards (`W25Q128.V`) are understood.
 
 Which opcodes does a part support?
 
@@ -171,28 +178,22 @@ op.opcode, op.operation.description      # (235, 'Quad I/O fast read'): 0xeb
 op.because                               # (('flashprog', 'FEATURE_FAST_READ_QIO'), ('openocd', 'qread_cmd'))
 ```
 
-Operations are named as LiteSPI's `SpiNorFlashOpCodes` names them (`READ_1_1_4`:
-command on 1 line, address on 1, data on 4; `_4B` for the 4-byte-address form),
-so a list can be used there directly; `spiflash.opcodes.OPERATIONS` has them all,
-with their kind (id, read, program, erase, register, mode), description, and
-transaction shape: `protocol` (`"1-4-4"`), `address_bytes`, `dummy_clocks` and
-the `data` phase's direction.
+Operations are named as [LiteSPI](https://github.com/litex-hub/litespi)'s
+`SpiNorFlashOpCodes` names them, so a list can be used there directly:
+`READ_1_1_4` sends the command on 1 line, the address on 1 and the data on 4,
+and `_4B` marks the 4-byte-address form. `spiflash.opcodes.OPERATIONS` has them
+all, each with:
 
-Each source's list is what that source says, from what it says it:
+- its `kind`: id, read, program, erase, register or mode;
+- its `description`;
+- its transaction shape: `protocol` (`"1-4-4"`), `address_bytes`,
+  `dummy_clocks` and the `data` phase's direction.
 
-| source | where the opcodes come from |
-|---|---|
-| flashrom, flashprog | the probe, the `.read`/`.write` functions, each block eraser, and the feature bits (`FEATURE_FAST_READ_QIO`, `FEATURE_4BA_ENTER`, `FEATURE_QPI_38_FF`, ...) |
-| Linux | what [`drivers/mtd/spi-nor/core.c`](https://github.com/torvalds/linux/blob/master/drivers/mtd/spi-nor/core.c) sets up for the entry: read, fast read and page program by default, the `no_sfdp_flags` (dual/quad/octal read, 4 KiB erase), sector and chip erase, and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
-| U-Boot | the same from its [`spi-nor-core.c`](https://github.com/u-boot/u-boot/blob/master/drivers/mtd/spi/spi-nor-core.c) (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
-| OpenOCD | the table's own opcode columns: read, fastest read, page program, sector and chip erase |
-| openFPGALoader | what its [`spiFlash.cpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlash.cpp) sends: read, page program, and the erases its table allows |
-| QEMU | what its model decodes for every part (read, fast read, page program, sector erase, and chip erase as 0xc7 and 0x60), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for, everything those tables list |
-| Zephyr | the board's devicetree: the reads and erase types of the chip's own SFDP table where the board copies it (`sfdp-bfp`), and the read and program modes the board uses (`readoc`, `writeoc`, `use-fast-read`, ...) |
-
-The opcode values are read from each upstream's own headers (`SPINOR_OP_*`,
-`JEDEC_*`, `FLASH_*`, QEMU's `FlashCMD` enum), or from the SFDP tables, and
-checked against the table when the data is built.
+Each source's list is what that source says; the
+[opcodes page](https://spiflash.readthedocs.io/en/latest/opcodes.html#where-each-source-s-opcodes-come-from)
+says where in each upstream it comes from. The opcode values are read from
+each upstream's own headers, or from the SFDP tables, and checked against
+`OPERATIONS` when the data is built.
 
 So a listed operation is one some source says the part has. An operation that
 is not listed may still be supported: no source here describes every opcode of
@@ -203,7 +204,9 @@ SPI NAND parts have no opcodes listed.
 
 ## SFDP
 
-A chip that answers SFDP (JESD216, opcode `0x5a`) describes itself: its
+A chip that answers SFDP
+([JESD216](https://www.jedec.org/standards-documents/docs/jesd216b), opcode
+`0x5a`) describes itself: its
 density, erase types and their opcodes, each fast-read mode with the dummy
 clocks it needs, its page size, how to enter 4-byte addressing and set quad
 mode. That is exactly what the tables above can only approximate, so where a
@@ -260,8 +263,9 @@ links are shipped, not the documents.
 
 ## Updating the data
 
-The data is generated, never edited: [`tools/sources.toml`](https://github.com/mithro/spiflash/blob/main/tools/sources.toml) pins each upstream to
-a commit, and
+The data is generated, never edited:
+[`tools/sources.toml`](https://github.com/mithro/spiflash/blob/main/tools/sources.toml) pins each upstream to a commit,
+and
 
 ```sh
 uv run tools/update_db.py            # rebuild src/spiflash/data/ from the pins
@@ -269,21 +273,22 @@ uv run tools/update_db.py --latest   # move the pins to each upstream's HEAD fir
 ```
 
 fetches only the files it reads (a sparse, blobless, depth-1 fetch: about
-15 MB for Linux) and parses the tables as text. A weekly workflow reports when an
-upstream table has changed. See [docs/DEVELOPING.md](docs/DEVELOPING.md) for
-how the extraction works and [docs/SOURCES.md](docs/SOURCES.md) for what is
+15 MB for Linux) and parses the tables as text. A
+[weekly workflow](https://github.com/mithro/spiflash/blob/main/.github/workflows/upstream.yml) reports when an upstream
+table has changed. See [Developing spiflash](https://spiflash.readthedocs.io/en/latest/DEVELOPING.html) for how the
+extraction works and [Where the data comes from](https://spiflash.readthedocs.io/en/latest/SOURCES.html) for what is
 taken from where, and under what terms.
 
 ## Credits
 
 The extraction follows the approach of LiteSPI's
 [`spi_nor_config_generator`](https://github.com/litex-hub/litespi/tree/feature/module-generator-overrides/tools/spi_nor_config_generator)
-(Antmicro, 2020): the same upstreams, a JSON record per upstream entry, and the
+([Antmicro](https://antmicro.com/), 2020): the same upstreams, a JSON record per upstream entry, and the
 handling of OpenOCD's `w25q128fv/jv`-style names. The parsers are new, as Linux
 and flashrom have both since changed their table formats. The data itself is
 the work of the people who maintain those tables.
 
 ## License
 
-Apache-2.0; see [LICENSE](LICENSE) and, for the data,
-[docs/SOURCES.md](docs/SOURCES.md).
+Apache-2.0; see [LICENSE](https://github.com/mithro/spiflash/blob/main/LICENSE) and, for the data,
+[Where the data comes from](https://spiflash.readthedocs.io/en/latest/SOURCES.html).

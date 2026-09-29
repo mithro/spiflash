@@ -14,15 +14,19 @@ class Source(StrEnum):
     """An upstream project the data is read from.
 
     The members are declared in priority order: when sources disagree on a
-    value and are otherwise tied, the earlier one wins. flashrom and
-    flashprog come first (their entries are per part, tested on hardware and
-    carry the most detail), then OpenOCD and openFPGALoader (their tables are
-    the smallest and the least specific), then QEMU (its table is a 2012
-    copy of Linux's, kept for the parts its boards emulate, though its SFDP
-    dumps are the only complete ones any upstream has), and Zephyr last: it
-    has no table of parts, only boards describing the chip each carries,
-    whose values are written (and copied between boards) by each board's
-    porter."""
+    value and are otherwise tied, the earlier one wins.
+
+    1. flashrom and flashprog: their entries are per part, tested on
+       hardware, and carry the most detail.
+    2. Linux, then U-Boot, which kept Linux's older table format.
+    3. OpenOCD and openFPGALoader: their tables are the smallest and the
+       least specific.
+    4. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
+       boards emulate, though its SFDP dumps are the only complete ones any
+       upstream has.
+    5. Zephyr: it has no table of parts, only boards describing the chip
+       each carries, whose values are written (and copied between boards)
+       by each board's porter."""
 
     FLASHROM = "flashrom"
     FLASHPROG = "flashprog"
