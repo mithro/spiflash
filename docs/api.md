@@ -30,4 +30,5 @@ to read when an upstream changes its format.
    spiflash
    spiflash_extract
    update_db
+   import_datasheets
 ```

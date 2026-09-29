@@ -123,6 +123,7 @@ commits:
 vendors/index
 chips/index
 opcodes
+issues/index
 ```
 
 ```{toctree}

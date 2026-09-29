@@ -22,9 +22,10 @@ from, and where the sources disagree (60 ids do) both answers are kept.
 the shipped data was extracted from.
 
 Browse it at **<https://spiflash.readthedocs.io/>**: a page per vendor with a
-table of all its parts, a page per chip (with links to its datasheets), and a
+table of all its parts, a page per chip (with links to its datasheets), a
 page per SPI operation (what it does, a WaveDrom timing diagram, and every part
-that supports it).
+that supports it), and the [data issues](https://spiflash.readthedocs.io/en/latest/issues/):
+every conflict or error found in the source data, by kind and by source.
 
 <!-- usage-start: docs/usage.md includes from here -->
 

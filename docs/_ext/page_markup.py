@@ -133,7 +133,7 @@ def size_text(n: int | None) -> str:
 def list_table(
     header: list[str], rows: list[list[str]], classes: str = "", widths: str | None = None
 ) -> str:
-    """A MyST list-table."""
+    """A MyST list-table. A cell may be several paragraphs (``"a\\n\\nb"``)."""
     lines = [":::{list-table}", ":header-rows: 1"]
     if classes:
         lines.append(f":class: {classes}")
@@ -142,7 +142,8 @@ def list_table(
     lines.append("")
     for row in [header, *rows]:
         for i, cell in enumerate(row):
-            lines.append(("* - " if i == 0 else "  - ") + (cell if cell.strip() else " "))
+            text = cell.replace("\n", "\n    ") if cell.strip() else " "
+            lines.append(("* - " if i == 0 else "  - ") + text)
     lines.append(":::")
     return "\n".join(lines)
 

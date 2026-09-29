@@ -48,6 +48,8 @@ LINUX_SPANSION = fixture("linux/drivers/mtd/spi-nor/spansion.c")
 
 LINUX_NAND = fixture("linux/drivers/mtd/nand/spi/winbond.c")
 
+LINUX_ESMT = fixture("linux/drivers/mtd/nand/spi/esmt.c")
+
 
 @pytest.fixture
 def linux_tree(tmp_path: Path) -> Path:
@@ -135,6 +137,13 @@ def test_linux_nand(linux_tree: Path) -> None:
     assert n["features"] == ["quad_read"]
     assert n["flags"] == ["SPINAND_HAS_QE_BIT"]
     assert n["notes"][0] == "3.3V"
+
+
+def test_linux_nand_manufacturer_per_table(tmp_path: Path) -> None:
+    # esmt.c has two manufacturers, 0x8c and 0xc8, each with its own table.
+    write(tmp_path, {"drivers/mtd/nand/spi/esmt.c": LINUX_ESMT})
+    ids = {r["name"]: r["id"] for r in linux.extract_nand(tmp_path)}
+    assert ids == {"F50L1G41LC": "8c2c", "F50L1G41LB": "c8017f7f7f"}
 
 
 def test_linux_extract_is_both(linux_tree: Path) -> None:
