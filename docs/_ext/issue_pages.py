@@ -157,11 +157,11 @@ class _Render:
         *,
         by_entry: bool = False,
     ) -> str:
-        """One line per answer: the value, then who gives it."""
+        """One line per answer: the value, then who gives it, each in a span
+        of its own, so a long list of who wraps in its own column."""
         return "\n\n".join(
-            f"**{self.value(issue, a.value)}**"
-            + (extra(a) if extra else "")
-            + f"\u2003{self.entries(a.records) if by_entry else self.who(a.records)}"
+            f"[**{self.value(issue, a.value)}**{extra(a) if extra else ''}]{{.sf-val}}"
+            f"[{self.entries(a.records) if by_entry else self.who(a.records)}]{{.sf-who}}"
             for a in issue.answers
         )
 

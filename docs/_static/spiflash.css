@@ -231,11 +231,19 @@ table.sf-datasheets td:first-child,
 table.sf-datasheets td:nth-child(4) { white-space: normal; }
 table.sf-datasheets td:first-child { min-width: 16em; }
 
-/* Data issues: the id stays on one line; the answers wrap. */
-table.sf-issues td:first-child { white-space: nowrap; }
+/* Data issues: only the answers wrap. */
+table.sf-issues td:not(:last-child) { white-space: nowrap; }
 table.sf-issues td:last-child { min-width: 22em; }
 /* One answer per line: the value, then the sources' labels. */
 table.sf-issues td:last-child p { margin: 0.15em 0; line-height: 1.9; }
+table.sf-issues td:last-child p:has(> .sf-val) {
+  display: flex;
+  align-items: baseline;
+  gap: 0 1em;
+}
+/* An answer: its value, then who gives it, which wraps in a column of its own. */
+.sf-val { flex: none; min-width: 6em; }
+.sf-who { flex: 1; min-width: 0; }
 table.sf-issues td:last-child p + p { border-top: 1px dashed var(--color-background-border, #ddd); padding-top: 0.15em; }
 table.sf-chip-issues td:first-child { white-space: normal; min-width: 9em; }
 
