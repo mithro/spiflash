@@ -311,6 +311,64 @@ def name_matches(pattern: str, query: str, *, prefix: bool = False) -> bool:
     return match(rx, query.upper()) is not None
 
 
+#: What :func:`name_distance` charges: an edit (a character changed, added,
+#: dropped, or two neighbours swapped), and each character one name has past
+#: the end of the other (a suffix: package, temperature, ordering code).
+EDIT_COST = 4
+TAIL_COST = 1
+
+
+def squash_name(name: str, *, wildcards: bool = False) -> str:
+    """A part name as :func:`name_distance` compares it: upper case, letters
+    and digits only (``"W25Q16JV-IM"`` is ``W25Q16JVIM``); with
+    ``wildcards``, flashrom's ``.`` stays."""
+    return re.sub(r"[^0-9A-Z.]" if wildcards else r"[^0-9A-Z]", "", name.upper())
+
+
+def name_distance(query: str, name: str) -> tuple[int, int]:
+    """How far a database part name is from ``query``: ``(cost, common)``,
+    ``common`` being how many leading characters they share.
+
+    Both are compared as :func:`squash_name` writes them, a ``.`` in ``name``
+    matching any character. The cost is an edit distance where an edit costs
+    :data:`EDIT_COST` and a character past the end of the other name costs
+    :data:`TAIL_COST`. Part numbers go from the general to the specific
+    (vendor, family, density, variant, then package and grade), so a
+    difference at the end costs least: ``W25Q128JVSIQ`` is 3 from
+    ``W25Q128JV``, 5 from ``W25Q128``, and 7 from ``W25Q128JW`` and
+    ``W25Q128FV`` (an edit and a tail of three). A typo is one edit:
+    ``W25Q182JV`` is 4 from ``W25Q128JV``."""
+    a, b = squash_name(query), squash_name(name, wildcards=True)
+
+    def same(i: int, j: int) -> bool:
+        return b[j] in (".", a[i])
+
+    # d[i][j]: the cheapest edits turning a[:i] into b[:j] (optimal string
+    # alignment, so a swap of neighbours is one edit).
+    d = [[j * EDIT_COST for j in range(len(b) + 1)]]
+    for i in range(1, len(a) + 1):
+        row = [i * EDIT_COST]
+        for j in range(1, len(b) + 1):
+            cost = min(
+                d[i - 1][j - 1] + (0 if same(i - 1, j - 1) else EDIT_COST),
+                d[i - 1][j] + EDIT_COST,
+                row[j - 1] + EDIT_COST,
+            )
+            if i > 1 and j > 1 and same(i - 1, j - 2) and same(i - 2, j - 1):
+                cost = min(cost, d[i - 2][j - 2] + EDIT_COST)
+            row.append(cost)
+        d.append(row)
+    # What one has past the end of the other is a tail, not edits.
+    cost = min(
+        *(d[i][len(b)] + (len(a) - i) * TAIL_COST for i in range(len(a) + 1)),
+        *(d[len(a)][j] + (len(b) - j) * TAIL_COST for j in range(len(b) + 1)),
+    )
+    common = 0
+    while common < min(len(a), len(b)) and same(common, common):
+        common += 1
+    return cost, common
+
+
 def _consensus(values: Iterable[tuple[T | None, Source]]) -> T | None:
     """The value most sources give, ties to the higher-priority source."""
     counts: Counter[T] = Counter()
