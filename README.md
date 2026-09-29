@@ -78,13 +78,13 @@ optional (`1c7018` and `7f1c7018` are both an Eon EN25QH128).
 What does a part answer?
 
 ```console
-$ spiflash find gd25q64
+$ spiflash find GD25Q64
 c84017  GigaDevice  GD25Q64, GD25Q64C  (nor)
     size 8 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
     ...
 ```
 
-A family (`w25q128`), a part (`W25Q128JV`) or a full order code
+A family (`W25Q128`), a part (`W25Q128JV`) or a full order code
 (`S25FL128SAGMFI001`) all work; flashrom's `.` wildcards (`W25Q128.V`) are
 understood.
 
