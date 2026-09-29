@@ -33,6 +33,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinxcontrib.wavedrom",
     "spiflash_pages",
+    "alias_pages",
 ]
 
 # Render the opcode pages' timing diagrams to SVG at build time, so the site
