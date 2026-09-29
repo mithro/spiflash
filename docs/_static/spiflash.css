@@ -257,6 +257,8 @@ table.sf-chip-issues td:first-child { white-space: normal; min-width: 9em; }
 .sf-num > span { display: inline-block; }
 .sf-n-int { text-align: right; }
 .sf-num-size .sf-n-int { min-width: 4ch; }
+/* In an issue's answers, sizes share a unit: up to 65,536 B. */
+.sf-val .sf-num-size .sf-n-int { min-width: 6ch; }
 .sf-num-plain .sf-n-int { min-width: 5ch; }
 .sf-num-volt .sf-n-int { min-width: 1ch; }
 .sf-n-frac { width: 4ch; text-align: left; }
