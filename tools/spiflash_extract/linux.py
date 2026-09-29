@@ -25,6 +25,7 @@ from .ops import Opcodes, add_4b_variants, add_spinor
 from .record import Record, make
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 NOR_DIR = "drivers/mtd/spi-nor"
@@ -223,6 +224,34 @@ def _nor_opcodes(
     return ops.to_json()
 
 
+def _nand_manufacturers(
+    text: str, symbols: dict[str, str | int]
+) -> Callable[[int], tuple[str | None, int | None]]:
+    """Which ``struct spinand_manufacturer`` a ``SPINAND_INFO`` belongs to,
+    by where it is: the one whose ``.chips`` is the table around it. A file
+    can have several (esmt.c: 0x8c and 0xc8, one table each)."""
+    makers: dict[str | None, tuple[str | None, int | None]] = {}
+    for _, init in cparse.initialisers(text, r"struct\s+spinand_manufacturer\s+\w+"):
+        fields = cparse.designated(init.body)
+        name = cparse.c_string(fields["name"]) if "name" in fields else None
+        mfr = cparse.evaluate(fields["id"], symbols) if "id" in fields else None
+        makers[fields.get("chips")] = (name, mfr)
+    tables = [
+        (m.group(1), init.offset, init.offset + len(init.body))
+        for m, init in cparse.initialisers(text, r"struct\s+spinand_info\s+(\w+)\s*\[\s*\]")
+    ]
+
+    def at(pos: int) -> tuple[str | None, int | None]:
+        table = next((name for name, lo, hi in tables if lo <= pos < hi), None)
+        if table in makers:
+            return makers[table]
+        # No .chips to go by: the file's only manufacturer.
+        only = list(makers.values())
+        return only[0] if len(only) == 1 else (None, None)
+
+    return at
+
+
 def extract_nand(root: Path) -> list[Record]:
     """SPI NAND: ``SPINAND_INFO("name", SPINAND_ID(method, bytes...),
     NAND_MEMORG(bits_per_cell, pagesize, oobsize, pages_per_eraseblock,
@@ -237,15 +266,7 @@ def extract_nand(root: Path) -> list[Record]:
         symbols: dict[str, str | int] = dict(cparse.defines(stripped))
         text = cparse.drop_preprocessor(stripped)
         rel = f"{NAND_DIR}/{path.name}"
-        vendor = None
-        mfr_id = None
-        for _, init in cparse.initialisers(text, r"struct\s+spinand_manufacturer\s+\w+"):
-            fields = cparse.designated(init.body)
-            if "name" in fields:
-                vendor = cparse.c_string(fields["name"])
-            if "id" in fields:
-                mfr_id = cparse.evaluate(fields["id"], symbols)
-            break  # one manufacturer per file
+        makers = _nand_manufacturers(text, symbols)
         for m in re.finditer(r"\bSPINAND_INFO\s*\(", text):
             start = m.end() - 1
             end = cparse.matching(text, start)
@@ -253,6 +274,7 @@ def extract_nand(root: Path) -> list[Record]:
             name = cparse.c_string(args[0])
             id_args = cparse.macro_call(args[1], "SPINAND_ID")
             org = cparse.macro_call(args[2], "NAND_MEMORG")
+            vendor, mfr_id = makers(m.start())
             if id_args is None or org is None or mfr_id is None:
                 msg = f"{rel}: cannot read SPINAND_INFO for {name}"
                 raise ValueError(msg)
