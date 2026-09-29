@@ -188,4 +188,7 @@ def test_supply_ends_are_numbers_of_their_own() -> None:
     page = generate_all(db, slugs)["value.md"]
     assert "Answers: V min, V max" in page
     assert f"**{{sfnum}}`2.7 V`{EM_SPACE}{{sfnum}}`3.6 V`**" in page
+    # The value, then who gives it: a span each, so who wraps in its own column.
+    assert f"[**{{sfnum}}`2.7 V`{EM_SPACE}{{sfnum}}`3.6 V`**]{{.sf-val}}[{{sfsrc}}`linux" in page
+    assert "`]{.sf-who}" in page
     assert EN_DASH not in page
