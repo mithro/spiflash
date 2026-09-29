@@ -8,7 +8,7 @@ versions reach PyPI and apt, see
 ## The documentation site
 
 <https://spiflash.readthedocs.io/> is built from {repo}`docs/` by Sphinx (Furo
-theme, MyST Markdown). The vendor, chip and opcode pages are not in git:
+theme, MyST Markdown). The vendor, chip, opcode and data issues pages are not in git:
 {repo}`docs/_ext/spiflash_pages.py` writes them from the installed package's
 data at the start of every build, so the site always matches the release.
 The API reference ({repo}`docs/api.md`) is generated the same way, by
@@ -61,7 +61,7 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 
 | Path | What it is |
 |---|---|
-| {repo}`src/spiflash/` | the package: {repo}`model.py <src/spiflash/model.py>` (`Record`, `Flash`), {repo}`db.py <src/spiflash/db.py>` (loading, lookup, find), {repo}`opcodes.py <src/spiflash/opcodes.py>` (the named operations), {repo}`vendors.py <src/spiflash/vendors.py>` (one name per vendor), {repo}`cli.py <src/spiflash/cli.py>` |
+| {repo}`src/spiflash/` | the package: {repo}`model.py <src/spiflash/model.py>` (`Record`, `Flash`), {repo}`db.py <src/spiflash/db.py>` (loading, lookup, find), {repo}`opcodes.py <src/spiflash/opcodes.py>` (the named operations), {repo}`vendors.py <src/spiflash/vendors.py>` (one name per vendor), {repo}`issues.py <src/spiflash/issues.py>` (conflicts and errors in the sources), {repo}`cli.py <src/spiflash/cli.py>` |
 | {repo}`src/spiflash/data/` | generated: {repo}`records.json <src/spiflash/data/records.json>`, {repo}`manufacturers.json <src/spiflash/data/manufacturers.json>`, {repo}`sources.json <src/spiflash/data/sources.json>`; imported: {repo}`datasheets.json <src/spiflash/data/datasheets.json>` |
 | {repo}`tools/sources.toml` | the upstream commits the data is built from |
 | {repo}`tools/update_db.py` | fetch, extract, write the data |
@@ -72,7 +72,7 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`linux.py <tools/spiflash_extract/linux.py>`, {repo}`uboot.py <tools/spiflash_extract/uboot.py>`, {repo}`flashrom.py <tools/spiflash_extract/flashrom.py>`, {repo}`openocd.py <tools/spiflash_extract/openocd.py>`, {repo}`openfpgaloader.py <tools/spiflash_extract/openfpgaloader.py>` | one extractor per upstream format |
 | {repo}`tools/spiflash_extract/fetch.py` | sparse, blobless, depth-1 fetch of one commit |
 | {repo}`tests/fixtures/` | cut-down copies of each upstream file, verbatim |
-| {repo}`docs/` | the Read the Docs site, and {repo}`docs/_ext/spiflash_pages.py`, which writes its generated pages: {repo}`opcode_pages.py <docs/_ext/opcode_pages.py>` the operation pages, {repo}`opcode_timing.py <docs/_ext/opcode_timing.py>` their WaveDrom diagrams, {repo}`page_markup.py <docs/_ext/page_markup.py>` the Markdown helpers they share |
+| {repo}`docs/` | the Read the Docs site, and {repo}`docs/_ext/spiflash_pages.py`, which writes its generated pages: {repo}`opcode_pages.py <docs/_ext/opcode_pages.py>` the operation pages, {repo}`opcode_timing.py <docs/_ext/opcode_timing.py>` their WaveDrom diagrams, {repo}`issue_pages.py <docs/_ext/issue_pages.py>` the data issues pages, {repo}`page_markup.py <docs/_ext/page_markup.py>` the Markdown helpers they share |
 
 The extractors are not in the wheel; the sdist carries them so the data can be
 rebuilt from it.

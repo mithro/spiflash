@@ -187,3 +187,7 @@ table.sf-datasheets td { white-space: nowrap; }
 table.sf-datasheets td:first-child,
 table.sf-datasheets td:nth-child(4) { white-space: normal; }
 table.sf-datasheets td:first-child { min-width: 16em; }
+
+/* Data issues: the id stays on one line; the answers wrap. */
+table.sf-issues td:first-child { white-space: nowrap; }
+table.sf-issues td:last-child { min-width: 22em; }

@@ -2,6 +2,6 @@
     (docs/_ext/spiflash_pages.py and autosummary), which have no source in git
     to edit: the button would lead to a 404. -#}
 {% extends "!components/edit-this-page.html" %}
-{%- set generated = pagename.startswith(("chips/", "vendors/", "opcodes/", "_autosummary/")) -%}
+{%- set generated = pagename.startswith(("chips/", "vendors/", "opcodes/", "issues/", "_autosummary/")) -%}
 {% block link_available -%}{% if not generated %}{{ super() }}{% endif %}{%- endblock %}
 {% block link_not_available -%}{% if not generated %}{{ super() }}{% endif %}{%- endblock %}

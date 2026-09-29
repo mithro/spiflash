@@ -1,9 +1,11 @@
-"""Write src/spiflash/data/datasheets.json from a datasheet manifest.
+"""Write the package's datasheet links from a datasheet manifest.
+
+They go to :repo:`src/spiflash/data/datasheets.json`.
 
 The manifest is the ``datasheets.jsonl`` of a spiflash-pdfs checkout: one line
 per downloaded datasheet, with where it came from, what it is, and the chip
 ids its parts answer. The PDFs stay there (they are their publishers'
-copyrighted documents); only the links and what they cover come here.
+copyrighted documents); only the links and what they cover come here::
 
     uv run tools/import_datasheets.py [../spiflash-pdfs/datasheets.jsonl]
 """

@@ -22,9 +22,10 @@ from, and where the sources disagree (60 ids do) both answers are kept.
 the shipped data was extracted from.
 
 Browse it at **<https://spiflash.readthedocs.io/>**: a page per vendor with a
-table of all its parts, a page per chip (with links to its datasheets), and a
+table of all its parts, a page per chip (with links to its datasheets), a
 page per SPI operation (what it does, a WaveDrom timing diagram, and every part
-that supports it).
+that supports it), and the [data issues](https://spiflash.readthedocs.io/en/latest/issues/):
+every conflict or error found in the source data, by kind and by source.
 
 <!-- usage-start: docs/usage.md includes from here -->
 
@@ -206,6 +207,24 @@ could be found, otherwise a copy elsewhere (`official` is false). A datasheet
 that gives the id's bytes comes first, then the manufacturer's own, then the
 newest. `spiflash id` prints the best one, and `-v` prints them all. Only the
 links are shipped, not the documents.
+
+## Conflicts and errors in the sources
+
+```python
+from spiflash import issues
+
+for i in issues.find():                  # everything the checks find
+    print(i.kind, i.subject, [(a.value, [str(s) for s in a.sources]) for a in i.answers])
+# ...
+# name-ids MT25QL01G [('20ba21', ['flashrom', 'flashprog']), ('21ba20', ['u-boot'])]
+```
+
+`issues.find()` looks for sources disagreeing on a chip's size, page, sector
+or supply voltage; one source listing an id twice with different values; one
+part number under several ids; sources naming different manufacturers; and
+parts whose datasheets do not give the id the sources list them under. Each
+answer carries the records giving it, so every claim traces to its upstream
+file and line.
 
 <!-- usage-end -->
 

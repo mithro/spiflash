@@ -43,6 +43,9 @@ wavedrom_html_jsinline = False
 source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
 exclude_patterns = ["_build", "_generated", "superpowers", "Thumbs.db", ".DS_Store"]
 templates_path = ["_templates"]
+# Curly quotes and dashes, but not "..." as an ellipsis: flashrom writes
+# wildcard part names with dots ("S25FL256S......0").
+smartquotes_action = "qD"
 
 myst_enable_extensions = ["colon_fence", "deflist", "substitution", "attrs_inline"]
 myst_heading_anchors = 3

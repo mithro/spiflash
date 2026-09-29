@@ -1,0 +1,282 @@
+"""The data issues pages: every conflict or error :mod:`spiflash.issues`
+finds in the source data, all on one page, by kind, and by source.
+
+Each issue is shown with every answer the sources give and the records
+giving it, each linked to its upstream line, so a reader can check it.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from page_markup import EM_DASH, esc, list_table, size_text, spaced, volts
+from spiflash.enums import IdFamily, IssueKind, Source
+from spiflash.issues import find
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from spiflash import Database, Flash, Record
+    from spiflash.issues import Answer, Issue
+
+#: Per kind: why such issues arise, and how far to trust one.
+KIND_NOTES = {
+    IssueKind.VALUE: (
+        "Not every one is an error. Parts sharing an id can differ: a 3 V and a "
+        "1.8 V part, or two sector layouts that only the extended id tells apart "
+        "(each entry's extended id is on its chip page). Where one source stands "
+        "alone against the rest, check it against the datasheet. The chip pages "
+        "show the value most sources give."
+    ),
+    IssueKind.SAME_SOURCE: (
+        "A program that identifies a chip by its id alone cannot tell which of "
+        "these entries applies. Often they are variants the source tells apart some "
+        "other way; sometimes one entry is simply wrong."
+    ),
+    IssueKind.NAME_IDS: (
+        "Some are one name for parts with different ids: a generic name, or a 3 V "
+        "and a 1.8 V version. Others are a wrong id in one source. "
+        "**Datasheet** marks an id that the part's own datasheet gives; "
+        "when one side has it, the other side is likely wrong."
+    ),
+    IssueKind.MANUFACTURER: (
+        "Mostly company history rather than errors: Atmel's serial flash went to "
+        "Adesto, then to Dialog and Renesas; Spansion merged with Cypress, which "
+        "Infineon bought. The site uses the name most sources give."
+    ),
+    IssueKind.DATASHEET: (
+        "The check looks for the id's bytes in the text of each of the part's "
+        'datasheets ("EFh 40h 18h", "0xEF4018", ...). A document that gives '
+        "them in an unusual form, or only in a figure, is flagged wrongly; but "
+        "where the document plainly gives a different id, the sources' id is "
+        "likely the error. The chip pages link every datasheet."
+    ),
+}
+
+_TABLE = "sf-table sf-filterable sf-issues"
+
+
+def kind_page(kind: IssueKind) -> str:
+    return str(kind)
+
+
+def source_page(source: Source) -> str:
+    return f"source-{source}"
+
+
+class _Render:
+    """Markdown for issues, for pages in ``docs/issues/``."""
+
+    def __init__(self, db: Database, slugs: dict[int, str], focus: Source | None = None) -> None:
+        self.db = db
+        self.slugs = slugs
+        #: On a source's page: its records are in bold.
+        self.focus = focus
+        self.chips = {f.key: f for f in db.flashes}
+
+    def chip(self, f: Flash) -> str:
+        shown = spaced(f.id_hex)
+        if f.family != IdFamily.JEDEC:
+            shown = f"{f.family.upper()} {shown}"
+        return f"[{shown}](../chips/{self.slugs[id(f)]}.md)"
+
+    @staticmethod
+    def names(f: Flash) -> str:
+        names = [esc(n) for n in f.names[:4]]
+        return ", ".join(names) + (", …" if len(f.names) > 4 else "")
+
+    def record(self, r: Record) -> str:
+        link = self.db.link(r)
+        text = f"[{esc(r.name)}]({link})" if link else f"{esc(r.name)} ({esc(r.url)})"
+        return f"**{text}**" if r.source == self.focus else text
+
+    def who(self, records: tuple[Record, ...]) -> str:
+        """The records, by source: ``flashrom S25FL256S, ...; Linux ...``."""
+        parts = []
+        for s in sorted({r.source for r in records}, key=lambda s: s.priority):
+            mine = ", ".join(self.record(r) for r in records if r.source == s)
+            parts.append(f"{{sfsrc}}`{s}` {mine}")
+        return "; ".join(parts)
+
+    def value(self, issue: Issue, v: Any) -> str:
+        if issue.attribute == "voltage":
+            return volts(v)
+        if issue.attribute:
+            return size_text(v)
+        if issue.kind is IssueKind.NAME_IDS:
+            return self.chip(self.chips[v])
+        return esc(str(v))
+
+    def answers(self, issue: Issue, extra: Callable[[Answer], str] | None = None) -> str:
+        return "\n\n".join(
+            f"**{self.value(issue, a.value)}**"
+            + (extra(a) if extra else "")
+            + f": {self.who(a.records)}"
+            for a in issue.answers
+        )
+
+    def table(self, kind: IssueKind, issues: list[Issue]) -> str:
+        if not issues:
+            return "None found.\n"
+        rows: list[list[str]]
+        if kind is IssueKind.VALUE:
+            header = ["Chip", "Parts", "Value", "What the sources say"]
+            rows = [
+                [self.chip(i.flashes[0]), self.names(i.flashes[0]), _attr(i), self.answers(i)]
+                for i in issues
+            ]
+        elif kind is IssueKind.SAME_SOURCE:
+            header = ["Chip", "Parts", "Source", "Value", "Its entries"]
+            rows = [
+                [
+                    self.chip(i.flashes[0]),
+                    self.names(i.flashes[0]),
+                    f"{{sfsrc}}`{i.sources[0]}`",
+                    _attr(i),
+                    self.answers(i),
+                ]
+                for i in issues
+            ]
+        elif kind is IssueKind.NAME_IDS:
+            header = ["Part", "The ids it is listed under, and by whom"]
+            rows = [[esc(i.subject), self.answers(i, self.shown(i))] for i in issues]
+        elif kind is IssueKind.MANUFACTURER:
+            header = ["Chip", "Parts", "Manufacturers named"]
+            rows = [
+                [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
+            ]
+        else:
+            header = ["Chip", "Part", "Listed under this id by", "Its datasheets"]
+            rows = [
+                [
+                    self.chip(i.flashes[0]),
+                    esc(i.part or EM_DASH),
+                    self.who(i.answers[0].records),
+                    "\n\n".join(f"[{esc(d.title)}](<{d.url}>)" for d in i.datasheets),
+                ]
+                for i in issues
+            ]
+        return list_table(header, rows, _TABLE) + "\n"
+
+    def shown(self, issue: Issue) -> Callable[[Answer], str]:
+        """For a part's ids: marks the ones its own datasheet gives."""
+
+        def mark(a: Answer) -> str:
+            f = self.chips[a.value]
+            gives = any(f.key in d.confirmed and issue.subject in d.parts for d in f.datasheets)
+            return " {bdg-success}`datasheet`" if gives else ""
+
+        return mark
+
+
+def _attr(issue: Issue) -> str:
+    return (issue.attribute or "").replace("_", " ")
+
+
+def _involving(issues: list[Issue], source: Source) -> list[Issue]:
+    return [i for i in issues if source in i.sources]
+
+
+def _of(issues: list[Issue], kind: IssueKind) -> list[Issue]:
+    return [i for i in issues if i.kind is kind]
+
+
+def index_page(r: _Render, issues: list[Issue]) -> str:
+    out = [
+        "# Data issues\n",
+        (
+            "Everything the checks in {py:mod}`spiflash.issues` find wrong or "
+            "contradictory in the source data: where the upstream tables disagree with "
+            "each other, with themselves, or with the datasheets. Every answer links to "
+            "the upstream line that gives it. There is a page for "
+            "[each kind of issue](#by-kind) and for [each source](#by-source).\n"
+        ),
+        "## Summary\n",
+    ]
+    header = ["Kind", "All", *(f"[{s.label}]({source_page(s)}.md)" for s in Source)]
+    rows = [
+        [
+            f"[{kind.heading}]({kind_page(kind)}.md)",
+            str(len(_of(issues, kind))),
+            *(str(len(_involving(_of(issues, kind), s))) for s in Source),
+        ]
+        for kind in IssueKind
+    ]
+    rows.append(
+        ["**All**", f"**{len(issues)}**", *(f"**{len(_involving(issues, s))}**" for s in Source)]
+    )
+    out.append(list_table(header, rows, "sf-table sf-issue-summary") + "\n")
+    out.append(
+        "A source's count is the issues it is part of: an issue between two "
+        "sources counts for both.\n"
+    )
+    out.append("(by-kind)=\n## By kind\n")
+    for kind in IssueKind:
+        found = _of(issues, kind)
+        out.append(f"### {kind.heading}\n")
+        out.append(
+            f"{kind.description} {len(found)} found; "
+            f"[the {kind.heading.lower()} page]({kind_page(kind)}.md) says more.\n"
+        )
+        out.append(r.table(kind, found))
+    out.append("(by-source)=\n## By source\n")
+    out.append(
+        " · ".join(
+            f"[{s.label}]({source_page(s)}.md) ({len(_involving(issues, s))})" for s in Source
+        )
+        + "\n"
+    )
+    pages = [kind_page(k) for k in IssueKind] + [source_page(s) for s in Source]
+    out.append("```{toctree}\n:hidden:\n\n" + "\n".join(pages) + "\n```\n")
+    return "\n".join(out)
+
+
+def kind_markdown(r: _Render, kind: IssueKind, issues: list[Issue]) -> str:
+    found = _of(issues, kind)
+    return "\n".join(
+        [
+            f"# {kind.heading}\n",
+            f"{{bdg-primary}}`{len(found)} found`\n",
+            f"{kind.description} {KIND_NOTES[kind]}\n",
+            "By source: "
+            + ", ".join(
+                f"[{s.label}]({source_page(s)}.md) {len(_involving(found, s))}" for s in Source
+            )
+            + ". All the kinds: [Data issues](index.md).\n",
+            "Type in the box to filter.\n",
+            r.table(kind, found),
+        ]
+    )
+
+
+def source_markdown(r: _Render, source: Source, issues: list[Issue]) -> str:
+    mine = _involving(issues, source)
+    out = [
+        f"# {source.label}: data issues\n",
+        f"{{bdg-primary}}`{len(mine)} issues` {{sfsrc}}`{source}`\n",
+        (
+            f"Every issue {esc(source.label)} is part of; its own entries are in bold. "
+            "An issue between two sources is on both their pages, and does not say "
+            "which is wrong. All the sources: [Data issues](index.md).\n"
+        ),
+    ]
+    for kind in IssueKind:
+        found = _of(mine, kind)
+        out.append(f"## {kind.heading}\n")
+        out.append(f"{kind.description} [More on these]({kind_page(kind)}.md).\n")
+        out.append(r.table(kind, found))
+    return "\n".join(out)
+
+
+def generate_all(db: Database, slugs: dict[int, str]) -> dict[str, str]:
+    """Every page of ``docs/issues/``, by file name."""
+    issues = find(db)
+    everyone = _Render(db, slugs)
+    pages = {"index.md": index_page(everyone, issues)}
+    for kind in IssueKind:
+        pages[f"{kind_page(kind)}.md"] = kind_markdown(everyone, kind, issues)
+    for source in Source:
+        pages[f"{source_page(source)}.md"] = source_markdown(
+            _Render(db, slugs, focus=source), source, issues
+        )
+    return pages
