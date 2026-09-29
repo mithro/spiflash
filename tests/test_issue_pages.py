@@ -149,3 +149,18 @@ def test_chip_page_section() -> None:
     assert "MT25QL01G" in text
     (quiet,) = [f for f in db.flashes if f.key == "ef4018"]
     assert chip_issues(db, slugs, quiet, [i for i in issues if quiet not in i.flashes]) == []
+
+
+def test_values_grouped_by_what_disagrees() -> None:
+    db = spiflash.database()
+    slugs = {id(f): f.key for f in db.flashes}
+    page = generate_all(db, slugs)["value.md"]
+    headings = [line for line in page.splitlines() if line.startswith("## ")]
+    assert [h.split(" (")[0] for h in headings] == [
+        "## Size",
+        "## Page size",
+        "## Sector size",
+        "## Supply voltage",
+    ]
+    counts = sum(int(h.split("(")[1].rstrip(")")) for h in headings)
+    assert counts == len([i for i in find(db) if i.kind is IssueKind.VALUE])

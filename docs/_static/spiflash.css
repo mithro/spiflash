@@ -79,7 +79,8 @@ table.sf-table th {
   background: var(--color-background-primary);
   border-bottom: 2px solid var(--sf-accent);
   text-align: left;
-  white-space: nowrap;
+  /* Headers wrap, so a column is as wide as its values, not its header. */
+  white-space: normal;
   font-weight: 650;
 }
 table.sf-table td, table.sf-table th, table.sf-kv td {
@@ -90,10 +91,28 @@ table.sf-table tbody tr:nth-child(even) { background: var(--sf-row-alt); }
 table.sf-table tbody tr:hover { background: var(--color-background-hover); }
 table.sf-table td p, table.sf-kv td p { margin: 0; }
 table.sf-kv thead { display: none; }
-table.sf-kv td:first-child { color: var(--sf-muted); width: 40%; }
-table.sf-opcodes td:nth-child(n+4) { text-align: center; }
-table.sf-opcodes th:nth-child(n+4) { text-align: center; }
-table.sf-parts td:first-child { white-space: nowrap; }
+table.sf-kv td:first-child { color: var(--sf-muted); white-space: nowrap; width: 1%; }
+/* Matrices (opcodes, capabilities): one thin column per source, headed by
+   its label in small type; the text columns stay on one line. */
+table.sf-matrix td { white-space: nowrap; }
+table.sf-matrix th .sf-src {
+  font-size: 0.7em;
+  padding: 0.5em 0.15em;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+table.sf-matrix th { vertical-align: bottom; }
+table.sf-opcodes td:nth-child(n+5), table.sf-opcodes th:nth-child(n+5),
+table.sf-capabilities td:nth-child(n+3), table.sf-capabilities th:nth-child(n+3) {
+  text-align: center;
+  width: 1%;
+}
+table.sf-capabilities td:nth-child(2) { white-space: normal; min-width: 18em; }
+/* Extended ids: the upstream notes wrap. */
+table.sf-ext-ids td { white-space: nowrap; }
+table.sf-ext-ids td:nth-child(2), table.sf-ext-ids td:nth-child(3) { white-space: normal; }
+table.sf-ext-ids td:last-child { white-space: normal; min-width: 16em; }
+table.sf-parts td:first-child .sf-kind { display: block; min-width: 0; }
 .table-wrapper { overflow-x: auto; }
 
 /* Sorting and filtering (tables.js). */
@@ -167,6 +186,8 @@ table.sf-table th p { display: inline; }
 
 /* Parts tables: numbers on one line; the part names and highlights wrap. */
 table.sf-parts td { white-space: nowrap; }
+/* The vendor may wrap ("Alliance / Memory"). */
+table.sf-parts.sf-with-vendor td:nth-child(2) { white-space: normal; }
 /* Vendor pages: Parts is column 2, Highlights 8; the all-chips table adds
    Vendor as column 2 and drops Page, moving them to 3 and 8. */
 table.sf-parts:not(.sf-with-vendor) td:nth-child(2),

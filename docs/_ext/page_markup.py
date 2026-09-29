@@ -96,6 +96,19 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "unknown"
 
 
+def table_id(f: Flash, href: str) -> str:
+    """A chip's id for a table cell, linked to ``href``: the id bytes, and
+    for a chip in a later JEP106 bank a small "bank N" label rather than
+    its continuation codes (the chip page gives the full id)."""
+    link = f"[{spaced(f.id_hex)}]({href})"
+    return link + (f" {{sfkind}}`bank {f.bank + 1}`" if f.bank else "")
+
+
+def vendor_link(name: str, prefix: str = "../vendors/") -> str:
+    """``name`` linked to its vendor page (``prefix`` is the way there)."""
+    return f"[{esc(name)}]({prefix}{slug(name)}.md)"
+
+
 def chip_slug(f: Flash) -> str:
     base = f.id_hex if f.family == "jedec" else f"{f.family}-{f.id_hex}"
     return f"{base}-nand" if f.type == "nand" else base

@@ -9,8 +9,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from issue_checks import IssueKind, find
-from page_markup import EM_DASH, esc, list_table, size_text, spaced, volts
+from issue_checks import ATTRIBUTES, IssueKind, find
+from page_markup import (
+    EM_DASH,
+    esc,
+    list_table,
+    size_text,
+    spaced,
+    vendor_link,
+    vendor_of,
+    volts,
+)
 from spiflash.enums import IdFamily, Source
 
 if TYPE_CHECKING:
@@ -55,6 +64,14 @@ KIND_NOTES = {
 
 _TABLE = "sf-table sf-filterable sf-issues"
 
+#: The values sources are compared on, as headings.
+VALUE_TITLES = {
+    "size": "Size",
+    "page_size": "Page size",
+    "sector_size": "Sector size",
+    "voltage": "Supply voltage",
+}
+
 
 def kind_page(kind: IssueKind) -> str:
     return str(kind)
@@ -73,6 +90,8 @@ class _Render:
         #: On a source's page: its records are in bold.
         self.focus = focus
         self.chips = {f.key: f for f in db.flashes}
+        #: The manufacturers with a vendor page.
+        self.vendors = {vendor_of(f) for f in db.flashes}
 
     def chip(self, f: Flash) -> str:
         shown = spaced(f.id_hex)
@@ -113,6 +132,8 @@ class _Render:
             return size_text(v)
         if issue.kind is IssueKind.NAME_IDS:
             return self.chip(self.chips[v])
+        if issue.kind is IssueKind.MANUFACTURER and v in self.vendors:
+            return vendor_link(v)
         return esc(str(v))
 
     def answers(
@@ -130,18 +151,30 @@ class _Render:
             for a in issue.answers
         )
 
+    def section(self, kind: IssueKind, issues: list[Issue], level: int) -> str:
+        """The issues of ``kind``: one table, or for disagreeing values one
+        per value, each under a heading of ``level``."""
+        if kind is not IssueKind.VALUE or not issues:
+            return self.table(kind, issues)
+        out = []
+        for attr in ATTRIBUTES:
+            mine = [i for i in issues if i.attribute == attr]
+            if mine:
+                out.append(f"{'#' * level} {VALUE_TITLES[attr]} ({len(mine)})\n")
+                out.append(self.table(kind, mine))
+        return "\n".join(out)
+
     def table(self, kind: IssueKind, issues: list[Issue]) -> str:
         if not issues:
             return "None found.\n"
         rows: list[list[str]]
         if kind is IssueKind.VALUE:
-            header = ["Chip", "Parts", "Value", "Each answer, and the sources giving it"]
+            header = ["Chip", "Parts", "Answers"]
             rows = [
-                [self.chip(i.flashes[0]), self.names(i.flashes[0]), _attr(i), self.answers(i)]
-                for i in issues
+                [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
             ]
         elif kind is IssueKind.SAME_SOURCE:
-            header = ["Chip", "Parts", "Source", "Value", "Its entries"]
+            header = ["Chip", "Parts", "Source", "Value", "Entries"]
             rows = [
                 [
                     self.chip(i.flashes[0]),
@@ -153,15 +186,15 @@ class _Render:
                 for i in issues
             ]
         elif kind is IssueKind.NAME_IDS:
-            header = ["Part", "The ids it is listed under, and by whom"]
+            header = ["Part", "Ids, and who lists each"]
             rows = [[esc(i.subject), self.answers(i, self.shown(i))] for i in issues]
         elif kind is IssueKind.MANUFACTURER:
-            header = ["Chip", "Parts", "Each manufacturer, and the sources naming it"]
+            header = ["Chip", "Parts", "Manufacturers"]
             rows = [
                 [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
             ]
         else:
-            header = ["Chip", "Part", "Listed under this id by", "Its datasheets"]
+            header = ["Chip", "Part", "Listed by", "Datasheets"]
             rows = [
                 [
                     self.chip(i.flashes[0]),
@@ -233,7 +266,7 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
             f"{kind.description} {len(found)} found; "
             f"[the {kind.heading.lower()} page]({kind_page(kind)}.md) says more.\n"
         )
-        out.append(r.table(kind, found))
+        out.append(r.section(kind, found, 4))
     out.append("(by-source)=\n## By source\n")
     out.append(
         " · ".join(
@@ -259,7 +292,7 @@ def kind_markdown(r: _Render, kind: IssueKind, issues: list[Issue]) -> str:
             )
             + ". All the kinds: [Data issues](index.md).\n",
             "Type in the box to filter.\n",
-            r.table(kind, found),
+            r.section(kind, found, 2),
         ]
     )
 
@@ -279,7 +312,7 @@ def source_markdown(r: _Render, source: Source, issues: list[Issue]) -> str:
         found = _of(mine, kind)
         out.append(f"## {kind.heading}\n")
         out.append(f"{kind.description} [More on these]({kind_page(kind)}.md).\n")
-        out.append(r.table(kind, found))
+        out.append(r.section(kind, found, 3))
     return "\n".join(out)
 
 
@@ -316,7 +349,7 @@ def chip_issues(db: Database, slugs: dict[int, str], f: Flash, issues: list[Issu
             "What the checks behind [Data issues](../issues/index.md) find about this chip. "
             "Each source label links to its entry upstream.\n"
         ),
-        list_table(["Kind", "About", "The answers"], rows, "sf-table sf-issues sf-chip-issues"),
+        list_table(["Kind", "About", "Answers"], rows, "sf-table sf-issues sf-chip-issues"),
         "",
     ]
 
