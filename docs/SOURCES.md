@@ -15,7 +15,7 @@ Facts about chips: the id bytes a part answers, its part and manufacturer
 names, its size, page and sector sizes, erase opcodes and block layouts, other
 opcodes ({sfsrc}`openocd`, and the SFDP tables {sfsrc}`zephyr`'s boards copy), supply voltage
 range ({sfsrc}`flashrom`, {sfsrc}`flashprog`), the names of the capability flags each upstream
-sets, and each upstream's test status. The JEP106 manufacturer names come
+sets, and each upstream's test status. The [JEP106 manufacturer names](jep106/index.md) come
 from {sfsrc}`openocd`'s copy of the JEDEC list. From {sfsrc}`qemu`, the SFDP (JESD216) tables
 its flash model answers for thirteen parts are kept whole (the `sfdp` of
 those records): byte for byte what those parts answer to the SFDP command,
@@ -56,7 +56,7 @@ numbers it covers and whether it gives the chip's id bytes itself.
 - {sfsrc}`u-boot` kept {sfsrc}`linux`'s pre-6.8 table format and has parts {sfsrc}`linux` dropped or
   never had.
 - {sfsrc}`openocd` gives read, quad read, page program, sector and chip erase
-  opcodes per part, and the JEP106 list.
+  opcodes per part, and the [JEP106 list](jep106/index.md).
 - {sfsrc}`openfpgaloader` gives the block-protection layout (the `flags` of its
   records: `bp_len`, `bp_offset`, `tb_register`, `quad_register`, ...).
 - {sfsrc}`qemu` keeps a 2012 copy of {sfsrc}`linux`'s table for the parts its boards
