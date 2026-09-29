@@ -136,11 +136,12 @@ _EXIT_4B = {
     21: FourByteMethod.POWER_CYCLE,
 }
 
+# BFPT DW16[13:8], one bit per sequence; all clear means no soft reset.
 _SOFT_RESET = {
-    8: "no software reset",
-    9: "0xf on 4 lines, 8 clocks",
-    10: "0xf on 4 lines, 10 clocks (4-byte mode)",
-    11: "0xf on 4 lines, 16 clocks",
+    8: "0xf on 4 lines, 8 clocks",
+    9: "0xf on 4 lines, 10 clocks (4-byte mode)",
+    10: "0xf on 4 lines, 16 clocks",
+    11: "0xf0",
     12: "0x66 then 0x99",
     13: "exit 0-4-4 mode first",
 }
@@ -161,6 +162,7 @@ QUAD_ENABLE = {
     3: "SR2 bit 7, written with WRSR2 (0x3e), read with 0x3f",
     4: "SR2 bit 1, written with a 2-byte WRSR (a 1-byte WRSR leaves SR2)",
     5: "SR2 bit 1, written with a 2-byte WRSR, SR2 read with 0x35",
+    6: "SR2 bit 1, written with WRSR2 (0x31), read with 0x35",
 }
 
 _QPI_ENABLE = {

@@ -413,6 +413,20 @@ def test_dw17_octal_reads() -> None:
     assert "octal_read" in s.features()
 
 
+def test_dw15_dw16_codes() -> None:
+    # DW15: quad enable code 6 (JESD216C); DW16: soft reset bits 8, 11 and 12.
+    bfpt = [*MX_BFPT, 0, 0, 0, 0, 0, 6 << 20, 1 << 8 | 1 << 11 | 1 << 12]
+    s = parse(dump((0xFF00, 1, 6, 0x40, bfpt)))
+    assert s.bfpt is not None
+    assert s.bfpt.quad_enable_description == "SR2 bit 1, written with WRSR2 (0x31), read with 0x35"
+    assert s.bfpt.soft_reset == ("0xf on 4 lines, 8 clocks", "0xf0", "0x66 then 0x99")
+    assert s.bfpt.soft_reset_66_99 is True
+    no_reset = parse(dump((0xFF00, 1, 6, 0x40, [*bfpt[:15], 0])))
+    assert no_reset.bfpt is not None
+    assert no_reset.bfpt.soft_reset == ()
+    assert no_reset.bfpt.soft_reset_66_99 is False
+
+
 def test_every_named_operation_is_in_the_table() -> None:
     for s in map(parse, (MX25L25635E, W25Q512JV, IS25WP256, MT35XU01G)):
         for o in s.operations():
