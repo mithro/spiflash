@@ -88,11 +88,24 @@ KEYS = (
 )
 
 
+def part_case(name: str) -> str:
+    """An upstream's name with its part numbers in upper case, as datasheets
+    write them: ``"w25q128fv/jv"`` is ``"W25Q128FV/JV"``, ``"n25q256 1.8v"``
+    is ``"N25Q256 1.8V"``. A word with a digit in it is part of a part number
+    (or a voltage); the first word is the part; other words ("Uniform
+    128 kB Sectors") keep their case."""
+    words = name.split(" ")
+    return " ".join(
+        w.upper() if i == 0 or any(c.isdigit() for c in w) else w for i, w in enumerate(words)
+    )
+
+
 def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     """A record with every key present, in the canonical order.
 
     ``features`` and ``flags`` may come in any order and with repeats; they
-    are stored sorted and unique."""
+    are stored sorted and unique. The name's part numbers are upper case
+    (:func:`part_case`)."""
     unknown = set(fields) - set(KEYS)
     if unknown:
         msg = f"unknown record fields: {sorted(unknown)}"
@@ -108,7 +121,7 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         source=source,
         file=file,
         line=line,
-        name=name,
+        name=part_case(name),
         type=FlashType.NOR.value,
         id_method="rdid",
         features=[],
