@@ -55,6 +55,7 @@ tmp/
 /docs/chips/
 /docs/vendors/
 /docs/opcodes/
+/docs/issues/
 /docs/_generated/
 /docs/_build/
 /docs/_autosummary/

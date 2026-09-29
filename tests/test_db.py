@@ -331,6 +331,10 @@ def test_flash_with_ext_id_keeps_all_when_none_match() -> None:
         ("W25Q128.V", ("W25Q128.V",)),
         ("mx25l3205/mx25l3206e", ("MX25L3205", "MX25L3206E")),
         ("a//b", ("A", "B")),
+        ("S25FL032(A/P)", ("S25FL032A", "S25FL032P")),
+        ("EN25Q32(/A/B)", ("EN25Q32", "EN25Q32A", "EN25Q32B")),
+        ("MX25L4005(A/C)/MX25L4006E", ("MX25L4005A", "MX25L4005C", "MX25L4006E")),
+        ("MX25U3235(E/F)", ("MX25U3235E", "MX25U3235F")),
     ],
 )
 def test_part_names(name: str, parts: tuple[str, ...]) -> None:

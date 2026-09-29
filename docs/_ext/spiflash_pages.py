@@ -6,7 +6,8 @@ its parts, one page per chip id, and the index pages linking them. A page is
 only rewritten when its text changes, so incremental builds stay fast.
 
 It also writes a page per SPI operation into ``docs/opcodes/``
-(:mod:`opcode_pages`), with its WaveDrom timing diagram.
+(:mod:`opcode_pages`), with its WaveDrom timing diagram, and the data issues
+pages into ``docs/issues/`` (:mod:`issue_pages`).
 
 The pages are Markdown, not raw HTML, so Sphinx's search indexes every part
 name and id.
@@ -23,6 +24,7 @@ from sphinx.util.docutils import SphinxRole
 from sphinx.util.nodes import split_explicit_title
 
 import spiflash
+from issue_pages import generate_all as issue_pages
 from opcode_pages import generate_all as operation_pages
 from page_markup import (
     EM_DASH,
@@ -329,7 +331,8 @@ def _disagreements(f: Flash) -> list[str]:
         out.append(f"- **{attr.replace('_', ' ')}**: {said}")
     out.append(
         "\nParts sharing an id often differ in these; the values above are what most "
-        "sources give.\n:::\n"
+        "sources give. [Data issues](../issues/index.md) lists every such "
+        "disagreement.\n:::\n"
     )
     return out
 
@@ -574,6 +577,7 @@ def generate(srcdir: Path) -> None:
         raise ValueError(msg)
 
     chips_dir, vendors_dir, ops_dir = srcdir / "chips", srcdir / "vendors", srcdir / "opcodes"
+    issues_dir = srcdir / "issues"
     wanted: set[Path] = set()
 
     def page(path: Path, text: str) -> None:
@@ -588,13 +592,15 @@ def generate(srcdir: Path) -> None:
     page(chips_dir / "index.md", chips_index(list(db.flashes), slugs))
     for name, text in operation_pages(db).items():
         page(ops_dir / name, text)
+    for name, text in issue_pages(db, slugs).items():
+        page(issues_dir / name, text)
     # Fragments the hand-written pages include (docs/_generated is excluded
     # from the build as pages of its own).
     _write(srcdir / "_generated" / "opcodes-table.md", opcodes_table(list(db.flashes)))
     _write(srcdir / "_generated" / "sources-table.md", sources_table(db))
     _write(srcdir / "_generated" / "files-read.md", files_read_table(db))
     # A chip id that left the database leaves no stale page behind.
-    for d in (chips_dir, vendors_dir, ops_dir):
+    for d in (chips_dir, vendors_dir, ops_dir, issues_dir):
         for old in d.glob("*.md"):
             if old not in wanted:
                 old.unlink()

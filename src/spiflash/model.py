@@ -249,6 +249,10 @@ class Record:
         return part_names(self.name)
 
 
+# A part number and a group of suffixes: "S25FL032(A/P)", "EN25Q32(/A/B)".
+_SUFFIXES = re.compile(r"(\w+)\(([\w]*(?:/[\w]*)+)\)")
+
+
 def part_names(name: str) -> tuple[str, ...]:
     """The part numbers an upstream name stands for, upper case.
 
@@ -256,7 +260,13 @@ def part_names(name: str) -> tuple[str, ...]:
     ``"S25FL064P / EPCS64"`` is both; ``"S25FL128S_UL Uniform 128 kB Sectors"``
     is S25FL128S_UL. flashrom's ``.`` wildcards (``"W25Q128.V"``) are kept:
     :func:`name_matches` understands them. Handling of the ``/`` forms follows
-    LiteSPI's spi_nor_config_generator."""
+    LiteSPI's spi_nor_config_generator; flashrom's suffix groups
+    (``"S25FL032(A/P)"``, ``"EN25Q32(/A/B)"``, an empty one meaning the bare
+    name) are spelled out first."""
+    name = _SUFFIXES.sub(
+        lambda m: "/".join(m[1] + s for s in m[2].split("/")),
+        name,
+    )
     out: list[str] = []
     for alt in (a.strip() for a in name.split("/")):
         if not alt:
