@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from issue_checks import ATTRIBUTES, IssueKind, find
 from page_markup import (
     EM_DASH,
+    EM_SPACE,
     count,
     esc,
     list_table,
@@ -20,7 +21,7 @@ from page_markup import (
     spaced,
     vendor_link,
     vendor_of,
-    volts,
+    volt,
 )
 from spiflash.enums import IdFamily, Source
 
@@ -134,7 +135,7 @@ class _Render:
 
     def value(self, issue: Issue, v: Any) -> str:
         if issue.attribute == "voltage":
-            return volts(v)
+            return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if v else volt(None)
         if issue.attribute:
             return size_text(v)
         if issue.kind is IssueKind.NAME_IDS:
@@ -158,15 +159,20 @@ class _Render:
             for a in issue.answers
         )
 
-    def section(self, kind: IssueKind, issues: list[Issue], level: int) -> str:
+    def section(
+        self, kind: IssueKind, issues: list[Issue], level: int, *, targets: bool = False
+    ) -> str:
         """The issues of ``kind``: one table, or for disagreeing values one
-        per value, each under a heading of ``level``."""
+        per value, each under a heading of ``level`` (with a ``value-<attr>``
+        target, if ``targets``: only one page may have them)."""
         if kind is not IssueKind.VALUE or not issues:
             return self.table(kind, issues)
         out = []
         for attr in ATTRIBUTES:
             mine = [i for i in issues if i.attribute == attr]
             if mine:
+                if targets:
+                    out.append(f"(value-{attr})=")
                 out.append(f"{'#' * level} {VALUE_TITLES[attr]} ({len(mine)})\n")
                 out.append(self.table(kind, mine))
         return "\n".join(out)
@@ -176,7 +182,8 @@ class _Render:
             return "None found.\n"
         rows: list[list[str]]
         if kind is IssueKind.VALUE:
-            header = ["Chip", "Parts", "Answers"]
+            volts = issues[0].attribute == "voltage"
+            header = ["Chip", "Parts", "Answers: V min, V max" if volts else "Answers"]
             rows = [
                 [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
             ]
@@ -225,7 +232,8 @@ class _Render:
 
 
 def _attr(issue: Issue) -> str:
-    return (issue.attribute or "").replace("_", " ")
+    about = (issue.attribute or "").replace("_", " ")
+    return f"{about}: V min, V max" if issue.attribute == "voltage" else about
 
 
 def _involving(issues: list[Issue], source: Source) -> list[Issue]:
@@ -234,6 +242,11 @@ def _involving(issues: list[Issue], source: Source) -> list[Issue]:
 
 def _of(issues: list[Issue], kind: IssueKind) -> list[Issue]:
     return [i for i in issues if i.kind is kind]
+
+
+def _summary_row(title: str, issues: list[Issue]) -> list[str]:
+    """A row of the summary: the issues, then those of each source."""
+    return [title, count(len(issues)), *(count(len(_involving(issues, s))) for s in Source)]
 
 
 def index_page(r: _Render, issues: list[Issue]) -> str:
@@ -249,14 +262,18 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
         "## Summary\n",
     ]
     header = ["Kind", "All", *(source_link(s) for s in Source)]
-    rows = [
-        [
-            f"[{kind.heading}]({kind_page(kind)}.md)",
-            count(len(_of(issues, kind))),
-            *(count(len(_involving(_of(issues, kind), s))) for s in Source),
-        ]
-        for kind in IssueKind
-    ]
+    rows = []
+    for kind in IssueKind:
+        found = _of(issues, kind)
+        rows.append(_summary_row(f"[{kind.heading}]({kind_page(kind)}.md)", found))
+        if kind is IssueKind.VALUE:
+            # A sub-row per value the sources disagree on.
+            for attr in ATTRIBUTES:
+                mine = [i for i in found if i.attribute == attr]
+                title = VALUE_TITLES[attr]
+                if mine:  # only then has it a section to link to
+                    title = f"{{ref}}`{title} <value-{attr}>`"
+                rows.append(_summary_row(f"{EM_SPACE}{title}", mine))
     rows.append(
         ["**All**", f"**{len(issues)}**", *(f"**{len(_involving(issues, s))}**" for s in Source)]
     )
@@ -292,7 +309,7 @@ def kind_markdown(r: _Render, kind: IssueKind, issues: list[Issue]) -> str:
             + ", ".join(f"{source_link(s)} {len(_involving(found, s))}" for s in Source)
             + ". All the kinds: [Data issues](index.md).\n",
             "Type in the box to filter.\n",
-            r.section(kind, found, 2),
+            r.section(kind, found, 2, targets=True),
         ]
     )
 

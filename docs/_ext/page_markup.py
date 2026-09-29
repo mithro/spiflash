@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 EN_DASH = "\N{EN DASH}"
 EM_DASH = "\N{EM DASH}"
 TIMES = "\N{MULTIPLICATION SIGN}"
+EM_SPACE = "\N{EM SPACE}"
 
 #: JEDEC's pages for the standards the pages cite.
 JESD216 = "https://www.jedec.org/standards-documents/docs/jesd216b"
