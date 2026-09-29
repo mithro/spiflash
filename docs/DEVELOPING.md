@@ -153,12 +153,14 @@ A new vendor spelling fails `test_vendor_spellings_all_canonical`: add it to
    {py:data}`update_db.EXTRACTORS`.
 3. Tests on a miniature tree in {repo}`tests/fixtures/` and
    {repo}`tests/test_extract.py`.
-4. A member of `Source` ({repo}`src/spiflash/enums.py`), declared in its place
-   in the priority order, with its label; a badge colour
-   (`.sf-src-<name>` in {repo}`docs/_static/spiflash.css`); a row in the
-   README and {repo}`docs/SOURCES.md`; the source sets in
-   {repo}`tests/test_db.py`; and any new vendor spelling in
-   {repo}`src/spiflash/vendors.py`.
+4. Everything else that names the sources:
+   - a member of {py:class}`~spiflash.enums.Source`
+     ({repo}`src/spiflash/enums.py`), declared in its place in the priority
+     order, with its label;
+   - a badge colour (`.sf-src-<name>` in {repo}`docs/_static/spiflash.css`);
+   - a row in the README and {repo}`docs/SOURCES.md`;
+   - the source sets in {repo}`tests/test_db.py`;
+   - any new vendor spelling in {repo}`src/spiflash/vendors.py`.
 
 ## Building the Debian package locally
 
