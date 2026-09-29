@@ -44,6 +44,9 @@ Fields (``None`` / empty when the upstream does not say):
     ``[{"op": "READ_1_1_4", "opcode": 0x6b, "via": "SPI_NOR_QUAD_READ"}, ...]``,
     ``op`` a name in ``spiflash.opcodes.OPERATIONS`` and ``via`` the upstream
     flag, field or default behind it.
+``sfdp``
+    Hex of the part's SFDP (JESD216) area, where the upstream carries a
+    dump of it (QEMU's flash model does); :mod:`spiflash.sfdp` decodes it.
 ``tested``
     The upstream's test status, verbatim.
 ``notes``
@@ -83,6 +86,7 @@ KEYS = (
     "flags",
     "voltage",
     "opcodes",
+    "sfdp",
     "tested",
     "notes",
 )

@@ -35,7 +35,7 @@ PATH = re.compile(r"^(?:\.?[\w.*-]+/[\w.*-]+/[\w./*-]*|[\w.*-]+/[\w.*-]*/|[\w.*-
 # mention.
 REPO = re.compile(
     r"^(?:mithro|litex-hub|torvalds|u-boot|flashrom|SourceArcade|openocd-org|trabucayre"
-    r"|zephyrproject-rtos)"
+    r"|qemu|zephyrproject-rtos)"
     r"/[\w.-]+$"
 )
 # A file path in running text.

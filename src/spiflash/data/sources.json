@@ -1,5 +1,5 @@
 {
- "format": 2,
+ "format": 3,
  "sources": {
   "flashprog": {
    "branch": "main",
@@ -84,6 +84,20 @@
    ],
    "records": 190,
    "url": "https://github.com/openocd-org/openocd"
+  },
+  "qemu": {
+   "branch": "master",
+   "browse": "https://github.com/qemu/qemu",
+   "commit": "81ce3a87737aa50716c42db8886082d12783e0a1",
+   "date": "2026-09-27T02:02:29-07:00",
+   "license": "GPL-2.0-or-later",
+   "paths": [
+    "hw/block/m25p80.c",
+    "hw/block/m25p80_sfdp.c",
+    "hw/block/m25p80_sfdp.h"
+   ],
+   "records": 137,
+   "url": "https://gitlab.com/qemu-project/qemu.git"
   },
   "u-boot": {
    "branch": "main",

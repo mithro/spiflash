@@ -26,6 +26,7 @@ from spiflash.model import (
     strip_continuation,
 )
 from spiflash.opcodes import OPERATIONS
+from test_sfdp import MX25L25635E, W25Q512JV
 
 
 def rec(**kw: object) -> Record:
@@ -65,6 +66,7 @@ def test_every_source_is_present() -> None:
         "flashprog",
         "openocd",
         "openfpgaloader",
+        "qemu",
         "zephyr",
         "jep106",
     }
@@ -267,8 +269,9 @@ def test_unknown_source_is_rejected() -> None:
 def test_sources_are_in_priority_order() -> None:
     assert [s.priority for s in Source] == list(range(len(Source)))
     assert Source.FLASHROM.priority < Source.LINUX.priority < Source.OPENFPGALOADER.priority
-    # Zephyr last: board descriptions, not a curated table of parts.
-    assert list(Source)[-1] is Source.ZEPHYR
+    # QEMU, then Zephyr last: board descriptions, not a curated table of parts.
+    assert list(Source)[-2:] == [Source.QEMU, Source.ZEPHYR]
+    assert Source.QEMU.label == "QEMU"
     assert Source.UBOOT.label == "U-Boot"
     assert Source("u-boot") is Source.UBOOT
 
@@ -463,3 +466,52 @@ def test_link_to_the_upstream_line() -> None:
         records=1,
     )
     assert Database([rec()], sources={"linux": elsewhere}).link(rec()) is None
+
+
+# --- SFDP dumps on records ---------------------------------------------------
+
+
+def test_record_sfdp_dump() -> None:
+    plain = rec()
+    assert plain.sfdp is None
+    assert plain.sfdp_tables() is None
+    with_dump = rec(source="openocd", sfdp=W25Q512JV.hex())
+    assert with_dump.sfdp == W25Q512JV
+    tables = with_dump.sfdp_tables()
+    assert tables is not None
+    assert tables.size == 64 << 20
+    other = rec(source="openfpgaloader", name="w25q128jv", sfdp=MX25L25635E.hex())
+    same = rec(source="qemu", name="w25q128fv", sfdp=W25Q512JV.hex())
+    db = Database([plain, with_dump, other, same])
+    (f,) = db.flashes
+    assert f.sfdp is not None
+    assert f.sfdp.revision_name == "JESD216B"  # OpenOCD outranks openFPGALoader
+    assert f.sfdp_source == "openocd"
+    # Parts sharing an id can carry different dumps: each is kept, with its parts.
+    assert [(d.source, d.parts, d.tables.revision_name) for d in f.sfdp_dumps] == [
+        ("openocd", ("W25Q128", "W25Q128FV"), "JESD216B"),
+        ("openfpgaloader", ("W25Q128JV",), "JESD216"),
+    ]
+    assert [r.source for r in f.sfdp_dumps[0].records] == ["openocd", "qemu"]
+    doc = f.to_json()
+    assert [(d["source"], d["parts"], d["size"]) for d in doc["sfdp"]] == [
+        ("openocd", ["W25Q128", "W25Q128FV"], 64 << 20),
+        ("openfpgaloader", ["W25Q128JV"], 32 << 20),
+    ]
+    json.dumps(doc)
+    (none,) = Database([plain]).flashes
+    assert none.sfdp is None
+    assert none.sfdp_source is None
+    assert none.sfdp_dumps == ()
+    assert none.to_json()["sfdp"] == []
+
+
+def test_every_shipped_sfdp_dump_decodes() -> None:
+    for r in spiflash.records():
+        if r.sfdp is None:
+            continue
+        tables = r.sfdp_tables()
+        assert tables is not None, r.name
+        assert tables.bfpt is not None, r.name
+        assert tables.features() <= r.features, r.name
+        assert "sfdp" in r.features
