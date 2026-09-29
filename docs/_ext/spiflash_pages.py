@@ -7,7 +7,8 @@ only rewritten when its text changes, so incremental builds stay fast.
 
 It also writes a page per SPI operation into ``docs/opcodes/``
 (:mod:`opcode_pages`), with its WaveDrom timing diagram, and the data issues
-pages into ``docs/issues/`` (:mod:`issue_pages`).
+pages into ``docs/issues/`` (:mod:`issue_pages`), and a page per source
+into ``docs/sources/`` (:mod:`source_pages`).
 
 The pages are Markdown, not raw HTML, so Sphinx's search indexes every part
 name and id.
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from docutils import nodes
+from sphinx.transforms.post_transforms import SphinxPostTransform
 from sphinx.util.docutils import SphinxRole
 from sphinx.util.nodes import split_explicit_title
 
@@ -38,6 +40,7 @@ from page_markup import (
     JESD216,
     KIND_TITLE,
     TIMES,
+    UP_ARROW,
     badge,
     badge_lines,
     chip_slug,
@@ -49,6 +52,7 @@ from page_markup import (
     size_text,
     slug,
     source_badge,
+    source_label,
     spaced,
     table_id,
     title_of,
@@ -57,7 +61,10 @@ from page_markup import (
     volt,
     volts,
 )
-from spiflash.enums import Feature, OperationKind
+from source_pages import commit_link, page_name
+from source_pages import generate_all as source_pages
+from source_pages import sources_table as sources_list
+from spiflash.enums import Feature, OperationKind, Source
 from spiflash.opcodes import OPERATIONS
 from spiflash.units import human_size, human_time
 
@@ -612,17 +619,12 @@ def sources_table(db: Database) -> str:
     rows = []
     for name, s in sorted(db.sources.items()):
         base = s.browse
-        commit = (
-            f"[`{s.commit[:12]}`]({base.rstrip('/')}/commit/{s.commit})"
-            if base.startswith("https://github.com/")
-            else f"`{s.commit[:12]}`"
-        )
         label = (
             f"JEP106 ({{sfsrc}}`openocd <{base}>`)"
             if name == "jep106"
             else f"{{sfsrc}}`{name} <{base}>`"
         )
-        rows.append([label, commit, f"{s.date:%Y-%m-%d}", count(s.records), esc(s.license)])
+        rows.append([label, commit_link(s), f"{s.date:%Y-%m-%d}", count(s.records), esc(s.license)])
     return list_table(["Source", "Commit", "Date", "Entries", "Licence"], rows, "sf-table")
 
 
@@ -677,6 +679,7 @@ def generate(srcdir: Path) -> None:
     chips_dir, vendors_dir, ops_dir = srcdir / "chips", srcdir / "vendors", srcdir / "opcodes"
     issues_dir = srcdir / "issues"
     jep106_dir = srcdir / "jep106"
+    sources_dir = srcdir / "sources"
     wanted: set[Path] = set()
 
     def page(path: Path, text: str) -> None:
@@ -695,13 +698,16 @@ def generate(srcdir: Path) -> None:
         page(issues_dir / name, text)
     for name, text in jep106_pages(db, slugs).items():
         page(jep106_dir / name, text)
+    for name, text in source_pages(db, slugs, issues).items():
+        page(sources_dir / name, text)
     # Fragments the hand-written pages include (docs/_generated is excluded
     # from the build as pages of its own).
     _write(srcdir / "_generated" / "opcodes-table.md", opcodes_table(list(db.flashes)))
     _write(srcdir / "_generated" / "sources-table.md", sources_table(db))
     _write(srcdir / "_generated" / "files-read.md", files_read_table(db))
+    _write(srcdir / "_generated" / "sources-list.md", sources_list(db, issues, ""))
     # A chip id that left the database leaves no stale page behind.
-    for d in (chips_dir, vendors_dir, ops_dir, issues_dir, jep106_dir):
+    for d in (chips_dir, vendors_dir, ops_dir, issues_dir, jep106_dir, sources_dir):
         for old in d.glob("*.md"):
             if old not in wanted:
                 old.unlink()
@@ -724,9 +730,11 @@ class SpanRole(SphinxRole):
 
 
 class SourceRole(SphinxRole):
-    """``{sfsrc}`linux``` as a coloured label naming the source. A count
-    and a link are optional: ``{sfsrc}`linux <count> <https://...>```. With
-    ``mine``, the label is ringed: the source a page is about."""
+    """``{sfsrc}`linux``` as a coloured label naming the source, linked to
+    its page. A count and a link are optional: ``{sfsrc}`linux <count>
+    <https://...>``` adds an arrow after the label, linked there (to the
+    entry upstream, say). With ``mine``, the label is ringed: the source a
+    page is about."""
 
     def __init__(self, *, mine: bool = False) -> None:
         super().__init__()
@@ -741,11 +749,38 @@ class SourceRole(SphinxRole):
             classes.append("sf-src-split")
         badge = nodes.inline(self.rawtext, "", classes=classes)
         badge += [nodes.inline(line, line) for line in lines]
-        if not has_link:
-            return [badge], []
-        return [
-            nodes.reference(self.rawtext, "", badge, refuri=target, classes=["sf-src-link"])
-        ], []
+        out: list[nodes.Node] = [badge]
+        if source in set(Source):
+            # SourcePageLinks sets the link once the page's own URL is known.
+            out = [
+                nodes.reference(
+                    self.rawtext,
+                    "",
+                    badge,
+                    refuri="#",
+                    classes=["sf-src-link"],
+                    reftitle=f"About {source_label(source)}",
+                    sfsource=source,
+                )
+            ]
+        if has_link:
+            up = nodes.reference("", UP_ARROW, refuri=target, classes=["sf-src-up"])
+            up["reftitle"] = f"Open in {source_label(source)}"
+            out.append(up)
+        return out, []
+
+
+class SourcePageLinks(SphinxPostTransform):
+    """Points each source label at its page, relative to the page it is on."""
+
+    default_priority = 5
+
+    def run(self, **_: Any) -> None:
+        for ref in self.document.findall(nodes.reference):
+            if source := ref.get("sfsource"):
+                ref["refuri"] = self.app.builder.get_relative_uri(
+                    self.env.docname, f"sources/{page_name(source)}"
+                )
 
 
 class NumberRole(SphinxRole):
@@ -894,6 +929,7 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_role("sfsub", SpanRole("sf-sub"))
     app.add_role("sfsrc", SourceRole())
     app.add_role("sfsrcme", SourceRole(mine=True))
+    app.add_post_transform(SourcePageLinks)
     app.add_role("sfnum", NumberRole())
     app.add_role("sfmore", MoreRole())
     app.add_role("repo", RepoRole())
