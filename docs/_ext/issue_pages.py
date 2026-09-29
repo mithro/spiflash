@@ -13,6 +13,7 @@ from issue_checks import ATTRIBUTES, IssueKind, find
 from page_markup import (
     EM_DASH,
     EM_SPACE,
+    common_unit,
     count,
     esc,
     list_table,
@@ -77,10 +78,15 @@ VALUE_TITLES = {
 }
 
 
-def value_target(attr: str) -> str:
-    """The value page's target for the section on ``attr``: its HTML id
-    too, which is why it has no underscores (Sphinx makes them dashes)."""
-    return f"value-{attr.replace('_', '-')}"
+#: The kinds of issue about a value, shown a section per value.
+BY_ATTRIBUTE = (IssueKind.VALUE, IssueKind.SAME_SOURCE)
+
+
+def attr_target(kind: IssueKind, attr: str) -> str:
+    """The target, on the page of ``kind``, of its section on ``attr``: its
+    HTML id too, which is why it has no underscores (Sphinx makes them
+    dashes)."""
+    return f"{kind_page(kind)}-{attr.replace('_', '-')}"
 
 
 def kind_page(kind: IssueKind) -> str:
@@ -143,7 +149,8 @@ class _Render:
         if issue.attribute == "voltage":
             return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if v else volt(None)
         if issue.attribute:
-            return size_text(v)
+            # One unit for all the answers, so their digits line up.
+            return size_text(v, common_unit(a.value for a in issue.answers))
         if issue.kind is IssueKind.NAME_IDS:
             return self.chip(self.chips[v])
         if issue.kind is IssueKind.MANUFACTURER and v in self.vendors:
@@ -168,17 +175,17 @@ class _Render:
     def section(
         self, kind: IssueKind, issues: list[Issue], level: int, *, targets: bool = False
     ) -> str:
-        """The issues of ``kind``: one table, or for disagreeing values one
-        per value, each under a heading of ``level`` (with a ``value-<attr>``
-        target, if ``targets``: only one page may have them)."""
-        if kind is not IssueKind.VALUE or not issues:
+        """The issues of ``kind``: one table, or for issues about a value one
+        per value, each under a heading of ``level`` (with a target, if
+        ``targets``: only the kind's own page may have them)."""
+        if kind not in BY_ATTRIBUTE or not issues:
             return self.table(kind, issues)
         out = []
         for attr in ATTRIBUTES:
             mine = [i for i in issues if i.attribute == attr]
             if mine:
                 if targets:
-                    out.append(f"({value_target(attr)})=")
+                    out.append(f"({attr_target(kind, attr)})=")
                 out.append(f"{'#' * level} {VALUE_TITLES[attr]} ({len(mine)})\n")
                 out.append(self.table(kind, mine))
         return "\n".join(out)
@@ -194,13 +201,13 @@ class _Render:
                 [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
             ]
         elif kind is IssueKind.SAME_SOURCE:
-            header = ["Chip", "Parts", "Source", "Value", "Entries"]
+            volts = issues[0].attribute == "voltage"
+            header = ["Chip", "Parts", "Source", "Entries: V min, V max" if volts else "Entries"]
             rows = [
                 [
                     self.chip(i.flashes[0]),
                     self.names(i.flashes[0]),
                     self.who(i.answers[0].records[:1]),
-                    _attr(i),
                     self.answers(i, by_entry=True),
                 ]
                 for i in issues
@@ -272,13 +279,13 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
     for kind in IssueKind:
         found = _of(issues, kind)
         rows.append(_summary_row(f"[{kind.heading}]({kind_page(kind)}.md)", found))
-        if kind is IssueKind.VALUE:
-            # A sub-row per value the sources disagree on.
+        if kind in BY_ATTRIBUTE:
+            # A sub-row per value.
             for attr in ATTRIBUTES:
                 mine = [i for i in found if i.attribute == attr]
                 title = VALUE_TITLES[attr]
                 if mine:  # only then has it a section to link to
-                    title += f" <{kind_page(kind)}.html#{value_target(attr)}>"
+                    title += f" <{kind_page(kind)}.html#{attr_target(kind, attr)}>"
                 rows.append(_summary_row(f"{{sfsub}}`{title}`", mine))
     rows.append(
         ["**All**", f"**{len(issues)}**", *(f"**{len(_involving(issues, s))}**" for s in Source)]

@@ -12,6 +12,8 @@ from spiflash.enums import Source
 from spiflash.units import human_size
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from spiflash import Flash
 
 
@@ -178,8 +180,26 @@ def volt(mv: int | None) -> str:
     return num(f"{mv / 1000:g} V" if mv else f"{EM_DASH} V")
 
 
-def size_text(n: int | None) -> str:
-    return num(human_size(n) if n else f"{EM_DASH} B")
+def size_text(n: int | None, unit: int | None = None) -> str:
+    """A size: in its own largest unit (``16 MiB``), or in ``unit``, the
+    scale :func:`common_unit` gives (``4,096 B``)."""
+    if not n:
+        return num(f"{EM_DASH} B")
+    if unit is None:
+        return num(human_size(n))
+    return num(f"{n // unit:,} {SIZE_UNITS[unit]}")
+
+
+#: The units of sizes, by scale.
+SIZE_UNITS = {1 << 30: "GiB", 1 << 20: "MiB", 1 << 10: "KiB", 1: "B"}
+
+
+def common_unit(sizes: Iterable[int | None]) -> int:
+    """The largest unit every one of ``sizes`` is a whole number of: sizes
+    compared side by side read alike, ``256 B`` against ``4,096 B`` rather
+    than against ``4 KiB``."""
+    known = [n for n in sizes if n]
+    return next(u for u in SIZE_UNITS if all(n % u == 0 for n in known))
 
 
 def count(n: int) -> str:

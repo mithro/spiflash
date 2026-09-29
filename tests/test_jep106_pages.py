@@ -6,7 +6,7 @@ import pytest
 
 import spiflash
 from jep106_pages import chips_by_code, code_slug, code_text, generate_all
-from page_markup import EM_DASH, EN_DASH, TIMES, count, more, size_text, volt
+from page_markup import EM_DASH, EN_DASH, TIMES, common_unit, count, more, size_text, volt
 from spiflash_pages import NumberRole
 
 
@@ -58,3 +58,12 @@ def test_number_helpers() -> None:
     assert count(1234) == "{sfnum}`1,234`"
     assert more(["A", "B"], []) == "A, B"
     assert more(["A", "B"], ["C", "D"]) == "A, B, {sfmore}`C, D`"
+
+
+def test_sizes_in_a_common_unit() -> None:
+    assert common_unit([256, 4096]) == 1
+    assert common_unit([16 << 20, 32 << 20, None]) == 1 << 20
+    assert common_unit([64 << 10, 256 << 10]) == 1 << 10
+    assert common_unit([None]) == 1 << 30
+    assert size_text(4096, 1) == "{sfnum}`4,096 B`"
+    assert size_text(4 << 20, 1 << 10) == "{sfnum}`4,096 KiB`"

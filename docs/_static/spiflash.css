@@ -9,6 +9,23 @@ body {
   --sf-yes: #16a34a;
 }
 
+/* Furo's content is 46em wide whatever the window: the wide tables scroll
+   beside empty space (the contents column, blank on a page without one).
+   The content takes the room there is; prose keeps a readable measure. */
+.main, .content { min-width: 0; }
+.content { width: auto; flex: 1 1 46em; }
+/* With the content growing there is nothing to centre, so the navigation
+   keeps its own 15em rather than half the spare width, a blank band on
+   its left; and the content's padding is less. (Below 63em Furo makes the
+   navigation a drawer; below 67em it sets the padding itself.) */
+@media (min-width: 63em) {
+  .sidebar-drawer { width: 15em; }
+}
+@media (min-width: 67em) {
+  .content { padding: 0 1.5em; }
+}
+article :is(p, ul, ol, dl, blockquote):not(td *, th *) { max-width: 46em; }
+
 /* Ids and opcodes: monospace chips. */
 .sf-id, .sf-op {
   font-family: var(--font-stack--monospace);
@@ -257,6 +274,8 @@ table.sf-chip-issues td:first-child { white-space: normal; min-width: 9em; }
 .sf-num > span { display: inline-block; }
 .sf-n-int { text-align: right; }
 .sf-num-size .sf-n-int { min-width: 4ch; }
+/* In an issue's answers, sizes share a unit: up to 65,536 B. */
+.sf-val .sf-num-size .sf-n-int { min-width: 6ch; }
 .sf-num-plain .sf-n-int { min-width: 5ch; }
 .sf-num-volt .sf-n-int { min-width: 1ch; }
 .sf-n-frac { width: 4ch; text-align: left; }

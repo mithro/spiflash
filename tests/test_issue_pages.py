@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import spiflash
 from issue_checks import IssueKind, find
-from issue_pages import chip_issues, generate_all
+from issue_pages import VALUE_TITLES, chip_issues, generate_all
 from page_markup import EM_SPACE, EN_DASH
 from spiflash import Database, Datasheet
 from spiflash.enums import Source
@@ -192,3 +192,18 @@ def test_supply_ends_are_numbers_of_their_own() -> None:
     assert f"[**{{sfnum}}`2.7 V`{EM_SPACE}{{sfnum}}`3.6 V`**]{{.sf-val}}[{{sfsrc}}`linux" in page
     assert "`]{.sf-who}" in page
     assert EN_DASH not in page
+
+
+def test_one_source_grouped_by_value() -> None:
+    db = spiflash.database()
+    slugs = {id(f): f.key for f in db.flashes}
+    pages = generate_all(db, slugs)
+    page = pages["same-source.md"]
+    headings = [line for line in page.splitlines() if line.startswith("## ")]
+    assert headings
+    assert all(h.split(" (")[0].removeprefix("## ") in VALUE_TITLES.values() for h in headings)
+    counts = sum(int(h.split("(")[1].rstrip(")")) for h in headings)
+    assert counts == len([i for i in find(db) if i.kind is IssueKind.SAME_SOURCE])
+    assert "(same-source-page-size)=" in page
+    # The summary links each value's section.
+    assert "<same-source.html#same-source-page-size>`" in pages["index.md"]
