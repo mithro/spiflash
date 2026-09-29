@@ -9,6 +9,13 @@ body {
   --sf-yes: #16a34a;
 }
 
+/* Furo's content is 46em wide whatever the window: the wide tables scroll
+   beside empty space (the contents column, blank on a page without one).
+   The content takes the room there is; prose keeps a readable measure. */
+.main, .content { min-width: 0; }
+.content { width: auto; flex: 1 1 46em; }
+article :is(p, ul, ol, dl, blockquote):not(td *, th *) { max-width: 46em; }
+
 /* Ids and opcodes: monospace chips. */
 .sf-id, .sf-op {
   font-family: var(--font-stack--monospace);
