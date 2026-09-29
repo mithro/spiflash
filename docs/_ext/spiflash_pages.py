@@ -44,19 +44,23 @@ from page_markup import (
     source_badge,
     source_label,
     spaced,
+    table_id,
     title_of,
+    vendor_link,
     vendor_of,
     volts,
 )
 from spiflash.cli import human_size
-from spiflash.enums import OperationKind
+from spiflash.enums import Feature, OperationKind
 from spiflash.opcodes import OPERATIONS
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sphinx.application import Sphinx
     from sphinx.config import Config
 
-    from spiflash import Database, Flash
+    from spiflash import Database, Flash, Record
 
 
 def chip_page(
@@ -68,7 +72,7 @@ def chip_page(
     out.append(
         " ".join(
             [
-                badge(vendor_of(f), "primary"),
+                f"{{bdg-link-primary}}`{esc(vendor_of(f))} <../vendors/{vendor_slug}.html>`",
                 badge(kind, "info"),
                 f"{{sfid}}`{spaced(f.jedec_id if f.family == 'jedec' else f.id_hex)}`",
             ]
@@ -81,6 +85,7 @@ def chip_page(
     out += _summary_cards(f)
     out += _datasheets(f)
     out += _identification(db, f, kind)
+    out += _extended_ids(db, f)
     out += _capabilities(f)
     out += _opcodes(f)
     out += _erase_layouts(f)
@@ -158,36 +163,100 @@ def _identification(db: Database, f: Flash, kind: str) -> list[str]:
     else:
         rows.append([f"Legacy id ({f.family.upper()})", f"{{sfid}}`{spaced(f.id_hex)}`"])
     jep = db.jep106(f.id[0], f.bank)
-    rows.append(["Manufacturer", esc(vendor_of(f))])
+    rows.append(["Manufacturer", vendor_link(vendor_of(f))])
     if jep and jep.lower() != vendor_of(f).lower():
         rows.append([f"JEP106 name of 0x{f.id[0]:02x} (bank {f.bank + 1})", esc(jep)])
     exts = sorted({r.ext_id.hex() for r in f.records if r.ext_id})
     if exts:
         rows.append(
             [
-                "Extended ids that tell variants apart",
-                ", ".join(f"{{sfid}}`{spaced(e)}`" for e in exts),
+                "Extended ids",
+                ", ".join(f"{{sfid}}`{spaced(e)}`" for e in exts)
+                + " ([what each means](#extended-ids))",
             ]
         )
     rows.append(["Type", kind])
     return ["## Identification\n", list_table(["", ""], rows, "sf-kv"), ""]
 
 
+def _one_of(values: set[Any], show: Callable[[Any], str]) -> str:
+    """One value, or each of several ("64 KiB / 256 KiB")."""
+    if not values:
+        return EM_DASH
+    return " / ".join(show(v) for v in sorted(values))
+
+
+def _extended_ids(db: Database, f: Flash) -> list[str]:
+    """What each extended id stands for: the bytes a part sends after the
+    JEDEC id, which sources use to tell apart variants that share it."""
+    if not any(r.ext_id for r in f.records):
+        return []
+    groups: dict[bytes | None, list[Record]] = defaultdict(list)
+    for r in f.records:
+        groups[r.ext_id].append(r)
+    rows = []
+    for ext in sorted(groups, key=lambda e: (e is None, e or b"")):
+        recs = groups[ext]
+        names = dict.fromkeys(r.name for r in recs)
+        notes = dict.fromkeys(n for r in recs for n in r.notes)
+        by_source: dict[str, str] = {}
+        for r in sorted(recs, key=lambda r: r.source.priority):
+            by_source.setdefault(r.source, db.link(r) or "")
+        rows.append(
+            [
+                f"{{sfid}}`{spaced(ext.hex())}`" if ext else "none (any variant)",
+                ", ".join(esc(n) for n in names),
+                " ".join(
+                    f"{{sfsrc}}`{s} <{u}>`" if u else source_badge(s) for s, u in by_source.items()
+                ),
+                _one_of({r.size for r in recs if r.size}, size_text),
+                _one_of({r.page_size for r in recs if r.page_size}, size_text),
+                _one_of({r.sector_size for r in recs if r.sector_size}, size_text),
+                "; ".join(esc(n) for n in notes) or EM_DASH,
+            ]
+        )
+    return [
+        "## Extended ids\n",
+        (
+            "Some parts send more bytes after the JEDEC id, and sources use them to "
+            "tell apart variants that answer the same id. Each extended id, the "
+            "entries listed under it, and what they give (an entry with no extended "
+            "id covers every variant):\n"
+        ),
+        list_table(
+            ["Ext. id", "Listed as", "By", "Size", "Page", "Sector", "Upstream notes"],
+            rows,
+            "sf-table sf-ext-ids",
+        ),
+        "",
+    ]
+
+
+def _source_header(s: str) -> str:
+    return f"{{sfsrc}}`{s}`"
+
+
 def _capabilities(f: Flash) -> list[str]:
     if not f.features:
         return []
+    srcs = [s for s in f.sources if any(s in f.feature_sources(x) for x in f.features)]
     rows = [
         [
-            FEATURE_TEXT[feat][0],
-            " ".join(source_badge(s) for s in f.feature_sources(feat)),
+            badge(*FEATURE_TEXT[feat]),
+            esc(Feature(feat).description),
         ]
+        + ["{sfyes}`✓`" if s in f.feature_sources(feat) else " " for s in srcs]
         for feat in FEATURE_TEXT
         if feat in f.features
     ]
     return [
         "## Capabilities\n",
-        feature_badges(f.features) + "\n",
-        list_table(["Capability", "Listed by"], rows, "sf-table", "40 60"),
+        "Each capability some source says this part has, and which sources say so.\n",
+        list_table(
+            ["Capability", "What it means", *[_source_header(s) for s in srcs]],
+            rows,
+            "sf-table sf-matrix sf-capabilities",
+        ),
         "",
     ]
 
@@ -206,16 +275,17 @@ def _opcodes(f: Flash) -> list[str]:
         [
             f"{{sfop}}`0x{o.opcode:02x}`",
             f"[`{o.name}`](../opcodes/{o.name}.md)",
-            f"{{sfkind}}`{o.operation.kind}` {esc(o.operation.description)}",
+            kind_link(o.operation.kind, "../opcodes.html"),
+            esc(o.operation.description),
         ]
         + ["{sfyes}`✓`" if s in o.sources else " " for s in srcs]
         for o in f.opcodes.values()
     ]
     out.append(
         list_table(
-            ["Opcode", "Operation", "Description", *[source_label(s) for s in srcs]],
+            ["Opcode", "Operation", "Type", "Description", *[_source_header(s) for s in srcs]],
             rows,
-            "sf-table sf-opcodes",
+            "sf-table sf-matrix sf-opcodes",
         )
     )
     out.append("")
@@ -296,17 +366,19 @@ def _sources(db: Database, f: Flash) -> list[str]:
 
 
 def parts_table(
-    flashes: list[Flash], slugs: dict[int, str], prefix: str, *, with_vendor: bool = False
+    flashes: list[Flash],
+    slugs: dict[int, str],
+    prefix: str,
+    *,
+    with_vendor: bool = False,
+    vendor_prefix: str = "../vendors/",
 ) -> str:
     rows = []
     for f in flashes:
-        link = (
-            f"[{spaced(f.jedec_id if f.family == 'jedec' else f.id_hex)}]"
-            f"({prefix}{slugs[id(f)]}.md)"
-        )
+        link = table_id(f, f"{prefix}{slugs[id(f)]}.md")
         row = [link]
         if with_vendor:
-            row.append(esc(vendor_of(f)))
+            row.append(vendor_link(vendor_of(f), vendor_prefix))
         row += [
             ", ".join(esc(n) for n in f.names),
             link_to("PDF", f.datasheets[0].url) if f.datasheets else " ",
@@ -325,15 +397,15 @@ def parts_table(
         + (["Vendor"] if with_vendor else [])
         + [
             "Parts",
-            "Datasheet",
+            "Data\u00adsheet",
             "Type",
             "Size",
             *([] if with_vendor else ["Page"]),
             "Sector",
             "Supply",
             "Highlights",
-            "Opcodes",
-            "Sources",
+            "Ops",
+            "Srcs",
         ]
     )
     classes = "sf-table sf-filterable sf-parts" + (" sf-with-vendor" if with_vendor else "")
@@ -425,14 +497,20 @@ def opcodes_table(flashes: list[Flash]) -> str:
             for op in OPERATIONS.values()
             if op.kind == kind
         ]
-        out.append(f"### {KIND_TITLE[kind]}\n")
-        out.append(
-            list_table(
-                ["Opcode", "Operation", "Description", "Chips"], rows, "sf-table", "10 25 50 15"
-            )
-        )
+        out.append(f"({KIND_TARGET}{kind})=\n### {KIND_TITLE[kind]}\n")
+        out.append(list_table(["Opcode", "Operation", "Description", "Chips"], rows, "sf-table"))
         out.append("")
     return "\n".join(out)
+
+
+#: The opcodes page's target for each kind of operation's table.
+KIND_TARGET = "opcodes-"
+
+
+def kind_link(kind: str, page: str) -> str:
+    """The kind of an operation, linked to its table on the opcodes page
+    (``page``, relative to the linking page's HTML)."""
+    return f"{{sfkind}}`{kind} <{page}#{KIND_TARGET}{kind}>`"
 
 
 def sources_table(db: Database) -> str:
@@ -530,14 +608,19 @@ def generate(srcdir: Path) -> None:
 
 
 class SpanRole(SphinxRole):
-    """``{role}`text``` as ``<span class="css">text</span>``."""
+    """``{role}`text``` as ``<span class="css">text</span>``; with a link,
+    ``{role}`text <url>```, the span is linked."""
 
     def __init__(self, css: str) -> None:
         super().__init__()
         self.css = css
 
     def run(self) -> tuple[list[nodes.Node], list[nodes.system_message]]:
-        return [nodes.inline(self.rawtext, self.text, classes=[self.css])], []
+        has_link, title, target = split_explicit_title(self.text)
+        span = nodes.inline(self.rawtext, title, classes=[self.css])
+        if not has_link:
+            return [span], []
+        return [nodes.reference(self.rawtext, "", span, refuri=target)], []
 
 
 class SourceRole(SphinxRole):

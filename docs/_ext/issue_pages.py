@@ -10,7 +10,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from issue_checks import IssueKind, find
-from page_markup import EM_DASH, esc, list_table, size_text, spaced, volts
+from page_markup import (
+    EM_DASH,
+    esc,
+    list_table,
+    size_text,
+    spaced,
+    vendor_link,
+    vendor_of,
+    volts,
+)
 from spiflash.enums import IdFamily, Source
 
 if TYPE_CHECKING:
@@ -73,6 +82,8 @@ class _Render:
         #: On a source's page: its records are in bold.
         self.focus = focus
         self.chips = {f.key: f for f in db.flashes}
+        #: The manufacturers with a vendor page.
+        self.vendors = {vendor_of(f) for f in db.flashes}
 
     def chip(self, f: Flash) -> str:
         shown = spaced(f.id_hex)
@@ -113,6 +124,8 @@ class _Render:
             return size_text(v)
         if issue.kind is IssueKind.NAME_IDS:
             return self.chip(self.chips[v])
+        if issue.kind is IssueKind.MANUFACTURER and v in self.vendors:
+            return vendor_link(v)
         return esc(str(v))
 
     def answers(
@@ -135,13 +148,13 @@ class _Render:
             return "None found.\n"
         rows: list[list[str]]
         if kind is IssueKind.VALUE:
-            header = ["Chip", "Parts", "Value", "Each answer, and the sources giving it"]
+            header = ["Chip", "Parts", "Value", "Answers"]
             rows = [
                 [self.chip(i.flashes[0]), self.names(i.flashes[0]), _attr(i), self.answers(i)]
                 for i in issues
             ]
         elif kind is IssueKind.SAME_SOURCE:
-            header = ["Chip", "Parts", "Source", "Value", "Its entries"]
+            header = ["Chip", "Parts", "Source", "Value", "Entries"]
             rows = [
                 [
                     self.chip(i.flashes[0]),
@@ -153,15 +166,15 @@ class _Render:
                 for i in issues
             ]
         elif kind is IssueKind.NAME_IDS:
-            header = ["Part", "The ids it is listed under, and by whom"]
+            header = ["Part", "Ids, and who lists each"]
             rows = [[esc(i.subject), self.answers(i, self.shown(i))] for i in issues]
         elif kind is IssueKind.MANUFACTURER:
-            header = ["Chip", "Parts", "Each manufacturer, and the sources naming it"]
+            header = ["Chip", "Parts", "Manufacturers"]
             rows = [
                 [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
             ]
         else:
-            header = ["Chip", "Part", "Listed under this id by", "Its datasheets"]
+            header = ["Chip", "Part", "Listed by", "Datasheets"]
             rows = [
                 [
                     self.chip(i.flashes[0]),
@@ -316,7 +329,7 @@ def chip_issues(db: Database, slugs: dict[int, str], f: Flash, issues: list[Issu
             "What the checks behind [Data issues](../issues/index.md) find about this chip. "
             "Each source label links to its entry upstream.\n"
         ),
-        list_table(["Kind", "About", "The answers"], rows, "sf-table sf-issues sf-chip-issues"),
+        list_table(["Kind", "About", "Answers"], rows, "sf-table sf-issues sf-chip-issues"),
         "",
     ]
 

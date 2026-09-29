@@ -16,7 +16,8 @@ from page_markup import (
     list_table,
     size_text,
     source_badge,
-    spaced,
+    table_id,
+    vendor_link,
     vendor_of,
 )
 from spiflash.enums import DataPhase, OperationKind, TimingSource
@@ -309,18 +310,16 @@ def operation_page(op: Operation, flashes: list[Flash], slugs: dict[int, str]) -
         f"{len(having)} chip ids have a source saying so. Type in the box to filter; "
         "click a heading to sort.\n"
     )
-    rows = []
-    for f in having:
-        ident = spaced(f.jedec_id if f.family == "jedec" else f.id_hex)
-        rows.append(
-            [
-                f"[{ident}](../chips/{slugs[id(f)]}.md)",
-                esc(vendor_of(f)),
-                ", ".join(esc(n) for n in f.names),
-                size_text(f.size),
-                " ".join(source_badge(s) for s in f.opcodes[op.name].sources),
-            ]
-        )
+    rows = [
+        [
+            table_id(f, f"../chips/{slugs[id(f)]}.md"),
+            vendor_link(vendor_of(f)),
+            ", ".join(esc(n) for n in f.names),
+            size_text(f.size),
+            " ".join(source_badge(s) for s in f.opcodes[op.name].sources),
+        ]
+        for f in having
+    ]
     out.append(
         list_table(
             ["Id", "Vendor", "Parts", "Size", "Listed by"],

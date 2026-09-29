@@ -53,7 +53,7 @@ from sphinx.builders.html import StandaloneHTMLBuilder
 from sphinx.util import logging
 
 import spiflash
-from page_markup import chip_slug, source_label, spaced, title_of, vendor_of
+from page_markup import chip_slug, slug, source_label, spaced, title_of, vendor_of
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -175,7 +175,8 @@ def choice_page(name: str, chips: Iterable[Flash], suffix: str = ".html") -> str
             "<tr>"
             f'<td><a href="{url}"><code>{escape(_id_text(f))}</code></a></td>'
             f'<td><a href="{url}">{escape(title_of(f))}</a></td>'
-            f"<td>{escape(vendor_of(f))}</td>"
+            f'<td><a href="../vendors/{escape(slug(vendor_of(f)))}.html">'
+            f"{escape(vendor_of(f))}</a></td>"
             f"<td>{kind}</td>"
             f"<td>{escape(_listed_by(f, name))}</td>"
             "</tr>"
