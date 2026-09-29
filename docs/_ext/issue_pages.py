@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from issue_checks import IssueKind, find
+from issue_checks import ATTRIBUTES, IssueKind, find
 from page_markup import (
     EM_DASH,
     esc,
@@ -63,6 +63,14 @@ KIND_NOTES = {
 }
 
 _TABLE = "sf-table sf-filterable sf-issues"
+
+#: The values sources are compared on, as headings.
+VALUE_TITLES = {
+    "size": "Size",
+    "page_size": "Page size",
+    "sector_size": "Sector size",
+    "voltage": "Supply voltage",
+}
 
 
 def kind_page(kind: IssueKind) -> str:
@@ -143,15 +151,27 @@ class _Render:
             for a in issue.answers
         )
 
+    def section(self, kind: IssueKind, issues: list[Issue], level: int) -> str:
+        """The issues of ``kind``: one table, or for disagreeing values one
+        per value, each under a heading of ``level``."""
+        if kind is not IssueKind.VALUE or not issues:
+            return self.table(kind, issues)
+        out = []
+        for attr in ATTRIBUTES:
+            mine = [i for i in issues if i.attribute == attr]
+            if mine:
+                out.append(f"{'#' * level} {VALUE_TITLES[attr]} ({len(mine)})\n")
+                out.append(self.table(kind, mine))
+        return "\n".join(out)
+
     def table(self, kind: IssueKind, issues: list[Issue]) -> str:
         if not issues:
             return "None found.\n"
         rows: list[list[str]]
         if kind is IssueKind.VALUE:
-            header = ["Chip", "Parts", "Value", "Answers"]
+            header = ["Chip", "Parts", "Answers"]
             rows = [
-                [self.chip(i.flashes[0]), self.names(i.flashes[0]), _attr(i), self.answers(i)]
-                for i in issues
+                [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
             ]
         elif kind is IssueKind.SAME_SOURCE:
             header = ["Chip", "Parts", "Source", "Value", "Entries"]
@@ -246,7 +266,7 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
             f"{kind.description} {len(found)} found; "
             f"[the {kind.heading.lower()} page]({kind_page(kind)}.md) says more.\n"
         )
-        out.append(r.table(kind, found))
+        out.append(r.section(kind, found, 4))
     out.append("(by-source)=\n## By source\n")
     out.append(
         " · ".join(
@@ -272,7 +292,7 @@ def kind_markdown(r: _Render, kind: IssueKind, issues: list[Issue]) -> str:
             )
             + ". All the kinds: [Data issues](index.md).\n",
             "Type in the box to filter.\n",
-            r.table(kind, found),
+            r.section(kind, found, 2),
         ]
     )
 
@@ -292,7 +312,7 @@ def source_markdown(r: _Render, source: Source, issues: list[Issue]) -> str:
         found = _of(mine, kind)
         out.append(f"## {kind.heading}\n")
         out.append(f"{kind.description} [More on these]({kind_page(kind)}.md).\n")
-        out.append(r.table(kind, found))
+        out.append(r.section(kind, found, 3))
     return "\n".join(out)
 
 
