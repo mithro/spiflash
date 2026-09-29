@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 
 from .enums import Feature, FlashType, IdFamily, IdMethod, Source
 from .opcodes import OPERATIONS, Operation, sort_key
+from .sfdp import Sfdp
+from .sfdp import parse as parse_sfdp
 from .vendors import canonical
 
 if TYPE_CHECKING:
@@ -57,6 +59,24 @@ class Claim(NamedTuple):
 
     source: Source
     via: str
+
+
+class SfdpDump(NamedTuple):
+    """One SFDP area the sources carry for a chip id, decoded, and the
+    records carrying it, the best source first."""
+
+    tables: Sfdp
+    records: tuple[Record, ...]
+
+    @property
+    def source(self) -> Source:
+        """The best source carrying the dump."""
+        return self.records[0].source
+
+    @property
+    def parts(self) -> tuple[str, ...]:
+        """The part numbers of the records carrying it."""
+        return tuple(dict.fromkeys(n for r in self.records for n in r.part_names))
 
 
 def parse_id(value: str | bytes | bytearray | int | Iterable[int]) -> bytes:
@@ -188,6 +208,8 @@ class Record:
     opcodes: tuple[OpcodeUse, ...]
     tested: str | None
     notes: tuple[str, ...]
+    #: The part's SFDP area, where the upstream carries a dump of it.
+    sfdp: bytes | None = field(default=None, repr=False)
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> Record:
@@ -211,7 +233,13 @@ class Record:
             opcodes=tuple(OpcodeUse(o["op"], o["opcode"], o["via"]) for o in d["opcodes"]),
             tested=d["tested"],
             notes=tuple(d["notes"]),
+            sfdp=bytes.fromhex(d["sfdp"]) if d.get("sfdp") else None,
         )
+
+    def sfdp_tables(self) -> Sfdp | None:
+        """The entry's SFDP dump, decoded (see :mod:`spiflash.sfdp`); ``None``
+        when the upstream has none for it."""
+        return parse_sfdp(self.sfdp) if self.sfdp else None
 
     @property
     def manufacturer(self) -> str | None:
@@ -399,6 +427,31 @@ class Flash:
             for name in sorted(because, key=sort_key)
         }
 
+    @cached_property
+    def sfdp_dumps(self) -> tuple[SfdpDump, ...]:
+        """Every distinct SFDP dump the sources carry for this id, decoded,
+        each with the records carrying it; the best source's first. What a
+        dump says is what one part answered, and parts sharing an id can
+        answer differently: QEMU has one dump for the MX25L25635E and
+        another for the MX25L25635F, both ``c22019``."""
+        carrying: dict[bytes, list[Record]] = {}
+        for r in sorted(self.records, key=lambda r: r.source.priority):
+            if r.sfdp:
+                carrying.setdefault(r.sfdp, []).append(r)
+        return tuple(SfdpDump(parse_sfdp(d), tuple(rs)) for d, rs in carrying.items())
+
+    @property
+    def sfdp(self) -> Sfdp | None:
+        """The chip's SFDP tables, decoded: the first of :attr:`sfdp_dumps`,
+        from the highest-priority source that carries one
+        (:attr:`sfdp_source`); ``None`` when no source does."""
+        return self.sfdp_dumps[0].tables if self.sfdp_dumps else None
+
+    @property
+    def sfdp_source(self) -> Source | None:
+        """Which source :attr:`sfdp` comes from."""
+        return self.sfdp_dumps[0].source if self.sfdp_dumps else None
+
     def supports(self, operation: str) -> bool:
         """Whether any source says the chip has ``operation`` (``"READ_1_1_4"``)."""
         return operation in self.opcodes
@@ -492,5 +545,9 @@ class Flash:
                     "ext_id": r.ext_id.hex() if r.ext_id else None,
                 }
                 for r in self.records
+            ],
+            "sfdp": [
+                {"source": d.source, "parts": list(d.parts), **d.tables.to_json()}
+                for d in self.sfdp_dumps
             ],
         }

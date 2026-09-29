@@ -54,6 +54,15 @@ commit = "676e53ec73d2261c974d610b7cf0693117c8d2ef"
 paths = ["src/spiFlashdb.hpp", "src/spiFlash.cpp"]
 license = "Apache-2.0"
 
+[qemu]
+url = "https://gitlab.com/qemu-project/qemu.git"
+# Where to link to a file in it: the official GitHub mirror.
+browse = "https://github.com/qemu/qemu"
+branch = "master"
+commit = "81ce3a87737aa50716c42db8886082d12783e0a1"
+paths = ["hw/block/m25p80.c", "hw/block/m25p80_sfdp.c", "hw/block/m25p80_sfdp.h"]
+license = "GPL-2.0-or-later"
+
 [zephyr]
 url = "https://github.com/zephyrproject-rtos/zephyr"
 branch = "main"

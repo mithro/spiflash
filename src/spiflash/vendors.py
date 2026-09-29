@@ -35,6 +35,7 @@ _ALIASES = {
     "heyangtek": "HeYangTek",
     "infineon": "Infineon",
     "intel": "Intel",
+    "intel/numonyx": "Intel",  # QEMU's heading for the S33 parts
     "issi": "ISSI",
     "mac": "Macronix",
     "macronix": "Macronix",
@@ -56,6 +57,7 @@ _ALIASES = {
     "spansion": "Spansion",
     "sst": "SST",
     "st": "ST",
+    "st microelectronics": "ST",
     "stmicro": "ST",
     "toshiba": "Toshiba",
     "win": "Winbond",

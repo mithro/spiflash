@@ -48,15 +48,15 @@ from page_markup import (
     vendor_of,
     volts,
 )
-from spiflash.cli import human_size
 from spiflash.enums import OperationKind
 from spiflash.opcodes import OPERATIONS
+from spiflash.units import human_size, human_time
 
 if TYPE_CHECKING:
     from sphinx.application import Sphinx
     from sphinx.config import Config
 
-    from spiflash import Database, Flash
+    from spiflash import Database, Flash, SfdpDump
 
 
 def chip_page(
@@ -82,6 +82,7 @@ def chip_page(
     out += _datasheets(f)
     out += _identification(db, f, kind)
     out += _capabilities(f)
+    out += _sfdp(f)
     out += _opcodes(f)
     out += _erase_layouts(f)
     out += _sources(db, f)
@@ -190,6 +191,74 @@ def _capabilities(f: Flash) -> list[str]:
         list_table(["Capability", "Listed by"], rows, "sf-table", "40 60"),
         "",
     ]
+
+
+def _sfdp(f: Flash) -> list[str]:
+    if not f.sfdp_dumps:
+        return []
+    out = [
+        "## SFDP\n",
+        (
+            "The part's SFDP (JESD216) tables, as the sources carry them: what one part "
+            "answered, decoded by {py:mod}`spiflash.sfdp`; `spiflash sfdp` prints every "
+            "field. SFDP says nothing about the vendor, voltage or protection, and Linux "
+            "keeps fixups for tables that are wrong, so read it as the part's own claim.\n"
+        ),
+    ]
+    for d in f.sfdp_dumps:
+        out.append(list_table(["Parameter", "Value"], _sfdp_rows(d), "sf-table", "25 75"))
+        out.append("")
+    return out
+
+
+def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
+    """One dump's table: whose it is, then what it says. Parts sharing an id
+    can carry different dumps, so each names its parts."""
+    s = d.tables
+    tables = ", ".join(f"{esc(h.name)} {h.revision}" for h in s.headers)
+    rows = [
+        ["Dump of", f"{source_badge(d.source)} {esc(', '.join(d.parts))}"],
+        ["Revision", f"{esc(s.revision_name)}, with {tables}"],
+    ]
+    geometry = [size_text(s.size)]
+    if s.page_size is not None:
+        geometry.append(f"{size_text(s.page_size)} pages")
+    if s.address_bytes is not None:
+        geometry.append(f"{s.address_bytes}-byte addresses")
+    rows.append(["Geometry", esc(", ".join(geometry))])
+    if s.erase_types:
+        erases = []
+        for e in s.erase_types:
+            text = f"`0x{e.opcode:02x}` {size_text(e.size)}"
+            if e.opcode_4b is not None:
+                text += f" (`0x{e.opcode_4b:02x}` with a 4-byte address)"
+            if e.typical_us is not None:
+                text += f", typically {human_time(e.typical_us)}"
+            erases.append(text)
+        rows.append(["Erase types", "; ".join(erases)])
+    if s.reads:
+        rows.append(
+            [
+                "Fast reads",
+                "; ".join(
+                    f"{esc(r.protocol)} `0x{r.opcode:02x}`, {r.dummy_clocks} dummy clocks"
+                    for r in s.reads.values()
+                ),
+            ]
+        )
+    bfpt = s.bfpt
+    if bfpt is not None:
+        if bfpt.quad_enable_description is not None:
+            rows.append(["Quad enable", esc(bfpt.quad_enable_description)])
+        if bfpt.four_byte_enter:
+            rows.append(
+                ["Enter 4-byte mode", esc(", ".join(sorted(map(str, bfpt.four_byte_enter))))]
+            )
+        if bfpt.soft_reset:
+            rows.append(["Soft reset", esc("; ".join(bfpt.soft_reset))])
+    if s.warnings:
+        rows.append(["Warnings", esc("; ".join(s.warnings))])
+    return rows
 
 
 def _opcodes(f: Flash) -> list[str]:

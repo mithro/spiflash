@@ -16,7 +16,10 @@ names, its size, page and sector sizes, erase opcodes and block layouts, other
 opcodes (OpenOCD, and the SFDP tables Zephyr's boards copy), supply voltage
 range (flashrom, flashprog), the names of the capability flags each upstream
 sets, and each upstream's test status. The JEP106 manufacturer names come
-from OpenOCD's copy of the JEDEC list.
+from OpenOCD's copy of the JEDEC list. From QEMU, the SFDP (JESD216) tables
+its flash model answers for thirteen parts are kept whole (the `sfdp` of
+those records): byte for byte what those parts answer to the SFDP command,
+as QEMU records them, which is data rather than code.
 
 No code is copied: the tables are parsed, and the database holds the values.
 The one exception is `notes`, which keeps the short comments an upstream
@@ -56,6 +59,11 @@ numbers it covers and whether it gives the chip's id bytes itself.
   opcodes per part, and the JEP106 list.
 - **openFPGALoader** gives the block-protection layout (the `flags` of its
   records: `bp_len`, `bp_offset`, `tb_register`, `quad_register`, ...).
+- **QEMU** keeps a 2012 copy of Linux's table for the parts its boards
+  emulate (so its geometry rarely adds anything), but is alone in carrying
+  complete SFDP dumps: from them come the fast reads with the part's own
+  dummy clocks, the erase types, the 4-byte-address opcodes and the quad
+  enable method, and the page size where the table has it.
 - **Zephyr** has no table of parts: its boards describe the flash chip each
   carries, in devicetree, for the driver to check at start-up. Every node
   with a `jedec-id` in {upstream}`zephyr:boards/` and {upstream}`zephyr:dts/`

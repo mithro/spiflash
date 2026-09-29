@@ -4,6 +4,7 @@ spiflash id ef4018            which chip answers this JEDEC id?
 spiflash find w25q128jv       which ids does this part answer?
 spiflash list --manufacturer winbond
 spiflash opcodes ef4018       which opcodes does it support? (an id or a part name)
+spiflash sfdp sfdp.bin        decode an SFDP dump (a file, hex, or a chip with a shipped one)
 spiflash jep106 c2            the JEP106 manufacturer of an id byte
 spiflash sources              where the data came from
 """
@@ -13,23 +14,18 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from . import __version__
 from .db import Database, database
-from .model import Flash, parse_id
+from .model import Flash, SfdpDump, parse_id
+from .sfdp import SIGNATURE, Sfdp
+from .sfdp import parse as parse_sfdp
+from .units import human_size
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-
-def human_size(n: int | None) -> str:
-    if n is None:
-        return "?"
-    for unit, scale in (("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)):
-        if n >= scale and n % scale == 0:
-            return f"{n // scale} {unit}"
-    return f"{n} B"
 
 
 def opcode_table(f: Flash, *, verbose: bool = False) -> list[str]:
@@ -78,12 +74,69 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    {r.source:15} {r.name}{ext}  [{r.url}]")
     else:
         lines.append("    from: " + ", ".join(f.sources))
+    lines.extend(
+        f"    sfdp: {sfdp_summary(d.tables)}  [{d.source}: {', '.join(d.parts)}]"
+        for d in f.sfdp_dumps
+    )
     # The best datasheet, or all of them with -v.
     lines.extend(f"    datasheet: {d.url}" for d in f.datasheets[: None if verbose else 1])
     if opcodes:
         lines.append("    opcodes:")
         lines.extend(opcode_table(f, verbose=verbose))
     return "\n".join(lines)
+
+
+def sfdp_summary(s: Sfdp) -> str:
+    """One line on a chip's SFDP dump: its revision and the tables in it."""
+    tables = ", ".join(f"{h.name} {h.revision}" for h in s.headers)
+    return f"{s.revision_name} ({tables})"
+
+
+class _SfdpShown(NamedTuple):
+    """A dump ``spiflash sfdp`` prints, and the chip it was shipped for
+    (``None`` for a dump given directly)."""
+
+    tables: Sfdp
+    chip: Flash | None = None
+    dump: SfdpDump | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        if self.chip is None or self.dump is None:
+            return self.tables.to_json()
+        return {
+            "chip": self.chip.key,
+            "source": self.dump.source,
+            "parts": list(self.dump.parts),
+            **self.tables.to_json(),
+        }
+
+
+def _sfdp_input(db: Database, source: str) -> list[_SfdpShown]:
+    """What ``spiflash sfdp`` was given: a file, ``-`` for stdin, hex bytes,
+    or a chip (id or part name) whose shipped dumps to show. A part name
+    shows that part's dump where parts sharing its id have different ones;
+    an id shows them all."""
+    if source == "-":
+        return [_SfdpShown(parse_sfdp(sys.stdin.buffer.read()))]
+    try:
+        data = parse_id(source)
+    except ValueError:
+        data = b""
+    if data[:4] == SIGNATURE:
+        return [_SfdpShown(parse_sfdp(data))]
+    try:
+        is_file = Path(source).is_file()
+    except OSError:  # a long hex string is not a usable file name
+        is_file = False
+    if is_file:
+        return [_SfdpShown(parse_sfdp(Path(source).read_bytes()))]
+    part = source.strip().upper()
+    out: list[_SfdpShown] = []
+    for f in _resolve(db, source):
+        dumps = f.sfdp_dumps
+        named = [d for d in dumps if part in d.parts]
+        out.extend(_SfdpShown(d.tables, f, d) for d in named or dumps)
+    return out
 
 
 def _emit(
@@ -136,6 +189,15 @@ def _parser() -> argparse.ArgumentParser:
     p = sub.add_parser("opcodes", parents=[common], help="the opcodes a chip supports")
     p.add_argument("query", help="a JEDEC id (ef4018) or a part name (W25Q128JV)")
 
+    p = sub.add_parser("sfdp", help="decode SFDP (JESD216) tables")
+    p.add_argument(
+        "source",
+        help="a dump file (/sys/bus/spi/devices/*/spi-nor/sfdp), - for stdin, hex bytes, "
+        "or a chip (a JEDEC id or part name) the database has a dump for",
+    )
+    p.add_argument("--json", action="store_true", help="print JSON")
+    p.add_argument("-v", "--verbose", action="store_true", help="print every table's dwords")
+
     p = sub.add_parser("jep106", help="name the manufacturer of an id byte")
     p.add_argument("id", help="the id byte in hex, with any 7f continuation codes before it")
 
@@ -180,6 +242,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{f.jedec_id:10} {f.type:4} {f.manufacturer or '?':14} "
                     f"{human_size(f.size):>8}  {', '.join(f.names)}"
                 )
+            return 0
+        if args.command == "sfdp":
+            shown = _sfdp_input(db, args.source)
+            if not shown:
+                print(f"spiflash: no SFDP dump for {args.source}", file=sys.stderr)
+                return 1
+            if args.json:
+                json.dump([d.to_json() for d in shown], sys.stdout, indent=1)
+                sys.stdout.write("\n")
+                return 0
+            for d in shown:
+                if d.chip is not None and d.dump is not None:
+                    print(header(d.chip))
+                    print(f"    from {d.dump.source}: {', '.join(d.dump.parts)}")
+                print(d.tables.describe(verbose=args.verbose))
+                print()
             return 0
         if args.command == "jep106":
             data = parse_id(args.id)
