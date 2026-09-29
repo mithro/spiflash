@@ -152,3 +152,82 @@ static const FlashPartInfo known_devices[] = {
     /* Microchip */
     { INFO("25csm04",      0x29cc00,      0x100,  64 << 10,  8, 0) },
 };
+
+typedef enum {
+    NOP = 0,
+    WRSR = 0x1,
+    WRDI = 0x4,
+    RDSR = 0x5,
+    WREN = 0x6,
+    BRRD = 0x16,
+    BRWR = 0x17,
+    JEDEC_READ = 0x9f,
+    BULK_ERASE_60 = 0x60,
+    BULK_ERASE = 0xc7,
+    READ_FSR = 0x70,
+    RDCR = 0x15,
+    RDSFDP = 0x5a,
+
+    READ = 0x03,
+    READ4 = 0x13,
+    FAST_READ = 0x0b,
+    FAST_READ4 = 0x0c,
+    DOR = 0x3b,
+    DOR4 = 0x3c,
+    QOR = 0x6b,
+    QOR4 = 0x6c,
+    DIOR = 0xbb,
+    DIOR4 = 0xbc,
+    QIOR = 0xeb,
+    QIOR4 = 0xec,
+
+    PP = 0x02,
+    PP4 = 0x12,
+    PP4_4 = 0x3e,
+    DPP = 0xa2,
+    QPP = 0x32,
+    QPP_4 = 0x34,
+    RDID_90 = 0x90,
+    RDID_AB = 0xab,
+    AAI_WP = 0xad,
+
+    ERASE_4K = 0x20,
+    ERASE4_4K = 0x21,
+    ERASE_32K = 0x52,
+    ERASE4_32K = 0x5c,
+    ERASE_SECTOR = 0xd8,
+    ERASE4_SECTOR = 0xdc,
+
+    EN_4BYTE_ADDR = 0xB7,
+    EX_4BYTE_ADDR = 0xE9,
+
+    EXTEND_ADDR_READ = 0xC8,
+    EXTEND_ADDR_WRITE = 0xC5,
+
+    RESET_ENABLE = 0x66,
+    RESET_MEMORY = 0x99,
+
+    /*
+     * Micron: 0x35 - enable QPI
+     * Spansion: 0x35 - read control register
+     * Winbond: 0x35 - quad enable
+     */
+    RDCR_EQIO = 0x35,
+    RSTQIO = 0xf5,
+
+    /*
+     * Winbond: 0x31 - write status register 2
+     */
+    WRSR2 = 0x31,
+
+    RNVCR = 0xB5,
+    WNVCR = 0xB1,
+
+    RVCR = 0x85,
+    WVCR = 0x81,
+
+    REVCR = 0x65,
+    WEVCR = 0x61,
+
+    DIE_ERASE = 0xC4,
+} FlashCMD;

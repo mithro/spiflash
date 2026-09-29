@@ -10,8 +10,9 @@ Its ``known_devices[]`` table keeps the shape of Linux's 2012 table::
 two-byte ``ext_id``, ``INFO6`` with a three-byte one, and ``INFO_STACKED``
 (``INFO`` plus a die count). The vendor is the comment heading each group.
 
-The model decodes every opcode for every part, so the table says little per
-part beyond its geometry and flags. What makes it worth reading is
+The model decodes every opcode for every part (the values are its
+``FlashCMD`` enum), so the table says little per part beyond its geometry
+and flags. What makes it worth reading is
 ``.sfdp_read``: thirteen entries point at a complete SFDP dump in
 :upstream:`qemu:hw/block/m25p80_sfdp.c`, which no other upstream carries.
 Those records get the dump (``sfdp``) and everything :mod:`spiflash.sfdp`
@@ -57,6 +58,7 @@ def extract(root: Path) -> list[Record]:
     if table is None:
         msg = f"{M25P80}: no known_devices[] table"
         raise ValueError(msg)
+    commands = flash_commands(text)
     dumps = sfdp_dumps(root)
     markers = _vendor_markers(raw, table.offset, table.offset + len(table.body))
     records = []
@@ -66,8 +68,27 @@ def extract(root: Path) -> list[Record]:
             if pos > entry.offset:
                 break
             vendor = name
-        records.append(_record(entry, raw, vendor, dumps))
+        records.append(_record(entry, raw, vendor, dumps, commands))
     return records
+
+
+def flash_commands(text: str) -> dict[str, int]:
+    """The model's ``FlashCMD`` enum (``BULK_ERASE = 0xc7``): the opcode of
+    each command it decodes, by name. ``text`` has its comments stripped."""
+    m = re.search(r"typedef\s+enum\s*\{([^}]*)\}\s*FlashCMD\s*;", text)
+    if m is None:
+        msg = f"{M25P80}: no FlashCMD enum"
+        raise ValueError(msg)
+    out: dict[str, int] = {}
+    for item in cparse.split_top(m.group(1)):
+        if not item.strip():
+            continue
+        name, eq, value = item.partition("=")
+        if not eq:
+            msg = f"{M25P80}: FlashCMD {name.strip()} has no explicit value"
+            raise ValueError(msg)
+        out[name.strip()] = cparse.evaluate(value)
+    return out
 
 
 def sfdp_dumps(root: Path) -> dict[str, bytes]:
@@ -106,7 +127,13 @@ def _macro(body: str) -> tuple[str, int, bool, list[str]] | None:
     return None
 
 
-def _record(entry: cparse.Block, raw: str, vendor: str | None, dumps: dict[str, bytes]) -> Record:
+def _record(
+    entry: cparse.Block,
+    raw: str,
+    vendor: str | None,
+    dumps: dict[str, bytes],
+    commands: dict[str, int],
+) -> Record:
     body = entry.body
     notes = cparse.comments(raw[entry.offset : entry.offset + len(body)])
     found = _macro(body)
@@ -142,25 +169,30 @@ def _record(entry: cparse.Block, raw: str, vendor: str | None, dumps: dict[str, 
     erasers = []
     if not eeprom:
         if "ER_4K" in flags:
-            erasers.append({"opcode": 0x20, "blocks": [[4096, size // 4096]]})
+            erasers.append({"opcode": commands["ERASE_4K"], "blocks": [[4096, size // 4096]]})
         if "ER_32K" in flags:
-            erasers.append({"opcode": 0x52, "blocks": [[32 * 1024, size // (32 * 1024)]]})
-        erasers.append({"opcode": 0xD8, "blocks": [[sector, n_sectors]]})
+            erasers.append(
+                {"opcode": commands["ERASE_32K"], "blocks": [[32 * 1024, size // (32 * 1024)]]}
+            )
+        erasers.append({"opcode": commands["ERASE_SECTOR"], "blocks": [[sector, n_sectors]]})
 
-    ops = Opcodes()
+    # The values are the model's own FlashCMD enum.
+    ops = Opcodes(commands)
     if id_hex:
-        ops.add("RDID", "JEDEC_READ: the entry's id bytes")
-    for op in ("READ_1_1_1", "READ_1_1_1_FAST", "PP_1_1_1"):
-        ops.add(op, _EVERY_PART)
+        ops.add("RDID", "JEDEC_READ: the entry's id bytes", "JEDEC_READ")
+    ops.add("READ_1_1_1", _EVERY_PART, "READ")
+    ops.add("READ_1_1_1_FAST", _EVERY_PART, "FAST_READ")
+    ops.add("PP_1_1_1", _EVERY_PART, "PP")
     if not eeprom:
-        ops.add("SE", "ERASE_SECTOR: the entry's sector size")
-        ops.add("CHIP_ERASE", "BULK_ERASE")
+        ops.add("SE", "ERASE_SECTOR: the entry's sector size", "ERASE_SECTOR")
+        ops.add("CHIP_ERASE", "BULK_ERASE", "BULK_ERASE")
+        ops.add("CHIP_ERASE_ALT", "BULK_ERASE_60", "BULK_ERASE_60")
         if "ER_4K" in flags:
-            ops.add("BE_4K", "ER_4K")
+            ops.add("BE_4K", "ER_4K", "ERASE_4K")
         if "ER_32K" in flags:
-            ops.add("BE_32K", "ER_32K")
+            ops.add("BE_32K", "ER_32K", "ERASE_32K")
     if die_cnt:
-        ops.add("DIE_ERASE", f"die_cnt = {die_cnt}")
+        ops.add("DIE_ERASE", f"die_cnt = {die_cnt}", "DIE_ERASE")
 
     dump = None
     page = 256
@@ -172,7 +204,7 @@ def _record(entry: cparse.Block, raw: str, vendor: str | None, dumps: dict[str, 
         dump = dumps[reader]
         tables = sfdp_tables.parse(dump)
         features |= {f.value for f in tables.features()}
-        ops.add("RDSFDP", f".sfdp_read = {reader}")
+        ops.add("RDSFDP", f".sfdp_read = {reader}", "RDSFDP")
         for use in tables.operations(implied=False):
             if use.name is not None:
                 ops.add(use.name, f"SFDP {use.via}", value=use.opcode)

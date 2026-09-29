@@ -529,6 +529,7 @@ def test_qemu(tmp_path: Path) -> None:
         "BE_4K": (0x20, "ER_4K"),
         "SE": (0xD8, "ERASE_SECTOR: the entry's sector size"),
         "CHIP_ERASE": (0xC7, "BULK_ERASE"),
+        "CHIP_ERASE_ALT": (0x60, "BULK_ERASE_60"),
     }
 
     # The EEPROMs: no id, a byte-sized "sector", the block comment is not a heading.
@@ -621,14 +622,13 @@ def test_qemu_errors(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no known_devices"):
         qemu.extract(tmp_path)
     table = QEMU_M25P80.split("static const FlashPartInfo known_devices[] = {")[0]
-    write(
-        tmp_path,
-        {
-            qemu.M25P80: table + "static const FlashPartInfo known_devices[] = {\n"
-            '    { INFO("x", 0xef4020, 0, 64 << 10, 1024, ER_4K), .sfdp_read = m25p80_sfdp_x },\n'
-            "};\n",
-        },
+    commands = "typedef enum {" + QEMU_M25P80.split("typedef enum {")[1]
+    one = (
+        "static const FlashPartInfo known_devices[] = {\n"
+        '    { INFO("x", 0xef4020, 0, 64 << 10, 1024, ER_4K), .sfdp_read = m25p80_sfdp_x },\n'
+        "};\n"
     )
+    write(tmp_path, {qemu.M25P80: table + one + commands})
     with pytest.raises(ValueError, match=r"no m25p80_sfdp_x\(\) in"):
         qemu.extract(tmp_path)
     write(
@@ -636,7 +636,16 @@ def test_qemu_errors(tmp_path: Path) -> None:
         {
             qemu.M25P80: table
             + 'static const FlashPartInfo known_devices[] = {\n    { .part_name = "x" },\n};\n'
+            + commands
         },
     )
     with pytest.raises(ValueError, match="not INFO/INFO6/INFO_STACKED"):
+        qemu.extract(tmp_path)
+    # The opcodes come from the model's FlashCMD enum: it must be there, and
+    # every command must have its value spelled out.
+    write(tmp_path, {qemu.M25P80: table + one})
+    with pytest.raises(ValueError, match="no FlashCMD enum"):
+        qemu.extract(tmp_path)
+    write(tmp_path, {qemu.M25P80: table + one + "typedef enum { NOP = 0, WRSR, } FlashCMD;\n"})
+    with pytest.raises(ValueError, match="FlashCMD WRSR has no explicit value"):
         qemu.extract(tmp_path)

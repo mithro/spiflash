@@ -186,10 +186,11 @@ Each source's list is what that source says, from what it says it:
 | U-Boot | the same from its [`spi-nor-core.c`](https://github.com/u-boot/u-boot/blob/master/drivers/mtd/spi/spi-nor-core.c) (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | OpenOCD | the table's own opcode columns: read, fastest read, page program, sector and chip erase |
 | openFPGALoader | what its [`spiFlash.cpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlash.cpp) sends: read, page program, and the erases its table allows |
-| QEMU | what its model decodes for every part (read, fast read, page program, sector and chip erase), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for, everything those tables list |
+| QEMU | what its model decodes for every part (read, fast read, page program, sector erase, and chip erase as 0xc7 and 0x60), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for, everything those tables list |
 
 The opcode values are read from each upstream's own headers (`SPINOR_OP_*`,
-`JEDEC_*`, `FLASH_*`) and checked against the table when the data is built.
+`JEDEC_*`, `FLASH_*`, QEMU's `FlashCMD` enum) or SFDP dumps, and checked
+against the table when the data is built.
 
 So a listed operation is one some source says the part has. An operation that
 is not listed may still be supported: no source here describes every opcode of
