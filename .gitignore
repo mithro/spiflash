@@ -57,6 +57,7 @@ tmp/
 /docs/opcodes/
 /docs/issues/
 /docs/jep106/
+/docs/sources/
 /docs/_generated/
 /docs/_build/
 /docs/_autosummary/

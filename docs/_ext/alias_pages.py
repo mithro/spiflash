@@ -146,10 +146,13 @@ def _id_text(f: Flash) -> str:
     return f"{spaced(f.id_hex)} ({f.family.upper()})"
 
 
-def _listed_by(f: Flash, name: str) -> str:
-    """The sources listing ``name`` under ``f``, as the site's labels (HTML)."""
+def _listed_by(f: Flash, name: str, suffix: str) -> str:
+    """The sources listing ``name`` under ``f``, as the site's labels (HTML),
+    each linked to its page."""
     sources = {r.source for r in f.records if name in r.part_names}
-    return " ".join(source_badge_html(s) for s in f.sources if s in sources)
+    return " ".join(
+        source_badge_html(s, f"../sources/{s}{suffix}") for s in f.sources if s in sources
+    )
 
 
 # The disambiguation page stands alone, outside the theme.
@@ -182,7 +185,7 @@ def choice_page(name: str, chips: Iterable[Flash], suffix: str = ".html") -> str
             f'<td><a href="../vendors/{escape(slug(vendor_of(f)))}.html">'
             f"{escape(vendor_of(f))}</a></td>"
             f"<td>{kind}</td>"
-            f"<td>{_listed_by(f, name)}</td>"
+            f"<td>{_listed_by(f, name, suffix)}</td>"
             "</tr>"
         )
     return "\n".join(

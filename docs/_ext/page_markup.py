@@ -21,6 +21,8 @@ EN_DASH = "\N{EN DASH}"
 EM_DASH = "\N{EM DASH}"
 TIMES = "\N{MULTIPLICATION SIGN}"
 EM_SPACE = "\N{EM SPACE}"
+#: After a source's label, the link to what it says upstream.
+UP_ARROW = "\N{NORTH EAST ARROW}"
 
 #: JEDEC's pages for the standards the pages cite.
 JESD216 = "https://www.jedec.org/standards-documents/docs/jesd216b"
@@ -44,12 +46,17 @@ def badge_lines(name: str, count: str = "") -> tuple[str, ...]:
     return (*lines[:-1], lines[-1] + (f" {count}" if count else ""))
 
 
-def source_badge_html(name: str) -> str:
-    """A source's badge as raw HTML, for pages Sphinx does not write."""
+def source_badge_html(name: str, page: str | None = None) -> str:
+    """A source's badge as raw HTML, for pages Sphinx does not write; linked
+    to ``page``, the URL of the source's page from the one it is on."""
     lines = badge_lines(name)
     classes = f"sf-src sf-src-{escape(slug(name))}" + (" sf-src-split" if len(lines) > 1 else "")
     inner = "".join(f"<span>{escape(line)}</span>" for line in lines)
-    return f'<span class="{classes}">{inner}</span>'
+    html = f'<span class="{classes}">{inner}</span>'
+    if page is None:
+        return html
+    title = escape(f"About {source_label(name)}")
+    return f'<a class="sf-src-link" href="{escape(page)}" title="{title}">{html}</a>'
 
 
 # What each feature means, and the badge colour for its group.

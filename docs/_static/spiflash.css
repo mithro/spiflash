@@ -300,3 +300,23 @@ table.sf-chip-issues td:first-child { white-space: normal; min-width: 9em; }
 /* A shortened list's ellipsis: the rest is in its tooltip. */
 abbr[title] { cursor: help; text-decoration: underline dotted; }
 .sf-toggle { margin: 0 1em; white-space: nowrap; cursor: pointer; }
+
+/* The arrow after a source's label, where the label comes with a link of
+   its own (the entry upstream): the label itself links to the source's page. */
+a.sf-src-up {
+  font-size: 0.85em;
+  font-weight: 600;
+  text-decoration: none;
+  margin: 0 0.35em 0 -0.05em;
+  vertical-align: middle;
+}
+a.sf-src-up:hover { text-decoration: underline; }
+
+/* Source pages: the list of sources, whose description wraps, and a
+   source's entries, one line each but for the vendor and name. */
+table.sf-source-list td { white-space: nowrap; }
+table.sf-source-list td:nth-child(2) { white-space: normal; min-width: 20em; }
+table.sf-entries { font-size: 0.86em; }
+table.sf-entries td { white-space: nowrap; }
+table.sf-entries td:nth-child(2), table.sf-entries td:nth-child(3) { white-space: normal; }
+table.sf-fields, table.sf-source-issues { width: auto; margin-left: 0; }

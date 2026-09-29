@@ -38,7 +38,7 @@ docstrings (`:repo:` and so on):
 | `repo` | ``{repo}`tools/sources.toml` `` | a link to a file or directory in this repository |
 | `upstream` | ``{upstream}`linux:drivers/mtd/spi-nor/core.c` `` | a link to a file in an upstream, at the commit the data was read from |
 | `github` | ``{github}`mithro/apt-repo-action` `` | a link to a GitHub repository |
-| `sfsrc` | ``{sfsrc}`linux` ``, ``{sfsrc}`linux <url>` `` | a source's coloured badge, linked if a URL is given |
+| `sfsrc` | ``{sfsrc}`linux` ``, ``{sfsrc}`linux <url>` `` | a source's coloured badge, linked to its page; a URL adds an arrow after it, linked there |
 | `sfid`, `sfop`, `sfkind` | ``{sfid}`ef 40 18` ``, ``{sfop}`0x9f` `` | a chip id, an opcode or an operation kind, styled |
 
 The top-level README and RELEASING are read on GitHub and PyPI as well, so they
@@ -93,6 +93,8 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`opcode_timing.py <docs/_ext/opcode_timing.py>` | their WaveDrom timing diagrams |
 | {repo}`issue_checks.py <docs/_ext/issue_checks.py>` | the data issues checks |
 | {repo}`issue_pages.py <docs/_ext/issue_pages.py>` | the data issues pages |
+| {repo}`source_pages.py <docs/_ext/source_pages.py>` | a page per source, and their index |
+| {repo}`docs/_source_notes/` | what each source is and gives, in prose, for its page |
 | {repo}`page_markup.py <docs/_ext/page_markup.py>` | the Markdown helpers they share |
 | {repo}`alias_pages.py <docs/_ext/alias_pages.py>` | `chips/<PART>.html` for each part name, written after the build: a redirect to its chip's page or, for a name several ids share, a page listing them |
 | {repo}`check_links.py <docs/check_links.py>`, {repo}`check_link_targets.py <docs/check_link_targets.py>` | the link checks (see above) |
