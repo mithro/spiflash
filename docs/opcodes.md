@@ -3,11 +3,16 @@
 Every chip page lists the SPI operations the sources say that part has. This
 page lists the operations spiflash knows, and how many chip ids list each.
 
-Operations are named as LiteSPI's `SpiNorFlashOpCodes` names them, so a part's
-list can be used there directly. In `READ_1_4_4` the numbers are the data
-lines used for the command, the address and the data (here: command on one
-line, address and data on four); `_4B` is the form taking a 4-byte address,
-and `8D` marks double transfer rate.
+Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
+`SpiNorFlashOpCodes` names them, so a part's list can be used there directly:
+
+- the numbers are the lines used for the command, the address and the data:
+  [`READ_1_4_4`](opcodes/READ_1_4_4.md) sends the command on one line and the
+  address and data on four;
+- `8D` marks double transfer rate, on eight lines
+  ([`READ_8D_8D_8D`](opcodes/READ_8D_8D_8D.md));
+- `_4B` is the form taking a 4-byte address
+  ([`READ_1_4_4_4B`](opcodes/READ_1_4_4_4B.md)).
 
 ## Where each source's opcodes come from
 
@@ -23,8 +28,9 @@ and `8D` marks double transfer rate.
 
 The opcode values themselves are read from each upstream's own headers
 (`SPINOR_OP_*`, `JEDEC_*`, `SPIFLASH_READ_ID`, `FLASH_*`, {sfsrc}`qemu`'s `FlashCMD`
-enum), or from the SFDP tables ({sfsrc}`qemu`, {sfsrc}`zephyr`), and checked against the table
-below when the data is built: a disagreement fails the build.
+enum), or from the SFDP tables ({sfsrc}`qemu`, {sfsrc}`zephyr`), and checked against
+[the table below](#the-operations) by {repo}`tools/spiflash_extract/ops.py` when the
+data is built: a disagreement fails the build.
 
 :::{important}
 A listed operation is one some source says the part has. **An operation that

@@ -1,11 +1,16 @@
 # spiflash
 
 **A database of SPI flash chips**, merged from the flash tables of {sfsrc}`linux`,
-{sfsrc}`u-boot`, {sfsrc}`flashrom`, {sfsrc}`flashprog`, {sfsrc}`openocd`, {sfsrc}`openfpgaloader` and {sfsrc}`qemu`, and the flash
-chips {sfsrc}`zephyr`'s boards describe: JEDEC ids, part
-names, sizes, page and sector sizes, erase layouts, supply voltages,
-capabilities and opcodes, every value traced back to the upstream line it
-came from, and the SFDP (JESD216) tables of the parts {sfsrc}`qemu` has them for.
+{sfsrc}`u-boot`, {sfsrc}`flashrom`, {sfsrc}`flashprog`, {sfsrc}`openocd`, {sfsrc}`openfpgaloader` and
+{sfsrc}`qemu`, and from the flash chips {sfsrc}`zephyr`'s boards describe. For each chip id:
+
+- its part names, size, page and sector sizes, erase layouts, supply voltage,
+  capabilities and [opcodes](opcodes.md);
+- every value traced back to the upstream line it came from, and every
+  [disagreement between the sources](issues/index.md) kept;
+- the [SFDP](https://www.jedec.org/standards-documents/docs/jesd216b) (JESD216)
+  tables, decoded, of the parts {sfsrc}`qemu` has them for;
+- links to its datasheets.
 
 ::::{grid} 2 3 3 3
 :gutter: 3
@@ -106,6 +111,7 @@ ef4018  Winbond  W25Q128, W25Q128JV, W25Q128.V, W25Q128FV, W25Q128BV  (nor)
     size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
     features: dual_read erase_32k erase_4k erase_64k fast_read lock otp quad_pp quad_read sfdp
     from: flashrom, flashprog, linux, u-boot, openocd, openfpgaloader, zephyr
+    datasheet: https://www.winbond.com/resource-files/W25Q128JV%20RevH%2003102021%20Plus.pdf
 ```
 
 See [Using spiflash](usage.md) for the command and the Python library, and
