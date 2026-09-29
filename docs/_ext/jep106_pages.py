@@ -13,15 +13,22 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from page_markup import count, esc, list_table, size_text, table_id, vendor_link, vendor_of
+from page_markup import (
+    JEP106,
+    count,
+    esc,
+    list_table,
+    size_text,
+    table_id,
+    vendor_link,
+    vendor_of,
+)
 
 if TYPE_CHECKING:
     from spiflash import Database, Flash
 
 #: A JEP106 code: (bank, the id byte with its parity bit).
 Code = tuple[int, int]
-
-JEDEC_JEP106 = "https://www.jedec.org/standards-documents/docs/jep-106ab"
 
 
 def code_slug(code: Code) -> str:
@@ -104,7 +111,7 @@ def index_page(db: Database, used: dict[Code, list[Flash]]) -> str:
         [
             "# JEP106 codes\n",
             (
-                f"Every name in [JEDEC's JEP106]({JEDEC_JEP106}) list of manufacturer codes "
+                f"Every name in [JEDEC's JEP106]({JEP106}) list of manufacturer codes "
                 f"({len(db.manufacturers):,} in OpenOCD's copy), and how many chip ids in the "
                 f"database answer with it; {len(used)} of them are used. Only names with chips "
                 "are shown: untick the box to see them all. A name with chips links to "
