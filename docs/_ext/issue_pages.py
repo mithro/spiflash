@@ -2,7 +2,8 @@
 finds in the source data, all on one page, by kind, and by source.
 
 Each issue is shown with every answer the sources give and the records
-giving it, each linked to its upstream line, so a reader can check it.
+giving it, each linked to its upstream line, so a reader can check it. A
+source's label links to its page; the arrow after it, to the line.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from issue_checks import ATTRIBUTES, IssueKind, find
 from page_markup import (
     EM_DASH,
     EM_SPACE,
+    UP_ARROW,
     common_unit,
     count,
     esc,
@@ -97,9 +99,10 @@ def source_page(source: Source) -> str:
     return f"source-{source}"
 
 
-def source_link(source: Source) -> str:
-    """A source's label, linked to its data issues page (from ``issues/``)."""
-    return f"{{sfsrc}}`{source} <{source_page(source)}.html>`"
+def source_link(source: Source, issues: list[Issue]) -> str:
+    """A source's label, then how many of ``issues`` it is part of, linked
+    to its data issues page (from ``issues/``)."""
+    return f"{{sfsrc}}`{source}` [{len(_involving(issues, source))}]({source_page(source)}.md)"
 
 
 class _Render:
@@ -129,9 +132,9 @@ class _Render:
         return f"[{esc(r.name)}]({link})" if link else f"{esc(r.name)} ({esc(r.url)})"
 
     def who(self, records: tuple[Record, ...]) -> str:
-        """A label per source giving ``records``, linked to its (first) entry
-        upstream, with a count when it has several: the entries themselves
-        are on the chip page."""
+        """A label per source giving ``records``, with a count when it has
+        several, and an arrow after it linked to its (first) entry upstream:
+        the entries themselves are on the chip page."""
         badges = []
         for s in sorted({r.source for r in records}, key=lambda s: s.priority):
             mine = [r for r in records if r.source == s]
@@ -274,7 +277,7 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
         ),
         "## Summary\n",
     ]
-    header = ["Kind", "All", *(source_link(s) for s in Source)]
+    header = ["Kind", "All", *(f"{{sfsrc}}`{s}`" for s in Source)]
     rows = []
     for kind in IssueKind:
         found = _of(issues, kind)
@@ -288,12 +291,17 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
                     title += f" <{kind_page(kind)}.html#{attr_target(kind, attr)}>"
                 rows.append(_summary_row(f"{{sfsub}}`{title}`", mine))
     rows.append(
-        ["**All**", f"**{len(issues)}**", *(f"**{len(_involving(issues, s))}**" for s in Source)]
+        [
+            "**All**",
+            f"**{len(issues)}**",
+            *(f"[**{len(_involving(issues, s))}**]({source_page(s)}.md)" for s in Source),
+        ]
     )
     out.append(list_table(header, rows, "sf-table sf-issue-summary") + "\n")
     out.append(
         "A source's count is the issues it is part of: an issue between two "
-        "sources counts for both.\n"
+        "sources counts for both. Its label links to [its page](../sources/index.md); "
+        "its total, to its issues.\n"
     )
     out.append("(by-kind)=\n## By kind\n")
     for kind in IssueKind:
@@ -305,7 +313,7 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
         )
         out.append(r.section(kind, found, 4))
     out.append("(by-source)=\n## By source\n")
-    out.append(" · ".join(f"{source_link(s)} {len(_involving(issues, s))}" for s in Source) + "\n")
+    out.append(" · ".join(source_link(s, issues) for s in Source) + "\n")
     pages = [kind_page(k) for k in IssueKind] + [source_page(s) for s in Source]
     out.append("```{toctree}\n:hidden:\n\n" + "\n".join(pages) + "\n```\n")
     return "\n".join(out)
@@ -319,7 +327,7 @@ def kind_markdown(r: _Render, kind: IssueKind, issues: list[Issue]) -> str:
             f"{{bdg-primary}}`{len(found)} found`\n",
             f"{kind.description} {KIND_NOTES[kind]}\n",
             "By source: "
-            + ", ".join(f"{source_link(s)} {len(_involving(found, s))}" for s in Source)
+            + ", ".join(source_link(s, found) for s in Source)
             + ". All the kinds: [Data issues](index.md).\n",
             "Type in the box to filter.\n",
             r.section(kind, found, 2, targets=True),
@@ -335,7 +343,8 @@ def source_markdown(r: _Render, source: Source, issues: list[Issue]) -> str:
         (
             f"Every issue {{sfsrc}}`{source}` is part of; its own labels are ringed. "
             "An issue between two sources is on both their pages, and does not say "
-            "which is wrong. All the sources: [Data issues](index.md).\n"
+            f"which is wrong. What {source.label} is and what it gives: "
+            f"[its page](../sources/{source}.md). All the sources: [Data issues](index.md).\n"
         ),
     ]
     for kind in IssueKind:
@@ -377,7 +386,7 @@ def chip_issues(db: Database, slugs: dict[int, str], f: Flash, issues: list[Issu
         "### Conflicts and errors\n",
         (
             "What the checks behind [Data issues](../issues/index.md) find about this chip. "
-            "Each source label links to its entry upstream.\n"
+            f"Each source's {UP_ARROW} links to its entry upstream.\n"
         ),
         list_table(["Kind", "About", "Answers"], rows, "sf-table sf-issues sf-chip-issues"),
         "",

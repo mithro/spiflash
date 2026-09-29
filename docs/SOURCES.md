@@ -53,51 +53,10 @@ numbers it covers and whether it gives the chip's id bytes itself.
 
 ## What each upstream contributes
 
-- {sfsrc}`flashrom` and {sfsrc}`flashprog` (a fork of {sfsrc}`flashrom`) have the most detail per
-  part: every erase opcode with its block layout, voltage, test status, and
-  legacy ids ([REMS](opcodes/REMS.md), [RES](opcodes/RES.md),
-  [AT25F](opcodes/RDID_ATMEL.md)) for chips that predate JEDEC
-  [read-id](opcodes/RDID.md). Only their SPI chips are taken; parallel, LPC
-  and FWH parts are not SPI flash.
-  {sfsrc}`flashrom` names use `.` as a wildcard (`W25Q128.V`).
-- {sfsrc}`linux` has the most recent parts, 6-byte extended ids that separate
-  variants, capability flags for chips without SFDP, and, alone here, SPI
-  NAND. Parts it reads entirely from SFDP have no size in the table (their
-  records have `size: null` and the `sfdp` feature).
-- {sfsrc}`u-boot` kept {sfsrc}`linux`'s pre-6.8 table format and has parts {sfsrc}`linux` dropped or
-  never had.
-- {sfsrc}`openocd` gives read, quad read, page program, sector and chip erase
-  opcodes per part, and the [JEP106 list](jep106/index.md).
-- {sfsrc}`openfpgaloader` gives the block-protection layout (the `flags` of its
-  records: `bp_len`, `bp_offset`, `tb_register`, `quad_register`, ...).
-- {sfsrc}`qemu` keeps a 2012 copy of {sfsrc}`linux`'s table for the parts its boards
-  emulate (so its geometry rarely adds anything), but is alone in carrying
-  complete SFDP dumps: from them come the fast reads with the part's own
-  dummy clocks, the erase types, the 4-byte-address opcodes and the quad
-  enable method, and the page size where the table has it.
-- {sfsrc}`zephyr` has no table of parts: its boards describe the flash chip each
-  carries, in devicetree, for the driver to check at start-up. Every node
-  with a `jedec-id` in {upstream}`zephyr:boards/` and {upstream}`zephyr:dts/`
-  is read; the overlays in `samples/` and `tests/` are not, as they configure
-  test set-ups, some with placeholder ids.
-  - A node gives the id, the size (in bits in those bindings), and, where the
-    board sets them, the page size, the read and program modes it uses
-    (`readoc`, `writeoc`, the MSPI I/O mode) and what the chip needs
-    (`has-dpd`, `quad-enable-requirements`, `enter-4byte-addr`, ...), kept in
-    the record's `flags`.
-  - About a quarter of the nodes carry a copy of the chip's own SFDP Basic
-    Flash Parameter table (`sfdp-bfp`), which gives its density, fast reads,
-    erase types and page size as the chip itself reports them; where the
-    board's own values disagree with it, the record's `notes` say so.
-  - Devicetree has no field for the part name: it is the node's name, a label,
-    a comment on the `jedec-id` line or a descriptive `compatible`, whichever
-    first looks like a part number, and a node none of them names is left out.
-  - The maker is named only where a `compatible` does (`"issi,is25lp128"`,
-    `"mxicy,mx25u"`), so a chip only {sfsrc}`zephyr` has may have no manufacturer.
-  - Boards often share a chip: nodes that give the same values are one record,
-    at the first file, with a note listing the others.
-  - The values are written, and copied between boards, by each board's porter,
-    and some are wrong (a size given in bytes where bits are meant, an id
-    copied from another board). That is why {sfsrc}`zephyr` comes last when
-    sources are tied, and why its disagreements are worth reading on
-    [its data issues page](issues/source-zephyr.md).
+Each source has [a page of its own](sources/index.md): what the project is,
+how it identifies chips and what its table covers, the files read and the
+parser here that reads them, what was taken (and what it does not give), its
+data issues, and every entry taken from it.
+
+```{include} _generated/sources-list.md
+```

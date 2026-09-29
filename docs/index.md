@@ -94,6 +94,13 @@ Every chip id in one table: filter by id, part number, vendor or size.
 The SPI operations, their opcodes, and how many parts list each.
 :::
 
+:::{grid-item-card} {octicon}`repo` Sources
+:link: sources/index
+:link-type: doc
+
+The eight upstream projects the data is merged from: what each gives, and every entry taken.
+:::
+
 :::{grid-item-card} {octicon}`search` Search
 :link: search
 :link-type: ref
@@ -118,7 +125,7 @@ See [Using spiflash](usage.md) for the command and the Python library, and
 [Install](usage.md#install) for the Debian packages.
 
 This site describes spiflash {{version}}; its data comes from these upstream
-commits:
+commits ([more on each source](sources/index.md)):
 
 ```{include} _generated/sources-table.md
 ```
@@ -132,6 +139,7 @@ chips/index
 opcodes
 issues/index
 jep106/index
+sources/index
 ```
 
 ```{toctree}
