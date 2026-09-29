@@ -10,7 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from spiflash_extract import flashrom, linux, openfpgaloader, openocd, record, uboot
+from spiflash_extract import (
+    dts,
+    flashrom,
+    linux,
+    openfpgaloader,
+    openocd,
+    record,
+    sfdp,
+    uboot,
+    zephyr,
+)
 from spiflash_extract.ops import Opcodes
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -478,3 +488,279 @@ def test_opcodes_checks_values_against_the_table() -> None:
     o.discard("READ_1_1_1")
     o.discard("READ_1_1_1")
     assert o.to_json() == []
+
+
+# --- Zephyr ------------------------------------------------------------------
+
+ZEPHYR = FIXTURES / "zephyr"
+
+
+def test_zephyr() -> None:
+    r = by_name(zephyr.extract(ZEPHYR))
+    assert set(r) == {
+        "mx25r6435f",
+        "is25wp064",
+        "w25q128jw",
+        "mx25lm51245",
+        "is25lp128",
+        "gd25lq32d",
+        "mx25l3233f",
+    }
+    # nordic,qspi-nor with the chip's own SFDP table: size in bits, page and
+    # erase types from the table, readoc/writeoc as the modes used.
+    m = r["mx25r6435f"]
+    assert (m["file"], m["line"]) == ("boards/nordic/nrf52840dk/nrf52840dk_nrf52840.dts", 20)
+    assert (m["id"], m["vendor"], m["size"], m["page_size"]) == ("c22817", None, 8 << 20, 256)
+    assert m["erasers"] == [
+        {"opcode": 0x20, "blocks": [[4096, 2048]]},
+        {"opcode": 0x52, "blocks": [[32768, 256]]},
+        {"opcode": 0xD8, "blocks": [[65536, 128]]},
+    ]
+    assert m["features"] == [
+        "dual_read",
+        "erase_32k",
+        "erase_4k",
+        "erase_64k",
+        "quad_pp",
+        "quad_read",
+        "sfdp",
+    ]
+    assert {"has-dpd", "nordic,qspi-nor", "readoc=read4io", "writeoc=pp4io"} <= set(m["flags"])
+    assert ops(m)["READ_1_4_4"] == (0xEB, "sfdp-bfp: 1-4-4; readoc = read4io")
+    assert ops(m)["PP_1_4_4"] == (0x38, "writeoc = pp4io")
+    assert m["notes"] == [
+        "MX25R64 supports only pp and pp4io",
+        "MX25R64 supports all readoc options",
+    ]
+    # flexspi: DT_SIZE_M(8 * 8) bits; the name from the soc-nv-flash inside.
+    assert r["is25wp064"]["size"] == 8 << 20
+    # The overlay leaves the compatible to the board's .dts, and deletes and
+    # replaces the node inside.
+    w = r["w25q128jw"]
+    assert (w["file"], w["line"]) == (
+        "boards/nxp/mimxrt1060_evk/mimxrt1060_evk_mimxrt1062_qspi_C.overlay",
+        53,
+    )
+    assert (w["id"], w["size"]) == ("ef6018", 16 << 20)
+    # The name from the comment on the jedec-id line; the maker from a
+    # one-maker binding; the MSPI mode.
+    x = r["mx25lm51245"]
+    assert (x["vendor"], x["size"], x["features"]) == ("mxicy", 64 << 20, ["octal_read"])
+    assert "mspi-io-mode=MSPI_IO_MODE_OCTAL" in x["flags"]
+    # A descriptive compatible names the part and its maker (here with an id
+    # that is not ISSI's, kept as the board has it).
+    i = r["is25lp128"]
+    assert (i["vendor"], i["id"], i["size"]) == ("issi", "966018", 16 << 20)
+    # bflb: no size; use-sfdp says the part answers SFDP.
+    g = r["gd25lq32d"]
+    assert (g["size"], g["features"]) == (None, ["erase_4k", "sfdp"])
+    assert "erase-block-size=4096" in g["flags"]
+    assert set(ops(g)) == {"RDID", "RDSFDP"}
+    # Two boards with the same node are one record, which names the other.
+    # Its table is JESD216's first: nine DWORDs, no page size.
+    f = r["mx25l3233f"]
+    assert (f["size"], f["page_size"]) == (4 << 20, None)
+    assert f["notes"] == ["Also in boards/particle/boron/dts/mesh_feather.dtsi:21"]
+
+
+def zephyr_board(tmp_path: Path, nodes: str) -> list[record.Record]:
+    """The records of a board file holding ``nodes``."""
+    write(tmp_path, {"boards/x/x.dts": f"/dts-v1/;\n&spi0 {{\n{nodes}\n}};\n"})
+    return zephyr.extract(tmp_path)
+
+
+def test_zephyr_node_values(tmp_path: Path) -> None:
+    (r,) = zephyr_board(
+        tmp_path,
+        """flash@0 { // w25q256jv
+            compatible = "jedec,spi-nor";
+            jedec-id = [ef 40 19 00];  /* w25q256jv */
+            size-in-bytes = <0x2000000>;
+            page-size = <256>;
+            has-lock = <0x1c>;
+            use-4b-addr-opcodes;
+            use-fast-read;
+            use-flag-status-register;
+            enter-4byte-addr = <0x01>;
+            dpd-wakeup-sequence = <30000>, <20>, <30000>;
+        };""",
+    )
+    assert (r["name"], r["id"], r["ext_id"], r["page_size"]) == ("w25q256jv", "ef4019", "00", 256)
+    assert r["size"] is None  # size-in-bytes is nordic,qspi-nor's alone
+    assert r["features"] == ["4byte_addr", "4byte_opcodes", "fast_read", "lock"]
+    assert set(ops(r)) == {"RDID", "READ_1_1_1_FAST", "RDFSR", "EN4B"}
+    assert "has-lock=0x1c" in r["flags"]
+    assert "dpd-wakeup-sequence=<30000>, <20>, <30000>" in r["flags"]
+
+
+def test_zephyr_modes(tmp_path: Path) -> None:
+    n, s, o, q = zephyr_board(
+        tmp_path,
+        """n25q128a@0 {
+            compatible = "nordic,qspi-nor";
+            jedec-id = [20 ba 18];
+            size-in-bytes = <0x1000000>;
+            readoc = "read2o";
+            writeoc = "pp";
+            address-size-32;
+            ppsize-512;
+        };
+        mx25l6433f@1 {
+            compatible = "nxp,s32-qspi-nor";
+            jedec-id = [c2 20 17];
+            readoc = "1-1-1";
+            writeoc = "1-4-4";
+        };
+        s28hl512t@2 {
+            compatible = "infineon,s28hx512t", "jedec,nor";
+            jedec-id = [34 5a 1a];
+            mspi-io-mode = "MSPI_IO_MODE_OCTAL";
+            mspi-data-rate = "MSPI_DATA_RATE_DUAL";
+            enter-4byte-command = <0xb7>;
+        };
+        w25q16jv@3 {
+            compatible = "jedec,nor";
+            jedec-id = [ef 40 15];
+            read-io-mode = "MSPI_IO_MODE_QUAD_1_4_4";
+            erase-block-size = <4096>;
+        };""",
+    )
+    assert (n["size"], n["page_size"]) == (16 << 20, 512)
+    assert n["features"] == ["4byte_addr", "dual_read"]
+    assert set(ops(n)) == {"RDID", "READ_1_1_2", "PP_1_1_1"}
+    assert s["features"] == ["fast_read", "quad_pp"]
+    assert o["vendor"] == "infineon"
+    assert o["features"] == ["4byte_addr", "octal_dtr_pp", "octal_dtr_read", "octal_read"]
+    assert ops(o)["EN4B"] == (0xB7, "enter-4byte-command")
+    assert q["features"] == ["erase_4k", "quad_read"]
+
+
+def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
+    # The nRF52840 DK's MX25R6435F table, under a wrong size and page size.
+    (r,) = zephyr_board(
+        tmp_path,
+        """mx25r6435f@0 {
+            compatible = "adi,max32-spixf-nor";
+            jedec-id = [c2 28 17];
+            sfdp-bfp = [e5 20 f1 ff ff ff ff 03 44 eb 08 6b 08 3b 04 bb
+                        ee ff ff ff ff ff 00 ff ff ff 00 ff 0c 20 0f 52
+                        10 d8 00 ff 23 72 f5 00 82 ed 04 cc 44 83 68 44
+                        30 b0 30 b0 f7 c4 d5 5c 00 be 29 ff f0 d0 ff ff];
+            size = <DT_SIZE_M(16)>;
+            page-size = <4096>;
+        };""",
+    )
+    assert (r["size"], r["page_size"]) == (2 << 20, 4096)
+    assert r["notes"] == [
+        "sfdp-bfp gives 8388608 bytes, size 2097152",
+        "sfdp-bfp gives a 256-byte page, page-size 4096",
+    ]
+
+
+def test_zephyr_skips(tmp_path: Path) -> None:
+    # Not SPI flash, and a node nothing names; a SPI NAND part that is named.
+    (nand,) = zephyr_board(
+        tmp_path,
+        """s26hs512t@0 {
+            compatible = "nxp,s32-qspi-hyperflash";
+            jedec-id = [00 34 00 7b 00 1a 00 0f 00 90];
+        };
+        ext_flash_ctrl: flash-controller@1 {
+            compatible = "nxp,imx-flexspi-nor";
+            jedec-id = [ef 40 17];
+        };
+        w25n01gv: spi-nand@2 {
+            compatible = "jedec,spi-nand";
+            jedec-id = [ef aa 21];
+            size-bytes = <0x8000000>;
+        };""",
+    )
+    assert (nand["name"], nand["type"], nand["size"], nand["opcodes"]) == (
+        "w25n01gv",
+        "nand",
+        128 << 20,
+        [],
+    )
+
+
+def test_zephyr_refuses_what_it_cannot_read(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unknown flash binding"):
+        zephyr_board(tmp_path, 'f@0 { compatible = "acme,nor"; jedec-id = [ef 40 17]; };')
+    with pytest.raises(ValueError, match="no compatible"):
+        zephyr_board(tmp_path, "w25q64@0 { jedec-id = [ef 40 17]; };")
+    with pytest.raises(ValueError, match="unknown readoc 'read8io'"):
+        zephyr_board(
+            tmp_path,
+            'w25q64@0 { compatible = "nordic,qspi-nor"; jedec-id = [ef 40 17];\n'
+            'readoc = "read8io"; };',
+        )
+    with pytest.raises(ValueError, match="DT_FOO"):
+        zephyr_board(
+            tmp_path,
+            'w25q64@0 { compatible = "jedec,spi-nor"; jedec-id = [ef 40 17]; size = <DT_FOO>; };',
+        )
+
+
+def test_dts_nodes() -> None:
+    text = """/dts-v1/;
+#include <foo.h>
+#define TWO(x) \\
+    ((x) * 2)
+/ {
+    /omit-if-no-ref/ a: b: node@1 {
+        prop = "x;{y}", "// not a comment";
+        flag; /* comment */
+        #address-cells = <1>;
+        /delete-property/ gone;
+        child { }; // done
+    };
+};
+&{/soc/spi@4000} { status = "okay"; };
+lbl: &ref { };
+"""
+    root, path, ref = dts.nodes(text)
+    (node,) = root.children
+    assert (node.name, node.labels) == ("node@1", ["a", "b"])
+    assert dts.strings(node.properties["prop"].value or "") == ["x;{y}", "// not a comment"]
+    assert node.properties["flag"].value is None
+    assert set(node.properties) == {"prop", "flag", "#address-cells"}
+    assert [n.name for n in root.walk()] == ["/", "node@1", "child"]
+    assert path.name == "&{/soc/spi@4000}"
+    assert (ref.name, ref.reference, ref.labels) == ("&ref", "ref", ["lbl"])
+    assert dts.bytestring("[c2 28\n 17]") == b"\xc2\x28\x17"
+    assert dts.cells("<1 (2 * 3) DT_SIZE_K(4)>") == [1, 6, 4096]
+    with pytest.raises(ValueError, match="not a byte string"):
+        dts.bytestring("<1>")
+    with pytest.raises(ValueError, match="not a cell list"):
+        dts.cells("[01]")
+    with pytest.raises(ValueError, match="no ';'"):
+        dts.nodes("a = <1>")
+
+
+def test_sfdp_decode() -> None:
+    # JESD216's other density form (2^N bits), 4-byte addresses only, DTR,
+    # the 2-2-2 and 4-4-4 reads, and no erase types but DWORD 1's 4 KiB one.
+    dw1 = 0xE5 | 0x20 << 8 | 1 << 16 | 2 << 17 | 1 << 19
+    dws = [dw1, 1 << 31 | 28, 0, 0x3B00, 0x11, 0xBB << 24, 0xEB << 24, 0, 0]
+    b = sfdp.decode(b"".join(d.to_bytes(4, "little") for d in dws))
+    assert b.size == 32 << 20
+    assert (b.address_bytes, b.dtr) == ((4,), True)
+    assert b.reads == {"1-1-2": 0x3B, "2-2-2": 0xBB, "4-4-4": 0xEB}
+    assert b.erases == [(0x20, 4096)]
+    assert (b.page_size, b.quad_enable) == (None, None)
+    with pytest.raises(ValueError, match="at least 9 whole DWORDs"):
+        sfdp.decode(bytes(10))
+
+
+def test_zephyr_size_from_sfdp(tmp_path: Path) -> None:
+    # No size property: the table's. 4-byte addresses only.
+    dw1 = 0xE5 | 0x20 << 8 | 2 << 17
+    dws = [dw1, 1 << 31 | 28, 0, 0, 0, 0, 0, 0, 0]
+    table = " ".join(f"{b:02x}" for d in dws for b in d.to_bytes(4, "little"))
+    (r,) = zephyr_board(
+        tmp_path,
+        f'w25q256jv@0 {{ compatible = "jedec,spi-nor"; jedec-id = [ef 40 19]; '
+        f"sfdp-bfp = [{table}]; }};",
+    )
+    assert (r["size"], r["page_size"]) == (32 << 20, None)
+    assert r["features"] == ["4byte_addr", "erase_4k", "sfdp"]
