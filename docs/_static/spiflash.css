@@ -71,7 +71,7 @@ h1 + p .sf-id { font-size: 1em; }
 .sf-src-linux { background: #1d4ed8; }
 .sf-src-u-boot { background: #7c3aed; }
 .sf-src-dediprog { background: #a21caf; }
-.sf-src-mediatek { background: #15803d; }
+.sf-src-mediatek { background: #005870; }
 .sf-src-openocd { background: #0f766e; }
 .sf-src-openfpgaloader { background: #be185d; }
 .sf-src-imsprog { background: #991b1b; }
