@@ -123,7 +123,9 @@ def _hex_bytes(value: int) -> str:
     return f"{value:0{2 * n}x}"
 
 
-def _id_bytes(method: str | None, mfr: int, model: int) -> tuple[str | None, str | None]:
+def id_bytes(
+    method: str | None, mfr: int, model: int, probe: str = ""
+) -> tuple[str | None, str | None]:
     """The id and extended id a chip answers, read the way its probe reads them."""
     if method is None:
         return None, None  # no probe: a part with no id command (the M95320 EEPROM)
@@ -133,13 +135,16 @@ def _id_bytes(method: str | None, mfr: int, model: int) -> tuple[str | None, str
         return _hex_bytes(model), None
     if method != "rdid":
         return _hex_bytes(mfr) + _hex_bytes(model), None
-    if model > 0xFFFF:
+    if probe == "SPI_BIG_SPANSION":
         # PROBE_SPI_BIG_SPANSION: RDID bytes 1-2 are the device id, and
         # bytes 4-5 the rest the model id holds. Byte 3, which the probe
         # skips, is the length of the id, 4Dh on these parts (the table in
         # probe_spi_big_spansion(), s25f.c), and part of the extended id as
         # the chip sends it and the other sources give it (4d 00 80).
         return _hex_bytes(mfr) + f"{model >> 16:04x}", f"4d{model & 0xFFFF:04x}"
+    if model > 0xFFFF:
+        msg = f"a model id of more than two bytes, 0x{model:x}, from probe {probe!r}"
+        raise ValueError(msg)
     return _hex_bytes(mfr) + f"{model:04x}", None
 
 
@@ -193,7 +198,7 @@ def _record(
 
     mfr = cparse.evaluate(mfr_sym, symbols)
     model = cparse.evaluate(model_sym, symbols)
-    id_hex, ext = _id_bytes(method, mfr, model)
+    id_hex, ext = id_bytes(method, mfr, model, probe)
 
     flags = cparse.bit_names(f.get("feature_bits", "0"), symbols, "FEATURE_")
     features = {feat for flag in flags for rx, feat in _FEATURES if rx.fullmatch(flag)}

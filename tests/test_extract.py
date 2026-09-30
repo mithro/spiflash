@@ -366,6 +366,14 @@ def test_flashrom_errors(tmp_path: Path) -> None:
         flashrom.extract(tmp_path, "flashprog")
 
 
+def test_flashrom_only_big_spansion_has_an_extended_id() -> None:
+    # The id length byte, 4d, belongs to PROBE_SPI_BIG_SPANSION's parts only.
+    assert flashrom.id_bytes("rdid", 0x01, 0x20180080, "SPI_BIG_SPANSION") == ("012018", "4d0080")
+    assert flashrom.id_bytes("rdid", 0xEF, 0x4018, "SPI_RDID") == ("ef4018", None)
+    with pytest.raises(ValueError, match="more than two bytes, 0x20180080, from probe 'SPI_RDID'"):
+        flashrom.id_bytes("rdid", 0x01, 0x20180080, "SPI_RDID")
+
+
 def test_flashrom_erase_opcode_without_an_operation(tmp_path: Path) -> None:
     write(
         tmp_path,
