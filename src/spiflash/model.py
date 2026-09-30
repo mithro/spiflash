@@ -370,17 +370,21 @@ def name_distance(query: str, name: str) -> tuple[int, int]:
 
 
 def _consensus(values: Iterable[tuple[T | None, Source]]) -> T | None:
-    """The value most sources give, ties to the higher-priority source."""
-    counts: Counter[T] = Counter()
-    best: dict[T, int] = {}
+    """The value the most sources give; on a tie, the one the
+    higher-priority sources give, then the one more records give.
+
+    Sources are counted, not records: a source listing a part five times
+    does not outvote five sources listing it once, and a source giving two
+    values counts for each."""
+    sources: dict[T, set[int]] = {}
+    records: Counter[T] = Counter()
     for value, source in values:
-        if value is None:
-            continue
-        counts[value] += 1
-        best[value] = min(best.get(value, source.priority), source.priority)
-    if not counts:
+        if value is not None:
+            sources.setdefault(value, set()).add(source.priority)
+            records[value] += 1
+    if not sources:
         return None
-    return min(counts, key=lambda v: (-counts[v], best[v]))
+    return min(sources, key=lambda v: (-len(sources[v]), sorted(sources[v]), -records[v]))
 
 
 @dataclass(frozen=True)
@@ -428,14 +432,38 @@ class Flash:
 
     @cached_property
     def names(self) -> tuple[str, ...]:
-        """Every part name the sources give, most-cited first."""
-        counts: Counter[str] = Counter()
-        order: dict[str, tuple[int, int]] = {}
+        """Every part name the sources give, the chip's own part first: a
+        part name rather than a pattern (flashrom's wildcards, ``W25Q16.V``,
+        or the vendor-and-id name Linux gives an entry it does not name,
+        ``SPANSION-345B19``); one a record of the chip's :attr:`manufacturer`
+        gives (not a rebrand's, like Spansion's S25FL016K on a Winbond id);
+        then the one the most sources give, the higher-priority sources, the
+        most records (as :func:`_consensus` ranks values), and the one
+        listed first."""
+        sources: dict[str, set[int]] = {}
+        records: Counter[str] = Counter()
+        first: dict[str, int] = {}
+        own: set[str] = set()
         for i, r in enumerate(self.records):
             for n in r.part_names:
-                counts[n] += 1
-                order.setdefault(n, (r.source.priority, i))
-        return tuple(sorted(counts, key=lambda n: (-counts[n], order[n], n)))
+                sources.setdefault(n, set()).add(r.source.priority)
+                records[n] += 1
+                first.setdefault(n, i)
+                if r.manufacturer == self.manufacturer:
+                    own.add(n)
+        made_up = f"-{self.id_hex.upper()}"
+
+        def rank(n: str) -> tuple[bool, bool, int, list[int], int, int]:
+            return (
+                "." in n or n.endswith(made_up),
+                n not in own,
+                -len(sources[n]),
+                sorted(sources[n]),
+                -records[n],
+                first[n],
+            )
+
+        return tuple(sorted(sources, key=rank))
 
     @property
     def name(self) -> str:

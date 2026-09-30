@@ -44,5 +44,4 @@ closed, so some of its values may have come from there and cannot be traced
 further. That, and the uniform page and block sizes, is why it ranks below
 the curated tables, above only {sfsrc}`qemu` and {sfsrc}`zephyr`. It is
 still the only source for many parts, mostly from Chinese makers
-(Dosilicon, Zbit, Boya, Fidelix, Giantec, Zetta, XTX, ...), and for many
-newer GigaDevice and Eon ones.
+(Zbit, Dosilicon, Boya, UCUNDATA, Zetta, XMC, Yuchuang, Fidelix, ...).

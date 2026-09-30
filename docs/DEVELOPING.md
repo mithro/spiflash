@@ -84,7 +84,7 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`sfdp.py <tools/spiflash_extract/sfdp.py>` | a JESD216 Basic Flash Parameter table (SFDP), decoded |
 | {repo}`record.py <tools/spiflash_extract/record.py>` | the common record every extractor writes |
 | {repo}`ops.py <tools/spiflash_extract/ops.py>` | each record's opcodes, values checked against {repo}`src/spiflash/opcodes.py` |
-| {repo}`linux.py <tools/spiflash_extract/linux.py>`, {repo}`uboot.py <tools/spiflash_extract/uboot.py>`, {repo}`flashrom.py <tools/spiflash_extract/flashrom.py>`, {repo}`openocd.py <tools/spiflash_extract/openocd.py>`, {repo}`openfpgaloader.py <tools/spiflash_extract/openfpgaloader.py>`, {repo}`imsprog.py <tools/spiflash_extract/imsprog.py>`, {repo}`qemu.py <tools/spiflash_extract/qemu.py>`, {repo}`zephyr.py <tools/spiflash_extract/zephyr.py>` | one extractor per upstream format |
+| {repo}`flashrom.py <tools/spiflash_extract/flashrom.py>`, {repo}`linux.py <tools/spiflash_extract/linux.py>`, {repo}`uboot.py <tools/spiflash_extract/uboot.py>`, {repo}`dediprog.py <tools/spiflash_extract/dediprog.py>`, {repo}`openocd.py <tools/spiflash_extract/openocd.py>`, {repo}`openfpgaloader.py <tools/spiflash_extract/openfpgaloader.py>`, {repo}`imsprog.py <tools/spiflash_extract/imsprog.py>`, {repo}`qemu.py <tools/spiflash_extract/qemu.py>`, {repo}`zephyr.py <tools/spiflash_extract/zephyr.py>` | one extractor per upstream format |
 | {repo}`fetch.py <tools/spiflash_extract/fetch.py>` | sparse, blobless, depth-1 fetch of one commit |
 | {repo}`tests/fixtures/` | cut-down copies of each upstream file, verbatim |
 | {repo}`docs/` | the Read the Docs site |
@@ -147,20 +147,33 @@ A new vendor spelling fails `test_vendor_spellings_all_canonical`: add it to
 
 ## Adding a source
 
+Wherever the sources are listed, they are in their priority order.
+
 1. A `[name]` table in {repo}`tools/sources.toml`: `url`, `branch`, `commit`,
    the `paths` to fetch, and the `license` of those files.
 2. A module in {repo}`tools/spiflash_extract/` with
    `extract(root) -> list[Record]`, built with
    {py:func}`spiflash_extract.record.make`, and an entry in
-   {py:data}`update_db.EXTRACTORS`.
+   {py:data}`update_db.EXTRACTORS`. An extractor that leaves known kinds of
+   entry out counts them in a `skipped(root)`, named in
+   {py:data}`update_db.SKIPPED`.
 3. Tests on a miniature tree in {repo}`tests/fixtures/` and
    {repo}`tests/test_extract.py`.
 4. Everything else that names the sources:
    - a member of {py:class}`~spiflash.enums.Source`
      ({repo}`src/spiflash/enums.py`), declared in its place in the priority
-     order, with its label;
-   - a badge colour (`.sf-src-<name>` in {repo}`docs/_static/spiflash.css`);
-   - a row in the README and {repo}`docs/SOURCES.md`;
+     order, with its label, and the reason for its place in its docstring;
+   - a badge colour (`.sf-src-<name>` in {repo}`docs/_static/spiflash.css`),
+     distinct from the others;
+   - its page: the prose in `docs/_source_notes/<name>.md`, and its `SUMMARY`
+     and `PARSERS` in {repo}`docs/_ext/source_pages.py`;
+   - a row in the README and {repo}`docs/SOURCES.md`, and its opcodes in
+     {repo}`docs/opcodes.md`;
+   - the lists of sources in {repo}`docs/index.md`, the layout table above,
+     {repo}`src/spiflash/__init__.py`, the `description` in
+     {repo}`pyproject.toml`, {repo}`debian/control`, {repo}`debian/copyright`
+     (with its licence), {repo}`packaging/apt-intro.html` and the comment
+     in {repo}`.github/workflows/upstream.yml`;
    - the source sets in {repo}`tests/test_db.py`;
    - any new vendor spelling in {repo}`src/spiflash/vendors.py`.
 

@@ -28,12 +28,14 @@ so the id is the two bytes other sources give.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING
 
 from .ops import Opcodes
 from .record import ERASE_FEATURES, Record, make
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 DAT = "IMSProg_programmer/database/IMSProg.Dat"
@@ -52,6 +54,15 @@ TYPES = {
 }
 NOR, NAND = 0, 6
 
+# The other types, which are not taken.
+LEFT_OUT = {
+    1: "I2C EEPROM or FRAM (24xx)",
+    2: "MicroWire EEPROM (93xx)",
+    3: "SPI EEPROM or FRAM (25xx)",
+    4: "SPI EEPROM (95xx)",
+    5: "AT45 DataFlash",
+}
+
 VCC = {0: "3.3 V", 1: "1.8 V", 2: "5.0 V", 3: "2.5 V"}
 
 # How IMSProg's snor_4byte_mode() enters 4-byte addressing, by the entry's
@@ -64,30 +75,44 @@ ADDR4 = {
 }
 
 
-def extract(root: Path) -> list[Record]:
+def entries(root: Path) -> Iterator[tuple[int, list[str], bytes]]:
+    """Each entry up to the end one: its number, from 1, its type, vendor
+    and part, and its bytes."""
     data = (root / DAT).read_bytes()
     if len(data) % ENTRY:
         msg = f"{DAT}: {len(data)} bytes is not a whole number of {ENTRY}-byte entries"
         raise ValueError(msg)
-    records = []
     for n in range(len(data) // ENTRY):
         e = data[n * ENTRY : (n + 1) * ENTRY]
         text = e[:0x30].split(b"\0")[0].decode("ascii")
         if not text:
-            break  # the end entry
-        where = f"{DAT}: entry {n + 1} ({text})"
+            return  # the end entry
         fields = text.split(",")
-        kind = e[0x3A]
-        if len(fields) != 3 or TYPES.get(kind) != fields[0]:
-            msg = f"{where}: not a type, vendor and part, or type 0x{kind:02x} disagrees"
+        if len(fields) != 3 or TYPES.get(e[0x3A]) != fields[0]:
+            msg = (
+                f"{DAT}: entry {n + 1} ({text}): not a type, vendor and part, or its type disagrees"
+            )
             raise ValueError(msg)
+        yield n + 1, fields, e
+
+
+def skipped(root: Path) -> Counter[str]:
+    """How many entries are left out, by type."""
+    return Counter(LEFT_OUT[e[0x3A]] for _, _, e in entries(root) if e[0x3A] in LEFT_OUT)
+
+
+def extract(root: Path) -> list[Record]:
+    records = []
+    for n, fields, e in entries(root):
+        kind = e[0x3A]
         if kind not in (NOR, NAND):
             continue
+        where = f"{DAT}: entry {n} ({','.join(fields)})"
         if e[0x43] not in VCC:
             msg = f"{where}: unknown VCC code 0x{e[0x43]:02x}"
             raise ValueError(msg)
         rec = _nor(e, where) if kind == NOR else _nand(e)
-        records.append(make("imsprog", DAT, n + 1, fields[2], vendor=fields[1].strip(), **rec))
+        records.append(make("imsprog", DAT, n, fields[2], vendor=fields[1].strip(), **rec))
     return records
 
 

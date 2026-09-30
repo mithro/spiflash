@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cache
@@ -141,6 +141,14 @@ def _rank(part: str, query: str) -> int | None:
     return None
 
 
+def _bank(banks: dict[int, set[Source]]) -> int:
+    """A chip's JEP106 bank: the one the most sources give its id with (Eon's
+    chips mostly answer 1c alone, not 7f 1c); on a tie the higher, as an
+    upstream may drop the continuation codes but never adds them (ATXP032's
+    7f x 7 43)."""
+    return max(banks, key=lambda b: (len(banks[b]), b))
+
+
 class Database:
     """The records, grouped into one :class:`Flash` per chip id."""
 
@@ -159,7 +167,7 @@ class Database:
         self._jep106 = {(m.bank, m.id): m.name for m in self.manufacturers}
 
         groups: dict[tuple[FlashType, IdFamily, bytes], list[Record]] = defaultdict(list)
-        banks: dict[tuple[FlashType, IdFamily, bytes], Counter[int]] = defaultdict(Counter)
+        banks: dict[tuple[FlashType, IdFamily, bytes], dict[int, set[Source]]] = defaultdict(dict)
         for r in self.records:
             if r.id is None or r.id_method is None:
                 continue  # no id: nothing to look it up by
@@ -169,7 +177,7 @@ class Database:
             # same bytes) together, each legacy command on its own.
             key = (r.type, r.id_method.family, core)
             groups[key].append(r)
-            banks[key][bank] += 1
+            banks[key].setdefault(bank, set()).add(r.source)
         #: Every datasheet known, each once (a chip's own are in its
         #: :attr:`Flash.datasheets`).
         self.datasheets: tuple[Datasheet, ...] = tuple(datasheets)
@@ -179,7 +187,7 @@ class Database:
                 sheets[chip].append(d)
 
         def flash(typ: FlashType, fam: IdFamily, core: bytes, recs: list[Record]) -> Flash:
-            f = Flash(core, typ, tuple(recs), banks[(typ, fam, core)].most_common(1)[0][0], fam)
+            f = Flash(core, typ, tuple(recs), _bank(banks[(typ, fam, core)]), fam)
             mine = sorted(sheets.get(f.key, ()), key=lambda d: d.rank(f.key))
             return replace(f, datasheets=tuple(mine)) if mine else f
 

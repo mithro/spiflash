@@ -1,6 +1,18 @@
 {
  "format": 3,
  "sources": {
+  "dediprog": {
+   "branch": "master",
+   "browse": "https://github.com/DediProgSW/SF100Linux",
+   "commit": "091d257173afb3e1a34f3af3bb28e883dab67221",
+   "date": "2026-05-06T10:12:44+08:00",
+   "license": "GPL-2.0-only",
+   "paths": [
+    "ChipInfoDb.dedicfg"
+   ],
+   "records": 1873,
+   "url": "https://github.com/DediProgSW/SF100Linux"
+  },
   "flashprog": {
    "branch": "main",
    "browse": "https://github.com/SourceArcade/flashprog",

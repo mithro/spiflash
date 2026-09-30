@@ -21,6 +21,7 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 | {sfsrc}`flashrom`, {sfsrc}`flashprog` | the probe, the `.read`/`.write` functions, each block eraser (`spi_block_erase_20` sends 0x20), and the feature bits (`FEATURE_FAST_READ_QIO`, `FEATURE_4BA_ENTER`, `FEATURE_QPI_38_FF`, ...) |
 | {sfsrc}`linux` | what {upstream}`linux:drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default; the `no_sfdp_flags` (dual, quad and octal read, 4 KiB erase); sector and chip erase; and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
 | {sfsrc}`u-boot` | the same from its {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
+| {sfsrc}`dediprog` | the id command, and the opcodes its entry packs into `ReadCmd`, `ProgramCmd` and `EraseCmd`: the single-line read and page program, and the chip, block and die erase (SPI NOR only) |
 | {sfsrc}`openocd` | the columns of its table: read, fastest read, page program, sector erase and chip erase |
 | {sfsrc}`openfpgaloader` | what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
 | {sfsrc}`imsprog` | what its {upstream}`imsprog:IMSProg_programmer/spi_nor_flash.c` sends to a SPI NOR part: read, page program, the 64 KiB block erase (0xd8) and chip erase (0xc7), and above 16 MiB the way the entry says to enter 4-byte addressing (`EN4B`, Winbond's, or Spansion's bank register) |
@@ -29,7 +30,8 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 
 The opcode values themselves are read from each upstream's own headers
 (`SPINOR_OP_*`, `JEDEC_*`, `SPIFLASH_READ_ID`, `FLASH_*`, {sfsrc}`qemu`'s `FlashCMD`
-enum), or from the SFDP tables ({sfsrc}`qemu`, {sfsrc}`zephyr`), and checked against
+enum), from the SFDP tables ({sfsrc}`qemu`, {sfsrc}`zephyr`), or from {sfsrc}`dediprog`'s
+command words, and checked against
 [the table below](#the-operations) by {repo}`tools/spiflash_extract/ops.py` when the
 data is built: a disagreement fails the build.
 

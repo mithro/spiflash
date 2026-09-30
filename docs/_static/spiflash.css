@@ -70,9 +70,10 @@ h1 + p .sf-id { font-size: 1em; }
 .sf-src-flashprog { background: #c2410c; }
 .sf-src-linux { background: #1d4ed8; }
 .sf-src-u-boot { background: #7c3aed; }
+.sf-src-dediprog { background: #a21caf; }
 .sf-src-openocd { background: #0f766e; }
 .sf-src-openfpgaloader { background: #be185d; }
-.sf-src-imsprog { background: #b91c1c; }
+.sf-src-imsprog { background: #0369a1; }
 .sf-src-qemu { background: #f97316; }
 .sf-src-zephyr { background: #4d7c0f; }
 /* A linked label (to the upstream line) and the page's own source. */

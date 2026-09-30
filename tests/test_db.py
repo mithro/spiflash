@@ -65,6 +65,7 @@ def test_every_source_is_present() -> None:
     assert set(spiflash.sources()) == {
         "linux",
         "u-boot",
+        "dediprog",
         "flashrom",
         "flashprog",
         "openocd",
@@ -106,6 +107,7 @@ def test_w25q128() -> None:
         "flashprog",
         "linux",
         "u-boot",
+        "dediprog",
         "openocd",
         "openfpgaloader",
         "imsprog",
@@ -134,6 +136,52 @@ def test_continuation_codes_are_optional() -> None:
     assert plain
     assert plain[0].manufacturer == "Eon"
     assert spiflash.jep106(0x1C, bank=1) == "Eon Silicon Devices"
+
+
+def test_names_rank_by_sources() -> None:
+    # Dediprog's W25Q32 and W25Q32JV entries are one source each: W25Q32JV
+    # (five sources, flashrom's among them) stays first.
+    (w25q32,) = spiflash.lookup("ef4016")
+    assert w25q32.name == "W25Q32JV"
+    db = Database(
+        [
+            rec(source="dediprog", name="W25Q32"),
+            rec(source="dediprog", name="W25Q32"),
+            rec(source="dediprog", name="W25Q32"),
+            rec(source="flashrom", name="W25Q32JV"),
+            rec(source="linux", name="W25Q32JV"),
+        ]
+    )
+    assert db.flashes[0].names == ("W25Q32JV", "W25Q32")
+    # A part name before a pattern (flashrom's W25Q16.V) and before a
+    # rebrand's name (Spansion's S25FL016K, which three sources give);
+    # neither is dropped.
+    (w25q16,) = spiflash.lookup("ef4015")
+    assert w25q16.name == "W25Q16JV"
+    assert {"W25Q16.V", "S25FL016K"} <= set(w25q16.names)
+    # Linux's name for an entry it does not name is no part name.
+    (s28hs,) = spiflash.lookup("345b19")
+    assert s28hs.name == "S28HS256T"
+    # Three sources (Dediprog, Linux, QEMU) call Intel's 25F160S33B8 160S33B.
+    (s33,) = spiflash.lookup("898911")
+    assert s33.names == ("160S33B", "25F160S33B8")
+
+
+def test_bank_is_the_most_sources_then_the_higher() -> None:
+    # ATXP032 answers seven continuation codes, then 43 (OpenOCD); Dediprog
+    # leaves them out. A tie goes to the codes, which no upstream adds.
+    (atxp,) = spiflash.lookup("43a700")
+    assert atxp.jedec_id == "7f7f7f7f7f7f7f43a700"
+    db = Database(
+        [
+            rec(source="flashrom", id="1c7018"),
+            rec(source="linux", id="1c7018"),
+            rec(source="dediprog", id="7f1c7018"),
+            rec(source="dediprog", id="7f1c7018"),
+            rec(source="dediprog", id="7f1c7018"),
+        ]
+    )
+    assert db.flashes[0].bank == 0  # two sources to one, however many records
 
 
 def test_extended_id_narrows_variants() -> None:
@@ -171,11 +219,32 @@ def test_legacy_ids_are_separate() -> None:
     assert "M25P05" not in [n for f in spiflash.lookup("05") for n in f.names]
 
 
+def test_dediprog_does_not_outvote() -> None:
+    # Dediprog's DataFlash entries give no page size, and its sector sizes
+    # (one vote, however many entries) lose to the reviewed tables'.
+    (at45,) = spiflash.lookup("1f2800")
+    assert at45.page_size == 1024
+    (en,) = spiflash.lookup("1c2010")
+    assert en.sector_size == 32 << 10
+    (s25,) = spiflash.lookup("014014")
+    assert s25.size == 1 << 20  # Dediprog's S25FL208K says 2 MiB
+    # One flashrom entry each for 2 and 4 MiB, and two of Dediprog's three
+    # for 4 MiB (the density byte, 0x16, is 4 MiB).
+    # flashrom's two 1.8 V S25FS256S entries do not outvote the 3 V
+    # S25FL256S both flashrom and flashprog give.
+    (s25fl256,) = spiflash.lookup("010219")
+    assert s25fl256.voltage == (2700, 3600)
+    (w77,) = spiflash.lookup("ef8a16")
+    assert w77.size == 4 << 20
+
+
 def test_nand() -> None:
     found = spiflash.lookup("efaa21", flash_type="nand")
     assert found
     assert found[0].type == "nand"
     assert "W25N01GV" in found[0].names
+    # Dediprog's id, read after a dummy byte, is the same chip as Linux's.
+    assert {"linux", "dediprog"} <= set(found[0].sources)
     assert spiflash.lookup("efaa21", flash_type="nor") == []
 
 
@@ -247,6 +316,42 @@ def test_consensus_prefers_majority_then_priority() -> None:
     assert tie.flashes[0].size == 2  # flashrom outranks openocd
 
 
+def test_consensus_counts_sources() -> None:
+    # Sources are counted, not records: three of one source are one.
+    db = Database(
+        [
+            rec(source="dediprog", sector_size=64 << 10),
+            rec(source="dediprog", sector_size=64 << 10),
+            rec(source="dediprog", sector_size=64 << 10),
+            rec(source="dediprog", sector_size=32 << 10),
+            rec(source="flashrom", sector_size=32 << 10),
+            rec(source="flashprog", sector_size=32 << 10),
+        ]
+    )
+    assert db.flashes[0].sector_size == 32 << 10
+    # A source giving two values counts for each; a tie between values goes
+    # to the one the higher-priority sources give, then to more records.
+    db = Database(
+        [
+            rec(source="flashrom", page_size=1024),
+            rec(source="flashrom", page_size=256),
+            rec(source="flashprog", page_size=1024),
+            rec(source="u-boot", page_size=256),
+        ]
+    )
+    assert db.flashes[0].page_size == 1024
+    db = Database(
+        [
+            rec(source="linux", page_size=512),
+            rec(source="dediprog", page_size=256),
+            rec(source="linux", page_size=256),
+            rec(source="dediprog", page_size=512),
+            rec(source="dediprog", page_size=512),
+        ]
+    )
+    assert db.flashes[0].page_size == 512  # the same sources, but more records
+
+
 def test_features_union_and_sources() -> None:
     db = Database(
         [
@@ -274,6 +379,9 @@ def test_unknown_source_is_rejected() -> None:
 def test_sources_are_in_priority_order() -> None:
     assert [s.priority for s in Source] == list(range(len(Source)))
     assert Source.FLASHROM.priority < Source.LINUX.priority < Source.OPENFPGALOADER.priority
+    # Dediprog's own table: after the reviewed ones, before the smallest.
+    assert Source.UBOOT.priority < Source.DEDIPROG.priority < Source.OPENOCD.priority
+    assert Source.DEDIPROG.label == "Dediprog"
     # IMSProg below the curated tables: its format and some values came from
     # closed programmer databases.
     assert Source.OPENFPGALOADER.priority < Source.IMSPROG.priority < Source.QEMU.priority
