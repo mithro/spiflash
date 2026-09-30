@@ -21,7 +21,7 @@ merged from the flash tables of every project that keeps one:
 Together that is 1326 distinct chip ids (1056 SPI NOR, 270 SPI NAND) from 64
 manufacturers, 817 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
-from, and where the sources disagree (90 ids do) both answers are kept.
+from, and where the sources disagree (89 ids do) both answers are kept.
 Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
 (JESD216) tables, decoded.
 
@@ -73,10 +73,10 @@ What answered `9f` with `ef 40 18`?
 
 ```console
 $ spiflash id ef4018
-ef4018  Winbond  W25Q128, W25Q128JV, W25Q128BV, W25Q128FV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
+ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
     size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
     features: dual_read erase_32k erase_4k erase_64k fast_read lock otp qpi quad_pp quad_read sfdp
-    from: flashrom, flashprog, linux, u-boot, dediprog, openocd, openfpgaloader, imsprog, zephyr
+    from: flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr
     datasheet: https://www.winbond.com/resource-files/W25Q128JV%20RevH%2003102021%20Plus.pdf
 ```
 
@@ -90,7 +90,7 @@ What does a part answer?
 
 ```console
 $ spiflash find GD25Q64
-c84017  GigaDevice  GD25Q64, GD25Q64C, GD25Q64B, GD25B64B, GD25B64C, GD25B64E, GD25Q64E, GD25Q64H, GD25R64C, S64M80GX, GD25Q64CSIG  (nor)
+c84017  GigaDevice  GD25Q64, GD25Q64C, GD25Q64B, GD25Q64E, GD25B64B, GD25B64C, GD25B64E, GD25Q64H, GD25R64C, S64M80GX, GD25Q64CSIG  (nor)
     size 8 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
     ...
 ```
@@ -103,18 +103,18 @@ Which opcodes does a part support?
 
 ```console
 $ spiflash opcodes W25Q128JV           # or by id: spiflash opcodes ef4018
-ef4018  Winbond  W25Q128, W25Q128JV, W25Q128BV, W25Q128FV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
-    0x9f  RDID             Read JEDEC id  [flashrom, flashprog, linux, u-boot, dediprog, openocd, openfpgaloader, imsprog, zephyr]
+ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
+    0x9f  RDID             Read JEDEC id  [flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr]
     0x5a  RDSFDP           Read SFDP (JESD216) parameters  [flashrom, flashprog]
-    0x03  READ_1_1_1       Read data (low frequency)  [flashrom, flashprog, linux, u-boot, openocd, openfpgaloader, imsprog]
+    0x03  READ_1_1_1       Read data (low frequency)  [flashrom, flashprog, linux, u-boot, rockchip, openocd, openfpgaloader, imsprog]
     0x0b  READ_1_1_1_FAST  Fast read  [flashprog, linux, u-boot, dediprog]
     0x3b  READ_1_1_2       Dual output fast read  [flashprog, linux, u-boot]
     0xbb  READ_1_2_2       Dual I/O fast read  [flashprog]
-    0x6b  READ_1_1_4       Quad output fast read  [flashprog, linux, u-boot]
+    0x6b  READ_1_1_4       Quad output fast read  [flashprog, linux, u-boot, rockchip]
     0xeb  READ_1_4_4       Quad I/O fast read  [flashprog, openocd]
-    0x02  PP_1_1_1         Page program  [flashrom, flashprog, linux, u-boot, dediprog, openocd, openfpgaloader, imsprog]
-    0x32  PP_1_1_4         Quad input page program  [u-boot, zephyr]
-    0x20  BE_4K            Erase a 4 KiB sector  [flashrom, flashprog, linux, u-boot, openfpgaloader]
+    0x02  PP_1_1_1         Page program  [flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog]
+    0x32  PP_1_1_4         Quad input page program  [u-boot, rockchip, zephyr]
+    0x20  BE_4K            Erase a 4 KiB sector  [flashrom, flashprog, linux, u-boot, rockchip, openfpgaloader]
     ...
 ```
 
@@ -138,11 +138,11 @@ import spiflash
 
 (chip,) = spiflash.lookup("ef4018")      # or b"\xef\x40\x18", 0xef4018, [0xef, 0x40, 0x18]
 chip.manufacturer                        # 'Winbond'
-chip.names                               # ('W25Q128', 'W25Q128JV', 'W25Q128.V', 'W25Q128FV', 'W25Q128BV')
+chip.names                               # ('W25Q128', 'W25Q128JV', 'W25Q128FV', 'W25Q128BV', 'W25R128FV', ...)
 chip.size, chip.page_size, chip.sector_size   # (16777216, 256, 65536)
 chip.voltage                             # (2700, 3600), in mV
 "quad_read" in chip.features             # True
-chip.feature_sources("quad_read")        # ('flashprog', 'linux', 'u-boot', 'openocd')
+chip.feature_sources("quad_read")        # ('flashprog', 'linux', 'u-boot', 'rockchip', 'openocd')
 chip.conflicts                           # {} -- or {"page_size": {256: (...), 512: (...)}}
 
 for r in chip.records:                   # every upstream entry, as extracted

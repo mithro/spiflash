@@ -70,10 +70,18 @@ whether Linux reads the id after a dummy byte or an address byte. Linux and
 {sfsrc}`dediprog` match a third byte for some parts that Rockchip does not,
 such as Macronix's MX35LF2GE4AD (`c2 26 03`, where Rockchip matches
 `c2 26`) and Foresee's F35SQA001G (`cd 71 71`). Such a shorter id is folded
-into the longer one when exactly one longer SPI NAND id starts with it, and
-it names the same part. The chip page lists it as matched on its first
-bytes, and a lookup finds the chip by either id. Twenty of Rockchip's ids
-fold this way.
+into the longer one when every record of it names the longer id's part, with
+the same size, page and erase block, and no other longer id of that part
+starts with it (unless the longer ids start one another: the F50L1G41LB's
+`c8 01`, `c8 01 7f` and `c8 01 7f 7f 7f` are one chip). The chip page lists
+it as matched on its first bytes and says which id each source gives, and a
+lookup finds the chip by either id. Twenty of Rockchip's ids fold this way.
+
+The GD5F1GQ5REYIG and the F50L2G41KA both answer `c8 41`, and Rockchip
+alone tells them apart by the byte after it. A lookup of `c8 41 7f` gives
+the F50L2G41KA alone, as ESMT's, and of `c8 41 c8` the GigaDevice part
+with the other sources' GD5F1GQ5REXXG; neither is a disagreement between
+the sources.
 
 The driver takes the first entry an id matches. A later entry for the same
 id is never used, and its record says which line wins
