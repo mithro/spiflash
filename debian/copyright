@@ -13,10 +13,13 @@ License: Apache-2.0
 Comment:
  Facts about flash chips (identifiers, sizes, page and sector sizes, erase
  opcodes, supply voltages, capability flags, part and manufacturer names)
- extracted by tools/update_db.py from the flash tables of flashrom,
- flashprog, U-Boot, OpenOCD and QEMU (GPL-2.0-or-later), the Linux kernel
- and Dediprog's SF100Linux (GPL-2.0-only) and openFPGALoader (Apache-2.0),
- at the commits recorded in src/spiflash/data/sources.json. No code from
+ extracted by tools/update_db.py from the flash tables of flashrom and
+ flashprog (GPL-2.0-or-later), the Linux kernel (GPL-2.0-only), U-Boot
+ (GPL-2.0-or-later), Dediprog's SF100Linux (GPL-2.0-only), OpenOCD
+ (GPL-2.0-or-later), openFPGALoader (Apache-2.0), IMSProg
+ (GPL-3.0-or-later) and QEMU (GPL-2.0-or-later), and the devicetree of
+ Zephyr's boards (Apache-2.0), at the commits recorded in
+ src/spiflash/data/sources.json. No code from
  those projects is included; the free-text notes reproduce short comments
  from their tables, credited to the file and line they came from, and the
  SFDP tables of QEMU's flash model are the bytes the chips themselves

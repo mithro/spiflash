@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+#: The sources whose table is a binary file: a record's ``line`` is its
+#: entry's number in the file, and its link is to the file.
+BINARY_SOURCES = frozenset({Source.IMSPROG})
+
 
 class Voltage(NamedTuple):
     """A supply voltage range, in millivolts."""
@@ -258,7 +262,10 @@ class Record:
 
     @property
     def url(self) -> str:
-        """Where in the upstream tree the entry is (the path and line)."""
+        """Where in the upstream tree the entry is: the path and line, or
+        for a binary file the entry's number in it."""
+        if self.source in BINARY_SOURCES:
+            return f"{self.file} entry {self.line}"
         return f"{self.file}:{self.line}"
 
     @cached_property

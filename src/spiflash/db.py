@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from .enums import FlashType, IdFamily, Source
 from .model import (
+    BINARY_SOURCES,
     Datasheet,
     Flash,
     Record,
@@ -320,14 +321,16 @@ class Database:
 
     def link(self, record: Record) -> str | None:
         """A web link to the upstream line a record came from, at the commit
-        the data was extracted from (GitHub and its mirrors only)."""
+        the data was extracted from (GitHub and its mirrors only), or to the
+        file, for a binary one (:data:`~spiflash.model.BINARY_SOURCES`)."""
         src = self.sources.get(record.source)
         if not src:
             return None
         base = src.browse.rstrip("/")
         if not base.startswith("https://github.com/"):
             return None
-        return f"{base}/blob/{src.commit}/{record.file}#L{record.line}"
+        url = f"{base}/blob/{src.commit}/{record.file}"
+        return url if record.source in BINARY_SOURCES else f"{url}#L{record.line}"
 
     def jep106(self, manufacturer_id: int, bank: int = 0) -> str | None:
         """The JEP106 name of a manufacturer id byte (with its parity bit)."""

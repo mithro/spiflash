@@ -25,10 +25,14 @@ class Source(StrEnum):
        spare area).
     4. OpenOCD and openFPGALoader: their tables are the smallest and the
        least specific.
-    5. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
+    5. IMSProg: a programmer's table of parts it reads, but every SPI NOR
+       entry has the same page and block size, and its format (and some of
+       its values) came from the closed databases of commercial programmers
+       (EZP2019 to EZP2023, Minipro, XP866+), which cannot be checked.
+    6. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
        boards emulate, though its SFDP dumps are the only complete ones any
        upstream has.
-    6. Zephyr: it has no table of parts, only boards describing the chip
+    7. Zephyr: it has no table of parts, only boards describing the chip
        each carries, whose values are written (and copied between boards)
        by each board's porter."""
 
@@ -39,6 +43,7 @@ class Source(StrEnum):
     DEDIPROG = "dediprog"
     OPENOCD = "openocd"
     OPENFPGALOADER = "openfpgaloader"
+    IMSPROG = "imsprog"
     QEMU = "qemu"
     ZEPHYR = "zephyr"
 
@@ -63,6 +68,7 @@ _SOURCE_LABELS = {
     Source.DEDIPROG: "Dediprog",
     Source.OPENOCD: "OpenOCD",
     Source.OPENFPGALOADER: "openFPGALoader",
+    Source.IMSPROG: "IMSProg",
     Source.QEMU: "QEMU",
     Source.ZEPHYR: "Zephyr",
 }

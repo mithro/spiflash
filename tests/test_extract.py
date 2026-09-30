@@ -15,6 +15,7 @@ from spiflash_extract import (
     dediprog,
     dts,
     flashrom,
+    imsprog,
     linux,
     openfpgaloader,
     openocd,
@@ -478,6 +479,168 @@ def test_openfpgaloader_no_map(tmp_path: Path) -> None:
     write(tmp_path, {openfpgaloader.DB: "int x;", openfpgaloader.FLASH_CPP: ""})
     with pytest.raises(ValueError, match="no flash_list"):
         openfpgaloader.extract(tmp_path)
+
+
+IMSPROG = FIXTURES / "imsprog"
+
+IMSPROG_DAT = (IMSPROG / imsprog.DAT).read_bytes()
+
+# The known errors the fixture has (the rest would raise, as stale).
+IMSPROG_WRONG = {
+    k: v
+    for k, v in imsprog.WRONG.items()
+    if k[0] in {"A25L40PT", "ES25P10", "P25Q06H", "DS35Q4GM(1.8V)"}
+}
+
+
+def test_imsprog() -> None:
+    recs = imsprog.extract(IMSPROG, IMSPROG_WRONG)
+    # Sixteen SPI NOR and NAND entries, four of them known to be wrong; the
+    # EEPROMs, FRAM and DataFlash after them are not taken, and the all-zero
+    # entry ends the table.
+    assert len(recs) == 12
+    r = by_name(recs)
+    s = r["S25FL256S"]
+    assert (s["file"], s["line"]) == (imsprog.DAT, 2)
+    assert s["vendor"] == "SPANSION"
+    assert s["id"] == "010219"
+    assert s["size"] == 32 << 20
+    # The 256-byte page and 64 KiB block every NOR entry has are IMSProg's
+    # defaults, not the part's (the S25FL256S erases 256 KiB blocks), so
+    # they are flags: no page or sector size, no erase layout.
+    assert (s["page_size"], s["sector_size"], s["erasers"]) == (None, None, None)
+    assert s["features"] == ["4byte_addr"]
+    assert s["flags"] == [
+        "addr4bit=0x21",
+        "algorithmCode=0x00",
+        "blockSize=64K",
+        "chipVCC=3.3 V",
+        "delay=1000",
+        "pageSize=256",
+    ]
+    # Spansion's 4-byte mode is a bank register; Winbond's also clears its
+    # extended address register on the way out. IMSProg never sends 0xc7.
+    assert set(ops(s)) == {"RDID", "READ_1_1_1", "PP_1_1_1", "SE", "BRWR", "BRRD"}
+    assert "WREAR" in ops(r["EN25Q256"])
+    assert "EN4B" in ops(r["GD25LB512ME(1.8V)"])
+    assert set(ops(r["FL016AIF"])) == {"RDID", "READ_1_1_1", "PP_1_1_1", "SE"}
+    assert "chipVCC=1.8 V" in r["XT25Q16D(1.8V)"]["flags"]
+    assert "delay=200" in r["EN25F10A"]["flags"]
+    assert r["PN25F08"]["vendor"] == "PARAGON"  # "PARAGON " upstream
+    # Known wrong entries are left out: the A25L40PT has the A25L20PT's id,
+    # the ES25P10 twice its size, the P25Q06H an id no part has.
+    assert r["A25L20PT"]["id"] == "372022"
+    assert not {"A25L40PT", "ES25P10", "P25Q06H", "DS35Q4GM(1.8V)"} & set(r)
+    # SPI NAND: 0x9f and a dummy byte, then three id bytes, of which a
+    # two-byte id repeats its first.
+    g = r["GD5F1GQ5UEXXG"]
+    assert (g["type"], g["id"], g["id_method"]) == ("nand", "c851", "rdid_opcode_dummy")
+    assert (g["size"], g["page_size"], g["sector_size"]) == (128 << 20, 2048, 128 << 10)
+    assert "ECCsize=128" in g["flags"]
+    assert g["opcodes"] == []
+    assert r["MX35LF1G24AD-Z41"]["id"] == "c21403"
+    assert r["F35SQA002G"]["id"] == "cd7272"
+    # GigaDevice's F series answers with no dummy byte, as Linux reads it.
+    f = r["GD5F1GQ4UFXXG"]
+    assert (f["id"], f["id_method"]) == ("c8b148", "rdid_opcode")
+
+
+def dat(tmp_path: Path, *entries: bytes) -> Path:
+    path = tmp_path / imsprog.DAT
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"".join(entries))
+    return tmp_path
+
+
+def nth(n: int) -> bytes:
+    """The fixture's nth entry, from 0."""
+    return IMSPROG_DAT[n * 0x44 : (n + 1) * 0x44]
+
+
+# A SPI NAND id from a maker not known for two-byte ids, whose third byte
+# repeats its first: a real third byte, or the id wrapping round? It is not
+# guessed.
+UNKNOWN_WRAP = nth(12)[:0x30] + b"\x77" + nth(12)[0x31:0x32] + b"\x77" + nth(12)[0x33:]
+
+
+@pytest.mark.parametrize(
+    ("entry", "error"),
+    [
+        (IMSPROG_DAT[:0x43], "not a whole number"),
+        (b"SPI_NAND" + IMSPROG_DAT[8:0x44], "not a type, vendor and part"),
+        (IMSPROG_DAT[:0x43] + b"\x09", "unknown VCC"),
+        (IMSPROG_DAT[:0x3E] + b"\x02" + IMSPROG_DAT[0x3F:0x44], "unknown 4-byte"),
+        (UNKNOWN_WRAP, "not known for 2-byte ids"),
+    ],
+)
+def test_imsprog_refuses(tmp_path: Path, entry: bytes, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        imsprog.extract(dat(tmp_path, entry), {})
+
+
+def test_imsprog_skipped() -> None:
+    assert imsprog.skipped(IMSPROG, IMSPROG_WRONG) == {
+        "I2C EEPROM or FRAM (24xx)": 1,
+        "MicroWire EEPROM (93xx)": 1,
+        "SPI EEPROM or FRAM (25xx)": 1,
+        "SPI EEPROM (95xx)": 1,
+        "AT45 DataFlash": 1,
+        "wrong id, per its datasheet": 2,
+        "size contradicts its part number and capacity byte": 1,
+        "wrong name, per its maker's naming and its own VCC": 1,
+    }
+
+
+def test_imsprog_known_errors() -> None:
+    # Each names the part and the id the file gives it, and a wrong size
+    # that size, so an entry corrected upstream is taken again; the
+    # A25L20PT, whose id the A25L40PT repeats, is not left out with it.
+    assert imsprog.WRONG[("A25L40PT", "372022", None)] == "wrong id, per its datasheet"
+    assert not any(part == "A25L20PT" for part, _, _ in imsprog.WRONG)
+    sizes = {k: v for k, v in imsprog.WRONG.items() if k[2] is not None}
+    assert len(sizes) == 11
+    assert set(sizes.values()) == {"size contradicts its part number and capacity byte"}
+    assert ("F25L008A", "8c2014", 2 << 20) in sizes
+    assert ("MT29F4G01ABAFD12", "2c362c", None) in imsprog.WRONG
+    assert ("PCT25VF010A", "bf4900", None) in imsprog.WRONG
+    # The DS35Q4GM(1.8V) is the 1.8 V DS35M4GM: left out, so that a search
+    # for the DS35Q4GM finds only the real one.
+    assert imsprog.WRONG[("DS35Q4GM(1.8V)", "e5a4e5", None)].startswith("wrong name")
+    assert len(imsprog.WRONG) == 16
+
+
+def test_imsprog_takes_a_corrected_size(tmp_path: Path) -> None:
+    # ES25P10 (the fixture's eighth entry) at 128 KiB, as it should be: no
+    # longer the known error, so taken, and the stale key raises.
+    es25p10 = nth(7)
+    fixed = es25p10[:0x34] + (128 << 10).to_bytes(4, "little") + es25p10[0x38:]
+    key = ("ES25P10", "4a2011", 256 << 10)
+    wrong = {key: imsprog.WRONG[key]}
+    assert imsprog.extract(dat(tmp_path, es25p10), wrong) == []
+    with pytest.raises(ValueError, match=r"no entry is \[\('ES25P10', '4a2011', 262144\)\]"):
+        imsprog.extract(dat(tmp_path / "fixed", fixed), wrong)
+    (r,) = imsprog.extract(dat(tmp_path / "taken", fixed), {})
+    assert r["size"] == 128 << 10
+
+
+def test_imsprog_stale_keys_raise(tmp_path: Path) -> None:
+    # A25L40PT under its right id: the key for the wrong one matches
+    # nothing, and says so, in extract and in skipped.
+    a25l40pt = nth(6)
+    fixed = a25l40pt[:0x30] + b"\x13\x20\x37" + a25l40pt[0x33:]
+    key = ("A25L40PT", "372022", None)
+    root = dat(tmp_path, fixed)
+    with pytest.raises(ValueError, match="remove it from WRONG"):
+        imsprog.extract(root, {key: imsprog.WRONG[key]})
+    with pytest.raises(ValueError, match="A25L40PT"):
+        imsprog.skipped(root, {key: imsprog.WRONG[key]})
+    (r,) = imsprog.extract(root, {})
+    assert (r["name"], r["id"]) == ("A25L40PT", "372013")
+
+
+def test_imsprog_without_an_end_entry(tmp_path: Path) -> None:
+    (r,) = imsprog.extract(dat(tmp_path, IMSPROG_DAT[:0x44]), {})
+    assert r["name"] == "FL016AIF"
 
 
 def test_record_make_validates() -> None:

@@ -70,6 +70,7 @@ def test_every_source_is_present() -> None:
         "flashprog",
         "openocd",
         "openfpgaloader",
+        "imsprog",
         "qemu",
         "zephyr",
         "jep106",
@@ -109,6 +110,7 @@ def test_w25q128() -> None:
         "dediprog",
         "openocd",
         "openfpgaloader",
+        "imsprog",
         "zephyr",
     }
     assert f.type == "nor"
@@ -380,6 +382,9 @@ def test_sources_are_in_priority_order() -> None:
     # Dediprog's own table: after the reviewed ones, before the smallest.
     assert Source.UBOOT.priority < Source.DEDIPROG.priority < Source.OPENOCD.priority
     assert Source.DEDIPROG.label == "Dediprog"
+    # IMSProg below the curated tables: its format and some values came from
+    # closed programmer databases.
+    assert Source.OPENFPGALOADER.priority < Source.IMSPROG.priority < Source.QEMU.priority
     # QEMU, then Zephyr last: board descriptions, not a curated table of parts.
     assert list(Source)[-2:] == [Source.QEMU, Source.ZEPHYR]
     assert Source.QEMU.label == "QEMU"
@@ -564,6 +569,11 @@ def test_link_to_the_upstream_line() -> None:
     # flashprog lives on Gerrit; links go to its GitHub mirror.
     assert db.link(by_source["flashprog"]).startswith(
         "https://github.com/SourceArcade/flashprog/blob/"
+    )
+    # IMSProg's table is a binary file: the link is to the file.
+    assert db.link(by_source["imsprog"]) == (
+        f"https://github.com/bigbigmdm/IMSProg/blob/{db.sources['imsprog'].commit}"
+        "/IMSProg_programmer/database/IMSProg.Dat"
     )
     assert Database([rec()]).link(rec()) is None  # no sources known
     elsewhere = SourceInfo(
