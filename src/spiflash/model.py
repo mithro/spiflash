@@ -324,11 +324,15 @@ def same_part(a: str, b: str) -> bool:
     """Whether part names ``a`` and ``b`` name one part: the same name, or
     it with a suffix (ZB35Q01B, ZB35Q01BYIG: package and grade), reading
     flashrom's ``.`` and a datasheet's ``XX`` placeholder as any character
-    (GD5F1GQ5REXXG, GD5F1GQ5REYIG)."""
+    (GD5F1GQ5REXXG, GD5F1GQ5REYIG). A flashrom name's stem, before its
+    first ``.``, is the part too: S25FL128S......0 and S25FL128S_UL are
+    both S25FL128S parts."""
     a, b = a.upper(), b.upper()
-    return name_matches(a.replace("XX", ".."), b, prefix=True) or name_matches(
-        b.replace("XX", ".."), a, prefix=True
-    )
+    for x, y in ((a, b), (b, a)):
+        stem = x.split(".", 1)[0] if "." in x else ""
+        if name_matches(x.replace("XX", ".."), y, prefix=True) or (stem and y.startswith(stem)):
+            return True
+    return False
 
 
 #: What :func:`name_distance` charges: an edit (a character changed, added,
@@ -619,39 +623,69 @@ class Flash:
                 out[attr] = self.values(attr)
         return out
 
+    def by_ext_id(self, attribute: str) -> dict[bytes, Any]:
+        """Where parts that extended ids tell apart differ on ``attribute``
+        (``"size"``, ``"page_size"``, ...): each extended id's value, as
+        :meth:`with_ext_id` narrows the chip; ``{}`` where they agree. The
+        GD5F1GQ5REYIG (``c8``) is 128 MiB and the F50L2G41KA (``7f``)
+        256 MiB, both at ``c8 41``."""
+        exts = sorted({r.ext_id for r in self.records if r.ext_id})
+        values = {e: getattr(self.with_ext_id(e), attribute) for e in exts}
+        return values if len(set(values.values()) - {None}) > 1 else {}
+
     @cached_property
     def variants(self) -> tuple[tuple[Record, ...], ...]:
         """The records, in groups that each describe one part: all of them,
         where no record has an extended id; otherwise those with none, and
         for each extended id what :meth:`with_ext_id` keeps for it."""
-        exts = sorted({r.ext_id for r in self.records if r.ext_id})
-        if not exts:
+        given = {r.ext_id for r in self.records if r.ext_id}
+        if not given:
             return (self.records,)
+        # A shorter one that starts a longer covers several (4d 00, of
+        # 4d 00 80 and 4d 00 81): each longer one is a part.
+        exts = sorted(e for e in given if not any(o != e and o.startswith(e) for o in given))
         groups = [tuple(r for r in self.records if r.ext_id is None)]
         groups += [self.with_ext_id(e).records for e in exts]
         return tuple(dict.fromkeys(g for g in groups if g))
 
     def with_ext_id(self, ext: bytes) -> Flash:
         """This id narrowed by the bytes a chip sends after it: the records
-        whose extended id agrees with ``ext``, and those with none that name
-        one of their parts (:func:`same_part`). Where no extended id agrees,
-        the records with none, which cover every variant. Two parts can
-        share an id and differ only after it: the GD5F1GQ5REYIG answers
-        ``c8 41`` then ``c8``, the F50L2G41KA ``c8 41`` then ``7f``."""
+        whose extended id agrees with ``ext``, and those with none, which
+        cover every variant, except those naming only a part that another
+        extended id belongs to (:func:`same_part`). Two parts can share an
+        id and differ only after it: the GD5F1GQ5REYIG answers ``c8 41``
+        then ``c8``, the F50L2G41KA ``c8 41`` then ``7f``, so a lookup of
+        ``c8 41 7f`` leaves out the GD5F1GQ5REXXG the other sources list at
+        ``c8 41``. Where no extended id agrees, the records with none.
+
+        A record whose extended id agrees but is shorter than the one that
+        agrees best covers several variants (U-Boot's S25FL512S_256K at
+        ``4d 00``, for the S25FS512S's ``4d 00 81``), so it is kept or
+        dropped as one with none is."""
 
         def agrees(r: Record) -> bool:
             return r.ext_id is not None and r.ext_id[: len(ext)] == ext[: len(r.ext_id)]
 
-        parts = {n for r in self.records if agrees(r) for n in r.part_names}
-        if parts:
-            keep = tuple(
-                r
-                for r in self.records
-                if agrees(r)
-                or (r.ext_id is None and any(same_part(n, p) for n in r.part_names for p in parts))
-            )
-        else:
-            keep = tuple(r for r in self.records if r.ext_id is None)
+        best = max((len(r.ext_id) for r in self.records if r.ext_id and agrees(r)), default=0)
+
+        def exact(r: Record) -> bool:
+            return r.ext_id is not None and agrees(r) and len(r.ext_id) == best
+
+        mine = {n for r in self.records if exact(r) for n in r.part_names}
+        others = {n for r in self.records if r.ext_id and not agrees(r) for n in r.part_names}
+
+        def elsewhere(r: Record) -> bool:
+            # Names another extended id's part, and not the one looked up.
+            def named(parts: set[str]) -> bool:
+                return any(same_part(n, p) for n in r.part_names for p in parts)
+
+            return bool(mine) and named(others) and not named(mine)
+
+        keep = tuple(
+            r
+            for r in self.records
+            if exact(r) or ((r.ext_id is None or agrees(r)) and not elsewhere(r))
+        )
         return replace(self, records=keep or self.records)
 
     def to_json(self) -> dict[str, Any]:

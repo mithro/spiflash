@@ -210,3 +210,14 @@ def test_one_source_grouped_by_value() -> None:
     assert "(same-source-page-size)=" in page
     # The summary links each value's section.
     assert "<same-source.html#same-source-page-size>`" in pages["index.md"]
+
+
+def test_parts_an_extended_id_tells_apart_are_not_compared() -> None:
+    found = {(i.subject, i.attribute) for i in find() if i.kind is IssueKind.VALUE}
+    # flashrom's S25FL128S_UL (1.7-2.0 V) against its and flashprog's 3 V
+    # S25FL128S: one part, a real disagreement.
+    assert ("012018", "voltage") in found
+    # The S25FS512S (1.8 V) and the S25FL512S (3 V): two parts.
+    assert ("010220", "voltage") not in found
+    # The GD5F1GQ5RE (1 Gbit) and the F50L2G41KA (2 Gbit) at c8 41.
+    assert ("c841", "size") not in found

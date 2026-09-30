@@ -297,6 +297,14 @@ class Database:
         those parts' records name none (the F50L2G41KA at ``c8 41``, then
         ``7f``, is ESMT's, where the GD5F1GQ5REXXG there is GigaDevice's)."""
         narrowed = flash.with_ext_id(ext)
+        # Only the datasheets of the parts left (not GigaDevice's for the
+        # F50L2G41KA).
+        sheets = tuple(
+            d
+            for d in flash.datasheets
+            if any(same_part(p, n) for p in d.parts for n in narrowed.names)
+        )
+        narrowed = replace(narrowed, datasheets=sheets)
         if any(r.manufacturer for r in narrowed.records):
             return replace(narrowed, inferred_manufacturer=None)
         return self._inferred(replace(narrowed, inferred_manufacturer=None))

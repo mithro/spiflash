@@ -341,20 +341,49 @@ def test_parts_told_apart_by_ext_id() -> None:
     assert len(both.variants) == 3
 
 
-def test_with_ext_id_keeps_the_same_part_without_one() -> None:
+def test_with_ext_id_drops_only_another_ext_ids_part() -> None:
     f = Database(
         [
             rec(ext_id="4d00", name="S25FL129P0"),
+            rec(ext_id="4d01", name="S25FL127S"),
             rec(ext_id=None, name="S25FL129P"),  # the same part, any variant
-            rec(ext_id=None, name="S25FL127S"),  # another
+            rec(ext_id=None, name="S25FL127S"),  # 4d01's part: not 4d00's
+            rec(ext_id=None, name="S25FL032P"),  # no extended id's: kept
         ]
     ).flashes[0]
     assert [r.name for r in f.with_ext_id(bytes.fromhex("4d00")).records] == [
         "S25FL129P0",
         "S25FL129P",
+        "S25FL032P",
     ]
     # No extended id agrees: every record without one.
-    assert [r.name for r in f.with_ext_id(b"\x99").records] == ["S25FL129P", "S25FL127S"]
+    assert [r.name for r in f.with_ext_id(bytes.fromhex("99")).records] == [
+        "S25FL129P",
+        "S25FL127S",
+        "S25FL032P",
+    ]
+
+
+def test_shipped_ext_id_lookups_keep_the_other_sources() -> None:
+    # Linux alone gives the S25FL032P an extended id: the others' S25FL032P,
+    # and their supply voltage, stay.
+    (f,) = spiflash.lookup("0102154d00")
+    assert {"S25FL032P", "S25SL032P"} <= set(f.names)
+    assert f.voltage == (2700, 3600)
+    assert spiflash.lookup("20ba201000")[0].manufacturer == "Micron"
+    assert "N25Q256A" in spiflash.lookup("20ba19104400")[0].names
+    # A narrowed chip keeps only its own parts' datasheets.
+    (esmt,) = spiflash.lookup("c8417f", flash_type="nand")
+    assert esmt.datasheets == ()
+    (gd,) = spiflash.lookup("c841c8", flash_type="nand")
+    assert any("GD5F1GQ5RE" in d.url for d in gd.datasheets)
+
+
+def test_by_ext_id() -> None:
+    (f,) = spiflash.lookup("c841", flash_type="nand")
+    assert f.by_ext_id("size") == {bytes.fromhex("7f"): 256 << 20, bytes.fromhex("c8"): 128 << 20}
+    assert f.by_ext_id("page_size") == {}
+    assert spiflash.lookup("ef4018")[0].by_ext_id("size") == {}
 
 
 def test_same_part() -> None:
@@ -362,6 +391,7 @@ def test_same_part() -> None:
         ("ZB35Q01B", "ZB35Q01BYIG"),
         ("GD5F1GQ5REXXG", "GD5F1GQ5REYIG"),
         ("S25FL128S......1", "S25FL128SAGMFI011"),
+        ("S25FL128S......0", "S25FL128S_UL"),  # the stem
     ]:
         assert same_part(a, b), (a, b)
         assert same_part(b, a), (b, a)
