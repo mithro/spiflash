@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from docutils import nodes
 from sphinx.builders.html import StandaloneHTMLBuilder
 from sphinx.environment.adapters.toctree import global_toctree_for_doc
+from sphinx.search import en
 from sphinx.util.docutils import SphinxRole
 from sphinx.util.nodes import split_explicit_title
 
@@ -940,6 +941,20 @@ class MoreRole(SphinxRole):
         return [nodes.abbreviation(self.rawtext, "\u2026", explanation=self.text)], []
 
 
+class SearchEnglish(en.SearchEnglish):
+    """English for the search index, each word stemmed once a build: Sphinx
+    stems each page's words afresh, some 230,000 words for 7,000 stems."""
+
+    def __init__(self, options: dict[str, str]) -> None:
+        super().__init__(options)
+        self._stems: dict[str, str] = {}
+
+    def stem(self, word: str) -> str:
+        if word not in self._stems:
+            self._stems[word] = super().stem(word)
+        return self._stems[word]
+
+
 REPO_URL = "https://github.com/mithro/spiflash"
 
 
@@ -1043,4 +1058,5 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_role("repo", RepoRole())
     app.add_role("upstream", UpstreamRole())
     app.add_role("github", GithubRole())
+    app.add_search_language(SearchEnglish)
     return {"version": "1", "parallel_read_safe": True, "parallel_write_safe": True}
