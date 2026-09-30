@@ -57,6 +57,22 @@ def test_linux_page() -> None:
     assert "  - V min" not in page
 
 
+def test_imsprog_page_names_entries_not_lines() -> None:
+    db = spiflash.database()
+    page = _pages()["imsprog.md"]
+    chips = [f for f in db.flashes if Source.IMSPROG in f.sources]
+    nor = sum(1 for f in chips if f.type == "nor")
+    # The header's counts are chip ids, and say so.
+    assert f"{nor:,} SPI NOR ids" in page
+    assert f"{len(chips) - nor:,} SPI NAND ids" in page
+    # A binary file has no lines: an entry is named by its number, and
+    # links to the file.
+    (r,) = [r for r in db.records if r.source == "imsprog" and r.name == "W25Q128BV"]
+    assert r.url == f"IMSProg_programmer/database/IMSProg.Dat entry {r.line}"
+    assert f'"{r.url}")' in page
+    assert "IMSProg.Dat#L" not in page
+
+
 def test_flashrom_page_has_voltages_and_test_status() -> None:
     page = _pages()["flashrom.md"]
     assert "  - V min" in page

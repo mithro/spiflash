@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from .enums import FlashType, IdFamily, Source
 from .model import (
+    BINARY_SOURCES,
     Datasheet,
     Flash,
     Record,
@@ -69,10 +70,6 @@ class SourceInfo:
             records=d["records"],
         )
 
-
-#: The sources whose table is a binary file: a record's ``line`` is its
-#: entry's number in the file, and its link is to the file.
-BINARY_SOURCES = frozenset({Source.IMSPROG})
 
 #: The data files' format; :repo:`tools/update_db.py` writes the same number.
 #: 2: records' ``opcodes`` became a list of {op, opcode, via}.
@@ -325,7 +322,7 @@ class Database:
     def link(self, record: Record) -> str | None:
         """A web link to the upstream line a record came from, at the commit
         the data was extracted from (GitHub and its mirrors only), or to the
-        file, for a binary one (:data:`BINARY_SOURCES`)."""
+        file, for a binary one (:data:`~spiflash.model.BINARY_SOURCES`)."""
         src = self.sources.get(record.source)
         if not src:
             return None

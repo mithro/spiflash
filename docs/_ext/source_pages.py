@@ -338,7 +338,7 @@ def _entries(db: Database, records: list[Record], slugs: dict[int, str]) -> list
             "Vendor": vendor_link(vendor_of(f)) if f else esc(r.vendor or EM_DASH),
             # The line in the title too: GitHub shows some files (Dediprog's)
             # without line anchors.
-            "Name": f'[{esc(r.name)}](<{link}> "{r.file}:{r.line}")' if link else esc(r.name),
+            "Name": f'[{esc(r.name)}](<{link}> "{r.url}")' if link else esc(r.name),
             "Type": "NAND" if r.type == FlashType.NAND else "NOR",
             "Ext. id": f"{{sfid}}`{spaced(r.ext_id.hex())}`" if r.ext_id else EM_DASH,
             "Size": size_text(r.size),
@@ -395,10 +395,10 @@ def source_page(db: Database, source: Source, slugs: dict[int, str], issues: lis
         f"{{sfsrcme}}`{source}`",
         badge(f"{len(records):,} entries", "primary"),
         badge(f"{len(chips):,} chip ids", "primary"),
-        badge(f"{nor:,} SPI NOR", "info"),
+        badge(f"{nor:,} SPI NOR ids", "info"),
     ]
     if len(chips) > nor:
-        counts.append(badge(f"{len(chips) - nor:,} SPI NAND", "info"))
+        counts.append(badge(f"{len(chips) - nor:,} SPI NAND ids", "info"))
     return "\n".join(
         [
             f"# {esc(source_label(source))}\n",
