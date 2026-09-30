@@ -171,6 +171,21 @@ def test_legacy_ids_are_separate() -> None:
     assert "M25P05" not in [n for f in spiflash.lookup("05") for n in f.names]
 
 
+def test_dediprog_does_not_outvote() -> None:
+    # Dediprog's DataFlash entries give no page size, and its sector sizes
+    # (one vote, however many entries) lose to the reviewed tables'.
+    (at45,) = spiflash.lookup("1f2800")
+    assert at45.page_size == 1024
+    (en,) = spiflash.lookup("1c2010")
+    assert en.sector_size == 32 << 10
+    (s25,) = spiflash.lookup("014014")
+    assert s25.size == 1 << 20  # Dediprog's S25FL208K says 2 MiB
+    # One flashrom entry each for 2 and 4 MiB, and two of Dediprog's three
+    # for 4 MiB (the density byte, 0x16, is 4 MiB).
+    (w77,) = spiflash.lookup("ef8a16")
+    assert w77.size == 4 << 20
+
+
 def test_nand() -> None:
     found = spiflash.lookup("efaa21", flash_type="nand")
     assert found

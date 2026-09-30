@@ -959,19 +959,27 @@ def dediprog_tree(root: Path, text: str = DEDIPROG) -> Path:
     return root
 
 
-def dediprog_chip(root: Path, **attrs: str) -> list[record.Record]:
-    """The records of a table of one chip: the W25Q128FV's, changed by ``attrs``."""
+def dediprog_line(**attrs: str | None) -> str:
+    """The W25Q128FV's entry, its attributes changed, added, or dropped (for
+    None)."""
     line = next(ln for ln in DEDIPROG.split("\n") if 'TypeName="W25Q128FV"' in ln)
     for key, value in attrs.items():
-        line = re.sub(rf' {key}="[^"]*"', f' {key}="{value}"', line)
-    return dediprog.extract(dediprog_tree(root, f"<x>\n{line}\n</x>\n"))
+        line = re.sub(rf' {key}="[^"]*"', "", line)
+        if value is not None:
+            line = line.replace("/>", f' {key}="{value}"/>')
+    return line
+
+
+def dediprog_chip(root: Path, **attrs: str | None) -> list[record.Record]:
+    """The records of a table of one chip (:func:`dediprog_line`)."""
+    return dediprog.extract(dediprog_tree(root, f"<x>\n{dediprog_line(**attrs)}\n</x>\n"))
 
 
 def test_dediprog(tmp_path: Path) -> None:
     recs = dediprog.extract(dediprog_tree(tmp_path))
     r = by_name(recs)
     w = r["W25Q128FV"]
-    assert (w["line"], w["vendor"], w["id"], w["id_method"]) == (29, "Winbond", "ef4018", "rdid")
+    assert (w["line"], w["vendor"], w["id"], w["id_method"]) == (36, "Winbond", "ef4018", "rdid")
     assert (w["size"], w["page_size"], w["sector_size"]) == (16 << 20, 256, 64 << 10)
     assert w["erasers"] == [
         {"opcode": 0xC7, "blocks": [[16 << 20, 1]]},
@@ -981,14 +989,11 @@ def test_dediprog(tmp_path: Path) -> None:
     assert set(ops(w)) == {"RDID", "READ_1_1_1_FAST", "PP_1_1_1", "SE", "CHIP_ERASE"}
     assert ops(w)["READ_1_1_1_FAST"] == (0x0B, "ReadCmd=0x006B3B0B")
     assert w["features"] == ["erase_64k", "fast_read", "lock", "qpi"]
-    assert "ProgramIOMethod=SPQD_RSWQW" in w["flags"]
-    assert "QPIEnable" in w["flags"]
+    assert {"ProgramIOMethod=SPQD_RSWQW", "QPIEnable", "Voltage=3.3V"} <= set(w["flags"])
     assert w["notes"][0].startswith("128 Mbit")
     # Legacy ids: REMS, AT25F, and RES read with its dummy bytes (0xff), or
     # answering the manufacturer too (with its continuation code).
     assert (r["25LF040A"]["id"], r["25LF040A"]["id_method"]) == ("bf44", "rems")
-    assert set(ops(r["25LF040A"])) >= {"REMS", "BE_32K", "CHIP_ERASE_ALT"}
-    assert r["25LF040A"]["erasers"] == [{"opcode": 0x60, "blocks": [[512 << 10, 1]]}]
     assert (r["AT25F1024A"]["id"], r["AT25F1024A"]["id_method"]) == ("1f60", "at25f")
     epcs = [x for x in recs if x["name"] == "EPCS16S"]
     assert [(x["id"], x["id_method"]) for x in epcs] == [("202015", "rdid"), ("14", "res1")]
@@ -1005,14 +1010,17 @@ def test_dediprog(tmp_path: Path) -> None:
     assert "RDIDCommand=0xAF" in mt["flags"]
     assert {"opcode": 0xC4, "blocks": [[64 << 20, 2]]} in mt["erasers"]
     assert "RDID" in ops(r["MT25TL256B ( for one die)"])
-    # A 64 KiB block on a 32 KiB part is no layout.
-    assert r["IS25CD025"]["erasers"] == [{"opcode": 0xC7, "blocks": [[32 << 10, 1]]}]
+    # A 64 KiB block on a 32 KiB part is no layout, and no sector size.
+    cd = r["IS25CD025"]
+    assert (cd["erasers"], cd["sector_size"]) == (
+        [{"opcode": 0xC7, "blocks": [[32 << 10, 1]]}],
+        None,
+    )
     # 0x20 erases the 4 KiB sectors; 4-byte opcodes above 16 MiB.
     en = r["EN35SXR256A"]
     assert {"opcode": 0x20, "blocks": [[4096, 8192]]} in en["erasers"]
+    assert en["sector_size"] == 4096
     assert {"4byte_addr", "4byte_opcodes", "erase_4k"} <= set(en["features"])
-    # Swapped read and program words: neither is taken.
-    assert set(ops(r["BG25Q80A"])) == {"RDID", "SE", "CHIP_ERASE"}
     # SPI NAND: the dummy byte, where Dediprog reads one, is not the id.
     n = r["W25N01GVXXIG"]
     assert (n["type"], n["id"], n["id_method"]) == ("nand", "efaa21", "rdid_opcode_dummy")
@@ -1021,28 +1029,103 @@ def test_dediprog(tmp_path: Path) -> None:
     assert (n["erasers"], n["features"]) == (None, [])
     assert (r["GD5F1GQ4UC"]["id"], r["GD5F1GQ4UC"]["id_method"]) == ("c8b148", "rdid_opcode")
     assert r["MK60N1GAL"]["id"] == "a791"  # 0xA791, read as three bytes
-    assert len(recs) == 18
+    assert len(recs) == 28
+
+
+def test_dediprog_classes(tmp_path: Path) -> None:
+    r = by_name(dediprog.extract(dediprog_tree(tmp_path)))
+    # DataFlash: its SPI NOR template is not taken, only its id and size.
+    at45 = r["AT45DB642D"]
+    assert (at45["id"], at45["size"], at45["page_size"], at45["sector_size"]) == (
+        "1f2800",
+        8 << 20,
+        None,
+        None,
+    )
+    assert (at45["erasers"], at45["features"], set(ops(at45))) == (None, [], {"RDID"})
+    # SST's parts written a byte or word at a time: byte program; 0x52
+    # erases 32 KiB.
+    assert "BP" in ops(r["25VF040B"])
+    assert "PP_1_1_1" not in ops(r["25VF040B"])
+    sst = r["25LF040A"]
+    assert {"opcode": 0x52, "blocks": [[32 << 10, 16]]} in sst["erasers"]
+    assert (sst["sector_size"], sst["features"]) == (32 << 10, ["erase_32k", "fast_read", "lock"])
+    # Swapped read and program words, read the right way round.
+    bg = r["BG25Q80A"]
+    assert ops(bg)["READ_1_1_1_FAST"] == (0x0B, "ReadCmd=0x00EBBB0B")
+    assert ops(bg)["PP_1_1_1"] == (0x02, "ProgramCmd=0x00000002")
+    # SPI NAND sizes that count the spare area; ICType SD_NAND.
+    assert r["MX35UF4GE4AD"]["size"] == 512 << 20
+    sd = r["W25N02KWXIR"]
+    assert (sd["type"], sd["id"], sd["size"]) == ("nand", "efba22", 256 << 20)
+    # No ICType, but a SPI NOR class.
+    assert (r["FM25Q02B"]["type"], r["FM25Q02B"]["id"]) == ("nor", "a14012")
+
+
+def test_dediprog_ids_under_the_wrong_command(tmp_path: Path) -> None:
+    r = by_name(dediprog.extract(dediprog_tree(tmp_path)))
+    # A three-byte REMS id is the JEDEC id.
+    wf = r["25WF512"]
+    assert (wf["id"], wf["id_method"]) == ("bf2501", "rdid")
+    assert ops(wf)["RDID"] == (0x9F, "a JEDEC id under RDIDCommand=0x90")
+    # Sanyo's parts answer 0x9f with their two id bytes, repeated.
+    assert (r["LE25FU106B"]["id"], r["LE25FU106B"]["id_method"]) == ("621d", "res2")
+    assert (r["LE25FU406B"]["id"], r["LE25FU406B"]["id_method"]) == ("621e", "res2")
+    # UniqueID gives the id that JedecDeviceID leaves out, or cuts short.
+    assert (r["M25P80"]["id"], r["TS25L10P"]["id"]) == ("202014", "202011")
 
 
 def test_dediprog_skipped(tmp_path: Path) -> None:
     assert dediprog.skipped(dediprog_tree(tmp_path)) == {
         "no id": 3,
-        "id that does not fit its command": 2,
+        "a legacy id under 0x9f": 1,
         "id with an odd number of hex digits": 1,
-        "ICType ''": 1,
-        "ICType 'SD_NAND'": 1,
     }
+
+
+def test_dediprog_nand_size(tmp_path: Path) -> None:
+    nand = {"ICType": "SPI_NAND", "Class": "GD5F1GQ4xCx", "EraseCmd": "0x000000D8"}
+    (r,) = dediprog_chip(
+        tmp_path,
+        **nand,
+        ChipSizeInKByte="270336",  # 2 Gbit and 64 spare bytes per 2 KiB page
+        PageSizeInByte="2048",
+        BlockSizeInByte="131072",
+        SpareSizeInByte="0x00800040",
+    )
+    assert r["size"] == 256 << 20
+    with pytest.raises(ValueError, match="neither blocks of 131072"):
+        dediprog_chip(
+            tmp_path,
+            **nand,
+            ChipSizeInKByte="270000",
+            PageSizeInByte="2048",
+            BlockSizeInByte="131072",
+            SpareSizeInByte="0x00800040",
+        )
 
 
 def test_dediprog_refuses_what_it_cannot_read(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=r"dedicfg:2: W25Q128FV: unknown RDIDCommand"):
         dediprog_chip(tmp_path, RDIDCommand="0x4B")
-    with pytest.raises(ValueError, match="cannot read id 0xEF4018 for nor RDIDCommand 0xAB"):
-        dediprog_chip(tmp_path, RDIDCommand="0xAB", JedecDeviceID="0xEF4018")
+    with pytest.raises(ValueError, match="cannot read id ef4018 for nor RDIDCommand 0xAB"):
+        dediprog_chip(tmp_path, RDIDCommand="0xAB")
     with pytest.raises(ValueError, match="for nand RDIDCommand 0x90"):
         dediprog_chip(tmp_path, ICType="SPI_NAND", RDIDCommand="0x90", JedecDeviceID="0xEF40")
+    with pytest.raises(ValueError, match="unknown ICType 'SPI_EEPROM'"):
+        dediprog_chip(tmp_path, ICType="SPI_EEPROM")
     with pytest.raises(ValueError, match="unknown opcode 0x6b in slot 0"):
         dediprog_chip(tmp_path, ReadCmd="0x0000006B")
+    with pytest.raises(ValueError, match="not a whole number of 65536-byte blocks"):
+        dediprog_chip(tmp_path, ChipSizeInKByte="96")
+    # What cannot be read at all names its line, in extract and in skipped.
+    bad = dediprog_tree(tmp_path, f"<x>\n{dediprog_line(JedecDeviceID='0xZZ')}\n</x>\n")
+    with pytest.raises(ValueError, match="dedicfg:2: W25Q128FV: invalid literal"):
+        dediprog.extract(bad)
+    with pytest.raises(ValueError, match="dedicfg:2: W25Q128FV: invalid literal"):
+        dediprog.skipped(bad)
+    with pytest.raises(ValueError, match="dedicfg:2: W25Q128FV: 'RDIDCommand'"):
+        dediprog_chip(tmp_path, RDIDCommand=None)
     with pytest.raises(ValueError, match="not one <Chip"):
         dediprog.extract(dediprog_tree(tmp_path, '<x>\n<Chip TypeName="a"\n/>\n</x>\n'))
     with pytest.raises(ValueError, match="dedicfg:1: unclosed token"):

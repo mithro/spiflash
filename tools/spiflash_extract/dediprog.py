@@ -11,34 +11,60 @@ attributes::
       ProgramCmd="0x00320002" EraseCmd="0x0000D8C7" QPIEnable="true"
       ProtectBlockMask="0x9C" Voltage="3.3V" Clock="104MHz" .../>
 
-``JedecDeviceID`` is what the chip answers to ``RDIDCommand``, read
-``IDNumber`` bytes at a time: the programmer's software sends the command,
-reads that many bytes and compares the number
-(:upstream:`dediprog:dpcmd.c`). So an SPI NAND id read with a dummy byte
-first starts with that byte, 00 (``0x00EFAA21``), a number's leading zeros
-dropped (``0x00522D`` read as three bytes); and RES (0xab), read without its
-three dummy address bytes, starts with three 0xff (``0xFFFFFF14``).
+The Linux software reads few of them (:upstream:`dediprog:parse.c`): to
+identify a chip, its ``FlashIdentifier`` (:upstream:`dediprog:dpcmd.c`)
+sends a fixed sequence of commands (0x9f, reading 4, 3 and 2 bytes; 0x15, 2;
+0xab, 3 and 2; 0x90, 3, 2 and 5) and compares each answer, as a number, with
+every entry's ``JedecDeviceID``. ``RDIDCommand`` and ``IDNumber`` are taken
+here as the command an entry's id answers and how many bytes of it the
+number holds: an SPI NAND id read with a dummy byte first starts with that
+byte, 00 (``0x00EFAA21``, or ``0x00522D`` read as three bytes), and a RES
+(0xab) answer read without its three dummy address bytes with three 0xff
+(``0xFFFFFF14``). Where ``JedecDeviceID`` is missing, ``UniqueID``, which
+otherwise repeats it, gives the id.
 
-``ReadCmd``, ``ProgramCmd`` and ``EraseCmd`` each pack an opcode per byte,
-the lowest first: single, dual, quad and octal read (or program), and chip,
-block and die erase (``struct ReadCommand`` and its siblings in
-:upstream:`dediprog:Macro.h`). Only the single-line read and program are
-taken: the wider ones are often a template's defaults (the single-I/O
-SST25LF040A lists quad read, 0x6b, and quad program, 0x32). The block the
-block erase erases is ``BlockSizeInByte``.
+``ReadCmd``, ``ProgramCmd`` and ``EraseCmd`` pack one opcode per byte, the
+lowest first (``struct ReadCommand`` and its siblings in
+:upstream:`dediprog:Macro.h`): single, dual and quad read or program, and
+chip, block and die erase; the fourth byte is reserved there, though the
+octal parts have an octal opcode in it. Only the single-line read and
+program are taken: the wider ones are often a template's defaults (the
+single-I/O SST25LF040A lists quad read, 0x6b, and quad program, 0x32). For
+the same reason a sector size is given only with the erase that erases it:
+``BlockSizeInByte``, 64 KiB in nearly every entry, for 0xd8 and 0xdc, 32 KiB
+for 0x52, and ``SectorSizeInByte`` for 0x20.
 
-Left out, each a known kind of entry:
+Entries of some classes are not what their attributes say. The DataFlash
+(``Class="AT45DB..."``) entries carry a SPI NOR template (0xd8 erase, 256-byte
+pages), while Dediprog's software reads their page size from the chip
+(:upstream:`dediprog:SerialFlash.c`): only their id and size are taken. The
+SST ``25xFxx``, ``25xFxxA`` and ``25xFxxB`` classes are written a byte or a
+word at a time (``SetProgReadCommand`` in :upstream:`dediprog:project.c`),
+so their 0x02 is byte program. And SPI NAND sizes that count the spare area
+are scaled back to the data area.
 
-- no id (``JedecDeviceID`` missing, or 0): the microcontrollers
-  (``Class="MCF"``) and iCE65 FPGA configuration memory it also programs;
-- an ``ICType`` other than ``SPI_NOR`` or ``SPI_NAND`` (``SD_NAND``, or none);
+Some ids are under the wrong command, and are read as what they are:
+
+- a 0x90 (REMS) id of three bytes is the part's JEDEC id (the SST25WF512's
+  bf 25 01);
+- Sanyo's LE25FU and LE25FW parts answer 0x9f with their two id bytes,
+  repeated (62 1d 62 1d ...): the entries give two or three of them, and the
+  records take the two, as the RES id flashrom gives them;
+- a 0x9f id of two bytes whose ``UniqueID`` is three bytes ending in them
+  (the Terra TS25L parts: 20 11 and 20 20 11) is the three.
+
+Left out, each a known kind of entry, and counted by :func:`skipped`:
+
+- no id (``JedecDeviceID`` and ``UniqueID`` both missing, or 0): the
+  microcontrollers (``Class="MCF"``) and the iCE65 FPGA configuration memory
+  it also programs, and two flash parts;
 - an id written with an odd number of hex digits (a typo: ``0x00FD585``);
-- an SPI NOR id that does not fit its command: two bytes for read-id
-  (0x9f), which answers three (a legacy REMS or RES id, under the wrong
-  command), or three for REMS (0x90), which answers two.
+- a two-byte id under 0x9f otherwise: the REMS or RES id of a part that does
+  not answer 0x9f.
 
 A command byte that is not an opcode of its slot at all (a status-register
-write in the program word) is listed in :data:`_MISPLACED` and left out.
+write in the program word) is listed in :data:`_MISPLACED` and left out; an
+entry whose read and program words are swapped is read the right way round.
 Anything else it does not understand raises, naming the line.
 """
 
@@ -58,7 +84,12 @@ if TYPE_CHECKING:
 
 DB = "ChipInfoDb.dedicfg"
 
-_TYPES = {"SPI_NOR": "nor", "SPI_NAND": "nand"}
+# ICType -> the record's type. SD_NAND marks one SPI NAND part (the
+# W25N02KWxIR, whose id and class are the other W25N parts').
+_TYPES = {"SPI_NOR": "nor", "SPI_NAND": "nand", "SD_NAND": "nand"}
+
+# The type of an entry with no ICType, by its class.
+_CLASS_TYPES = {"UniversalSPINor": "nor"}
 
 # RDIDCommand -> how the id is read. 0xaf is Micron's multiple I/O read-id,
 # which answers the same bytes as 0x9f; 0x00af009f lists both.
@@ -71,8 +102,16 @@ _METHODS = {
     0x15: "at25f",
 }
 
-# The operation each id method sends.
-_ID_OPS = {"rems": "REMS", "res1": "RES", "res2": "RES", "at25f": "RDID_ATMEL"}
+# The operation each RDIDCommand is, and its opcode.
+_ID_COMMANDS = {
+    0x9F: ("RDID", 0x9F),
+    0x00AF009F: ("RDID", 0x9F),
+    0x90: ("REMS", 0x90),
+    0xAB: ("RES", 0xAB),
+    0x15: ("RDID_ATMEL", 0x15),
+}
+
+SANYO = 0x62
 
 # The operation each opcode of a packed command word is, by slot (the lowest
 # byte first). Of the read and program words, only the single-line slot.
@@ -96,9 +135,6 @@ _SLOTS: dict[str, tuple[dict[int, str], ...]] = {
 
 # Command bytes in the wrong word or slot: (part, word, slot) -> the byte.
 _MISPLACED = {
-    # Its read and program words swapped.
-    ("BG25Q80A", "ReadCmd", 0): 0x02,
-    ("BG25Q80A", "ProgramCmd", 0): 0x0B,
     # The program word (0x00320002) as the read word.
     ("W25Q128JW-DTR", "ReadCmd", 0): 0x02,
     # The status-register write word (0x00113101) as the program word.
@@ -109,12 +145,27 @@ _MISPLACED = {
     ("W25M512JW", "EraseCmd", 1): 0xCD,
 }
 
+# The SST classes Dediprog writes a byte or a word at a time.
+_BYTE_PROGRAM = ("25xFxx", "25xFxxA", "25xFxxB")
+
 # Attributes set to true, kept as flags; true as Dediprog's own parser
 # (parse.c, get_prop_bool) reads them: the value contains "true".
 _BOOLEANS = ("QPIEnable", "MXIC_WPmode", "Micron_XIPmode", "Cypress_UnlockDYB")
 
 # The raw attributes kept as flags.
-_RAW = ("Class", "ProgramIOMethod", "ReadCmd", "ProgramCmd", "EraseCmd", "AlternativeID")
+_RAW = (
+    "Class",
+    "ProgramIOMethod",
+    "ReadCmd",
+    "ProgramCmd",
+    "EraseCmd",
+    "AlternativeID",
+    "Voltage",
+)
+
+
+class LeftOutError(Exception):
+    """An entry left out, and why."""
 
 
 def entries(root: Path) -> Iterator[tuple[int, dict[str, str]]]:
@@ -143,97 +194,131 @@ def entries(root: Path) -> Iterator[tuple[int, dict[str, str]]]:
 def extract(root: Path) -> list[Record]:
     records = []
     for n, chip in entries(root):
-        if skip_reason(chip) is not None:
-            continue
         try:
             records.append(_record(n, chip))
+        except LeftOutError:
+            continue
         except (ValueError, KeyError) as e:
-            msg = f"{DB}:{n}: {chip.get('TypeName')}: {e}"
+            msg = f"{DB}:{n}: {chip.get('TypeName')}: {e!s}"
             raise ValueError(msg) from e
     return records
 
 
 def skipped(root: Path) -> Counter[str]:
     """How many entries are left out, by reason."""
-    return Counter(r for _, chip in entries(root) if (r := skip_reason(chip)) is not None)
-
-
-def skip_reason(chip: dict[str, str]) -> str | None:
-    """Why an entry is left out (see the module's docstring), or None."""
-    jedec = chip.get("JedecDeviceID")
-    if jedec is None or int(jedec, 16) == 0:
-        return "no id"
-    if chip.get("ICType") not in _TYPES:
-        return f"ICType {chip.get('ICType')!r}"
-    digits = _digits(jedec)
-    if len(digits) % 2:
-        return "id with an odd number of hex digits"
-    method = _METHODS.get(int(chip["RDIDCommand"], 16))
-    if (chip["ICType"], method, len(digits) // 2) in (
-        ("SPI_NOR", "rdid", 2),
-        ("SPI_NOR", "rems", 3),
-    ):
-        return "id that does not fit its command"
-    return None
+    reasons: Counter[str] = Counter()
+    for n, chip in entries(root):
+        try:
+            _identify(chip)
+        except LeftOutError as e:
+            reasons[str(e)] += 1
+        except (ValueError, KeyError) as e:
+            msg = f"{DB}:{n}: {chip.get('TypeName')}: {e!s}"
+            raise ValueError(msg) from e
+    return reasons
 
 
 def _digits(value: str) -> str:
     return re.sub(r"^0[xX]", "", value.strip()).lower()
 
 
-def _id(chip: dict[str, str], typ: str) -> tuple[str, str | None, str]:
-    """The id, extended id and id method of an entry."""
+def _type(chip: dict[str, str]) -> str:
+    ictype = chip["ICType"]
+    typ = _TYPES.get(ictype) or (None if ictype else _CLASS_TYPES.get(chip.get("Class", "")))
+    if typ is None:
+        msg = f"unknown ICType {ictype!r} (Class {chip.get('Class')!r})"
+        raise ValueError(msg)
+    return typ
+
+
+def _raw_id(chip: dict[str, str]) -> bytes:
+    """The id bytes as the entry writes them."""
+    value = chip.get("JedecDeviceID") or chip.get("UniqueID")
+    if value is None or int(value, 16) == 0:
+        msg = "no id"
+        raise LeftOutError(msg)
+    digits = _digits(value)
+    if len(digits) % 2:
+        msg = "id with an odd number of hex digits"
+        raise LeftOutError(msg)
+    return bytes.fromhex(digits)
+
+
+def _identify(chip: dict[str, str]) -> tuple[str, str, str | None, str]:
+    """The type, id, extended id and id method of an entry; :class:`LeftOutError`
+    for one left out."""
+    raw = _raw_id(chip)
+    typ = _type(chip)
     command = chip["RDIDCommand"]
     method = _METHODS.get(int(command, 16))
     if method is None:
         msg = f"unknown RDIDCommand {command}"
         raise ValueError(msg)
-    raw = bytes.fromhex(_digits(chip["JedecDeviceID"]))
     if typ == "nand":
         if method == "rdid":
             raw = raw.rjust(int(chip["IDNumber"]), b"\0")
             if raw[0] == 0:
-                return raw[1:].hex(), None, "rdid_opcode_dummy"
-            return raw.hex(), None, "rdid_opcode"
+                return typ, raw[1:].hex(), None, "rdid_opcode_dummy"
+            return typ, raw.hex(), None, "rdid_opcode"
     elif method == "rdid":
+        # Sanyo's parts repeat their two id bytes.
+        if raw[0] == SANYO and len(raw) in (2, 3) and raw[2:] in (b"", raw[:1]):
+            return typ, raw[:2].hex(), None, "res2"
+        if len(raw) == 2:
+            unique = bytes.fromhex(_digits(chip.get("UniqueID", "")))
+            if len(unique) != 3 or not unique.endswith(raw):
+                msg = "a legacy id under 0x9f"
+                raise LeftOutError(msg)
+            raw = unique
         # A manufacturer in a later JEP106 bank has its 0x7f continuation
         # codes first, then one or two device bytes (PMC's 7f 9d 21). Past
         # the third byte of the others, what the programmer also compares.
         rest = raw.lstrip(b"\x7f")
         if len(rest) < len(raw) and len(rest) in (2, 3):
-            return raw.hex(), None, method
+            return typ, raw.hex(), None, method
         if len(rest) == len(raw) >= 3:
-            return raw[:3].hex(), raw[3:].hex() or None, method
+            return typ, raw[:3].hex(), raw[3:].hex() or None, method
     elif method == "res":
         sig = raw.lstrip(b"\xff")  # the dummy address bytes, read as 0xff
         if len(sig) == 1:
-            return sig.hex(), None, "res1"
+            return typ, sig.hex(), None, "res1"
         if len(sig) == 2 or (len(sig) == 3 and sig[0] == 0x7F):
-            return sig.hex(), None, "res2"
+            return typ, sig.hex(), None, "res2"
+    elif method == "rems" and len(raw) == 3:
+        return typ, raw.hex(), None, "rdid"  # its JEDEC id
     elif len(raw) == 2:
-        return raw.hex(), None, method
-    msg = f"cannot read id {chip['JedecDeviceID']} for {typ} RDIDCommand {command}"
+        return typ, raw.hex(), None, method
+    msg = f"cannot read id {raw.hex()} for {typ} RDIDCommand {command}"
     raise ValueError(msg)
 
 
 def _record(line: int, chip: dict[str, str]) -> Record:
-    typ = _TYPES[chip["ICType"]]
-    id_hex, ext_id, method = _id(chip, typ)
+    typ, id_hex, ext_id, method = _identify(chip)
     size = int(chip["ChipSizeInKByte"]) * 1024
-    block = int(chip["BlockSizeInByte"])
-    command = int(chip["RDIDCommand"], 16)
+    page = int(chip["PageSizeInByte"])
     ops = Opcodes()
-    if not method.startswith("rdid"):
-        ops.add(_ID_OPS[method], f"RDIDCommand={chip['RDIDCommand']}", value=command)
-    elif command != 0xAF:
-        ops.add("RDID", f"RDIDCommand={chip['RDIDCommand']}", value=0x9F)
+    command = int(chip["RDIDCommand"], 16)
+    # The command the entry names (0xaf alone is no operation spiflash has),
+    # but read-id for a JEDEC id under 0x90.
+    if method == "rdid" and command == 0x90:
+        ops.add("RDID", f"a JEDEC id under RDIDCommand={chip['RDIDCommand']}", value=0x9F)
+    elif command in _ID_COMMANDS:
+        op, value = _ID_COMMANDS[command]
+        ops.add(op, f"RDIDCommand={chip['RDIDCommand']}", value=value)
     features: set[str] = set()
     erasers: list[dict[str, Any]] = []
-    if typ == "nor":
+    sector: int | None = None
+    dataflash = chip.get("Class", "").startswith("AT45DB")
+    if typ == "nand":
+        sector = int(chip["BlockSizeInByte"])
+        size = _nand_size(chip, size, page, sector)
+    elif not dataflash:
+        words = _words(chip)
         for word in ("ReadCmd", "ProgramCmd"):
-            for _, byte, op in _opcodes(chip, word):
-                ops.add(op, f"{word}={chip[word]}", value=byte)
-        erasers = _erasers(chip, ops, size, block)
+            for _, byte, op in _opcodes(chip, word, words[word]):
+                byte_program = op == "PP_1_1_1" and chip.get("Class") in _BYTE_PROGRAM
+                ops.add("BP" if byte_program else op, f"{word}={words[word]}", value=byte)
+        erasers, sector = _erasers(chip, ops, size)
         if "READ_1_1_1_FAST" in ops or "READ_1_1_1_FAST_4B" in ops:
             features.add("fast_read")
         if any(op.endswith("_4B") for op in ops):
@@ -245,10 +330,11 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         # BP4 are bits 2 to 6.
         if int(chip.get("ProtectBlockMask", "0"), 16) & 0x7C:
             features.add("lock")
-    if "true" in chip.get("QPIEnable", ""):
+    if "true" in chip.get("QPIEnable", "") and not dataflash:
         features.add("qpi")
     flags = [f"{key}={chip[key]}" for key in _RAW if chip.get(key)]
-    if int(chip.get("UniqueID", "0"), 16) not in (0, int(chip["JedecDeviceID"], 16)):
+    jedec = chip.get("JedecDeviceID")
+    if chip.get("UniqueID") and jedec and int(chip["UniqueID"], 16) != int(jedec, 16):
         flags.append(f"UniqueID={chip['UniqueID']}")
     if command != 0x9F:
         flags.append(f"RDIDCommand={chip['RDIDCommand']}")
@@ -265,8 +351,8 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         ext_id=ext_id,
         id_method=method,
         size=size,
-        page_size=int(chip["PageSizeInByte"]),
-        sector_size=block,
+        page_size=None if dataflash else page,
+        sector_size=sector,
         erasers=erasers or None,
         features=features | _erase_features(erasers),
         flags=flags,
@@ -275,38 +361,81 @@ def _record(line: int, chip: dict[str, str]) -> Record:
     )
 
 
-def _opcodes(chip: dict[str, str], word: str) -> Iterator[tuple[int, int, str]]:
+def _nand_size(chip: dict[str, str], size: int, page: int, block: int) -> int:
+    """An SPI NAND size, without the spare area where it counts it (a whole
+    number of blocks that is not a power of two). ``SpareSizeInByte`` holds
+    two spare sizes (without and with the part's own ECC), one in each
+    half."""
+    blocks = size // block
+    if not size % block and not blocks & (blocks - 1):
+        return size
+    spare = int(chip["SpareSizeInByte"], 16)
+    for s in (spare >> 16, spare & 0xFFFF):
+        data, rest = divmod(size * page, page + s)
+        n = data // block
+        if s and not rest and not data % block and not n & (n - 1):
+            return data
+    msg = f"size {size} is neither blocks of {block} nor that with a spare area"
+    raise ValueError(msg)
+
+
+def _words(chip: dict[str, str]) -> dict[str, str]:
+    """The read and program words, the right way round: an entry with a
+    program opcode first in its read word and a read opcode first in its
+    program word has them swapped (the BG25Q80A's)."""
+    read, program = chip["ReadCmd"], chip["ProgramCmd"]
+    first = (int(read, 16) & 0xFF, int(program, 16) & 0xFF)
+    if first[0] in _SLOTS["ProgramCmd"][0] and first[1] in _SLOTS["ReadCmd"][0]:
+        read, program = program, read
+    return {"ReadCmd": read, "ProgramCmd": program}
+
+
+def _opcodes(chip: dict[str, str], word: str, text: str) -> Iterator[tuple[int, int, str]]:
     """Each opcode taken from a packed command word: its slot, its value
     and its operation."""
-    value = int(chip[word], 16)
+    value = int(text, 16)
     for slot, table in enumerate(_SLOTS[word]):
         byte = (value >> (8 * slot)) & 0xFF
         if not byte or _MISPLACED.get((chip["TypeName"], word, slot)) == byte:
             continue
         if byte not in table:
-            msg = f"{word}={chip[word]}: unknown opcode 0x{byte:02x} in slot {slot}"
+            msg = f"{word}={text}: unknown opcode 0x{byte:02x} in slot {slot}"
             raise ValueError(msg)
         yield slot, byte, table[byte]
 
 
-def _erasers(chip: dict[str, str], ops: Opcodes, size: int, block: int) -> list[dict[str, Any]]:
-    """Chip erase; the block erase over ``BlockSizeInByte`` blocks, or for
-    0x20 the 4 KiB sectors (0x52's block is not given: 64 KiB in the table
-    where the SST25LF020A's erases 32 KiB); and die erase over
-    ``DieSizeInKByte`` dies."""
+def _erasers(
+    chip: dict[str, str], ops: Opcodes, size: int
+) -> tuple[list[dict[str, Any]], int | None]:
+    """The erase layouts, and the sector size the block erase gives: chip
+    erase; the block erase, 0xd8 and 0xdc over ``BlockSizeInByte`` blocks,
+    0x52 over 32 KiB ones and 0x20 over the ``SectorSizeInByte`` sectors;
+    and die erase over ``DieSizeInKByte`` dies."""
     out: list[dict[str, Any]] = []
-    for slot, byte, op in _opcodes(chip, "EraseCmd"):
+    sector = None
+    for slot, byte, op in _opcodes(chip, "EraseCmd", chip["EraseCmd"]):
         ops.add(op, f"EraseCmd={chip['EraseCmd']}", value=byte)
-        unit = {
-            0: size,
-            1: {0xD8: block, 0xDC: block, 0x20: int(chip.get("SectorSizeInByte", "0"))}.get(byte),
-            2: int(chip.get("DieSizeInKByte", "0")) * 1024,
-        }[slot]
+        if slot == 0:
+            unit = size
+        elif slot == 2:
+            unit = int(chip.get("DieSizeInKByte", "0")) * 1024
+        elif byte in (0xD8, 0xDC):
+            unit = int(chip["BlockSizeInByte"])
+        elif byte == 0x52:
+            unit = 32 * 1024
+        else:
+            unit = int(chip.get("SectorSizeInByte", "0"))
         # None given, or a block larger than the chip (64 KiB on a 32 KiB
         # part): no layout.
-        if unit and not size % unit:
-            out.append({"opcode": byte, "blocks": [[unit, size // unit]]})
-    return out
+        if not unit or unit > size:
+            continue
+        if size % unit:
+            msg = f"size {size} is not a whole number of {unit}-byte blocks"
+            raise ValueError(msg)
+        out.append({"opcode": byte, "blocks": [[unit, size // unit]]})
+        if slot == 1:
+            sector = unit
+    return out, sector
 
 
 def _erase_features(erasers: list[dict[str, Any]]) -> set[str]:
