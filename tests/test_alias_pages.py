@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import spiflash
-from alias_pages import aliases, choice_page, generate_all, redirect_page, write
+from alias_pages import aliases, choice_page, folded_pages, generate_all, redirect_page, write
 from check_links import bare_urls
 from page_markup import chip_slug, source_badge_html
 from spiflash import Database
@@ -48,6 +48,33 @@ def test_shipped_pages_need_no_more_links() -> None:
     db = spiflash.database()
     for text in generate_all(aliases(db.flashes, _taken(db))).values():
         assert bare_urls(text) == []
+
+
+def test_folded_ids_redirect_to_their_chip() -> None:
+    db = spiflash.database()
+    taken = _taken(db) | set(aliases(db.flashes, _taken(db)).names)
+    pages = folded_pages(db.flashes, taken)
+    # The pages the ids folded on main's data had.
+    for old, new in [
+        ("98e2-nand", "98e240-nand"),
+        ("98eb-nand", "98eb40-nand"),
+        ("98ed-nand", "98ed51-nand"),
+        ("c214-nand", "c21403-nand"),
+        ("c21e-nand", "c21e01-nand"),
+        ("c22e-nand", "c22e01-nand"),
+        ("c801-nand", "c8017f7f7f-nand"),
+        ("c8117f-nand", "c8117f7f7f-nand"),
+    ]:
+        assert pages[f"{old}.html"] == redirect_page(old, f"{new}.html")
+    assert not {p.removesuffix(".html") for p in pages} & taken
+    for text in pages.values():
+        assert bare_urls(text) == []
+
+
+def test_folded_id_page_never_hides_a_real_one() -> None:
+    db = Database([rec(id="c226", type="nand"), rec(id="c22603", type="nand")])
+    assert list(folded_pages(db.flashes, [])) == ["c226-nand.html"]
+    assert folded_pages(db.flashes, ["C226-NAND"]) == {}
 
 
 def test_one_chip_one_redirect() -> None:

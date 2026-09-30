@@ -338,6 +338,14 @@ def test_infer_manufacturer_needs_the_byte_and_one_maker() -> None:
     assert Database([mine, same, two]).lookup("c952")[0].manufacturer is None
 
 
+def test_shipped_folded_ids_are_found_by_either_id() -> None:
+    for short, long in [("98e2", "98e240"), ("c226", "c22603"), ("cd71", "cd7171")]:
+        (f,) = spiflash.lookup(short, flash_type="nand")
+        assert f.id_hex == long
+        assert spiflash.lookup(long, flash_type="nand") == [f]
+        assert bytes.fromhex(short) in f.ids
+
+
 def test_nand_ids_fold_into_the_longer_id_of_the_same_part() -> None:
     short = rec_at("c226", "MX35LF2GE4AD", source="rockchip")
     long = rec_at("c22603", "MX35LF2GE4AD", vendor="Macronix")
