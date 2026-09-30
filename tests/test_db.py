@@ -168,6 +168,27 @@ def test_names_rank_by_sources() -> None:
     assert s33.names == ("160S33B", "25F160S33B8")
 
 
+def test_names_spelled_apart_vote_together() -> None:
+    # Dediprog lists CS11G0-, CS11G1- and CS11G2-T0A0AA at 6b 01; MediaTek's
+    # CS11G1T0A0AA is the same name without the hyphen, so it votes for
+    # the CS11G1, shown as Dediprog, the higher-priority source, writes it.
+    (cs11g,) = spiflash.lookup("6b01", flash_type="nand")
+    assert cs11g.name == "CS11G1-T0A0AA"
+    assert cs11g.size == 256 << 20
+    assert "CS11G1T0A0AA" in cs11g.names
+    db = Database(
+        [
+            rec(source="dediprog", name="A-1"),
+            rec(source="dediprog", name="B-1"),
+            rec(source="mediatek", name="B_1"),
+        ]
+    )
+    assert db.flashes[0].names == ("B-1", "B_1", "A-1")
+    # Other spellings do not: a slash or a dot is not a separator.
+    db = Database([rec(source="dediprog", name="A-1"), rec(source="mediatek", name="A/1")])
+    assert db.flashes[0].name == "A-1"
+
+
 def test_bank_is_the_most_sources_then_the_higher() -> None:
     # ATXP032 answers seven continuation codes, then 43 (OpenOCD); Dediprog
     # leaves them out. A tie goes to the codes, which no upstream adds.
