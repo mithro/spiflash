@@ -23,16 +23,21 @@ class Source(StrEnum):
        not reviewed in the open, with mistakes the others' reviews would
        catch (ids under the wrong command, SPI NAND sizes counting the
        spare area).
-    4. OpenOCD and openFPGALoader: their tables are the smallest and the
+    4. MediaTek: a chip vendor's production driver, whose SPI NAND geometry
+       (spare area, planes, dies) its boards boot from, per part; but SPI
+       NAND only, not reviewed in the open, with entries its own others
+       contradict (one part under two ids) and id methods the driver does
+       not use.
+    5. OpenOCD and openFPGALoader: their tables are the smallest and the
        least specific.
-    5. IMSProg: a programmer's table of parts it reads, but every SPI NOR
+    6. IMSProg: a programmer's table of parts it reads, but every SPI NOR
        entry has the same page and block size, and its format (and some of
        its values) came from the closed databases of commercial programmers
        (EZP2019 to EZP2023, Minipro, XP866+), which cannot be checked.
-    6. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
+    7. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
        boards emulate, though its SFDP dumps are the only complete ones any
        upstream has.
-    7. Zephyr: it has no table of parts, only boards describing the chip
+    8. Zephyr: it has no table of parts, only boards describing the chip
        each carries, whose values are written (and copied between boards)
        by each board's porter."""
 
@@ -41,6 +46,7 @@ class Source(StrEnum):
     LINUX = "linux"
     UBOOT = "u-boot"
     DEDIPROG = "dediprog"
+    MEDIATEK = "mediatek"
     OPENOCD = "openocd"
     OPENFPGALOADER = "openfpgaloader"
     IMSPROG = "imsprog"
@@ -66,6 +72,7 @@ _SOURCE_LABELS = {
     Source.LINUX: "Linux",
     Source.UBOOT: "U-Boot",
     Source.DEDIPROG: "Dediprog",
+    Source.MEDIATEK: "MediaTek",
     Source.OPENOCD: "OpenOCD",
     Source.OPENFPGALOADER: "openFPGALoader",
     Source.IMSPROG: "IMSProg",
