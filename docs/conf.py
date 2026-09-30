@@ -32,6 +32,7 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
     "sphinxcontrib.wavedrom",
+    "list_tables",
     "spiflash_pages",
     "alias_pages",
 ]
@@ -55,6 +56,10 @@ templates_path = ["_templates"]
 # Curly quotes and dashes, but not "..." as an ellipsis: flashrom writes
 # wildcard part names with dots ("S25FL256S......0").
 smartquotes_action = "qD"
+
+# The generated pages' directories, whose list-tables share parsed cells
+# (_ext/list_tables.py).
+list_tables_cached = ["chips", "vendors", "opcodes", "issues", "jep106", "sources"]
 
 myst_enable_extensions = ["colon_fence", "deflist", "substitution", "attrs_inline"]
 myst_heading_anchors = 3
