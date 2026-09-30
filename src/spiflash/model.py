@@ -432,14 +432,23 @@ class Flash:
 
     @cached_property
     def names(self) -> tuple[str, ...]:
-        """Every part name the sources give, most-cited first."""
-        counts: Counter[str] = Counter()
-        order: dict[str, tuple[int, int]] = {}
+        """Every part name the sources give: the one the most sources give
+        first, then (as :func:`_consensus` breaks ties) the one the
+        higher-priority sources give, the one more records give, and the
+        one listed first."""
+        sources: dict[str, set[int]] = {}
+        records: Counter[str] = Counter()
+        first: dict[str, int] = {}
         for i, r in enumerate(self.records):
             for n in r.part_names:
-                counts[n] += 1
-                order.setdefault(n, (r.source.priority, i))
-        return tuple(sorted(counts, key=lambda n: (-counts[n], order[n], n)))
+                sources.setdefault(n, set()).add(r.source.priority)
+                records[n] += 1
+                first.setdefault(n, i)
+
+        def rank(n: str) -> tuple[int, list[int], int, int]:
+            return -len(sources[n]), sorted(sources[n]), -records[n], first[n]
+
+        return tuple(sorted(sources, key=rank))
 
     @property
     def name(self) -> str:

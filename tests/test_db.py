@@ -136,6 +136,23 @@ def test_continuation_codes_are_optional() -> None:
     assert spiflash.jep106(0x1C, bank=1) == "Eon Silicon Devices"
 
 
+def test_names_rank_by_sources() -> None:
+    # Dediprog's W25Q32 and W25Q32JV entries are one source each: W25Q32JV
+    # (five sources, flashrom's among them) stays first.
+    (w25q32,) = spiflash.lookup("ef4016")
+    assert w25q32.name == "W25Q32JV"
+    db = Database(
+        [
+            rec(source="dediprog", name="W25Q32"),
+            rec(source="dediprog", name="W25Q32"),
+            rec(source="dediprog", name="W25Q32"),
+            rec(source="flashrom", name="W25Q32JV"),
+            rec(source="linux", name="W25Q32JV"),
+        ]
+    )
+    assert db.flashes[0].names == ("W25Q32JV", "W25Q32")
+
+
 def test_bank_is_the_most_sources_then_the_higher() -> None:
     # ATXP032 answers seven continuation codes, then 43 (OpenOCD); Dediprog
     # leaves them out. A tie goes to the codes, which no upstream adds.
