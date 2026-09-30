@@ -15,7 +15,8 @@ Facts about chips:
 
 - the id bytes a part answers, and its part and manufacturer names;
 - its size, page and sector sizes, erase opcodes and block layouts;
-- its other opcodes ({sfsrc}`openocd`, and the SFDP tables {sfsrc}`zephyr`'s boards copy);
+- its other opcodes ({sfsrc}`openocd`, {sfsrc}`dediprog`'s command words, and the SFDP
+  tables {sfsrc}`zephyr`'s boards copy);
 - its supply voltage range ({sfsrc}`flashrom`, {sfsrc}`flashprog`);
 - the names of the capability flags each upstream sets, and each upstream's
   test status;
@@ -32,8 +33,9 @@ The [JEP106 manufacturer names](jep106/index.md) come from {sfsrc}`openocd`'s co
 No code is copied: the tables are parsed, and the database holds the values.
 The one exception is `notes`, which keeps the short comments an upstream
 attached to an entry or its id `#define` ("supports SFDP", "uniform 256 kB
-sectors", "W25Q128BV; W25Q128FV in SPI mode (default)"), each traceable to its
-file and line through the record's `file` and `line`.
+sectors", "W25Q128BV; W25Q128FV in SPI mode (default)"), or the one-line
+description {sfsrc}`dediprog` gives a part, each traceable to its file and
+line through the record's `file` and `line`.
 
 The package is Apache-2.0, as are the files read from {sfsrc}`openfpgaloader` and
 {sfsrc}`zephyr`; the others are GPL (the table above gives each licence). Whether a

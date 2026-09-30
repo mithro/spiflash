@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from spiflash_extract import (
+    dediprog,
     fetch,
     flashrom,
     linux,
@@ -36,6 +37,7 @@ from spiflash_extract import (
 )
 
 if TYPE_CHECKING:
+    from collections import Counter
     from collections.abc import Callable
 
     from spiflash_extract.record import Record
@@ -48,14 +50,20 @@ UPSTREAM = REPO / "upstream"
 FORMAT = 3
 
 EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
-    "linux": linux.extract,
-    "u-boot": uboot.extract,
     "flashrom": lambda root: flashrom.extract(root, "flashrom"),
     "flashprog": lambda root: flashrom.extract(root, "flashprog"),
+    "linux": linux.extract,
+    "u-boot": uboot.extract,
+    "dediprog": dediprog.extract,
     "openocd": openocd.extract,
     "openfpgaloader": openfpgaloader.extract,
     "qemu": qemu.extract,
     "zephyr": zephyr.extract,
+}
+
+#: For an extractor that leaves known kinds of entry out: how many, by reason.
+SKIPPED: dict[str, Callable[[Path], Counter[str]]] = {
+    "dediprog": dediprog.skipped,
 }
 
 
@@ -76,6 +84,9 @@ def build(ups: list[fetch.Upstream]) -> dict[str, str]:
         tree = fetch.fetch(up, UPSTREAM)
         recs = EXTRACTORS[up.name](tree)
         print(f"{up.name:15} {up.commit[:12]} {len(recs):5} records", file=sys.stderr)
+        if up.name in SKIPPED:
+            for reason, n in SKIPPED[up.name](tree).most_common():
+                print(f"{'':28} {n:5} left out: {reason}", file=sys.stderr)
         records += recs
         sources[up.name] = {
             "url": up.url,

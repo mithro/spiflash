@@ -10,20 +10,6 @@
 # facts about chips (ids, sizes, opcodes) taken from them, not their code; see
 # docs/SOURCES.md.
 
-[linux]
-url = "https://github.com/torvalds/linux"
-branch = "master"
-commit = "fd179f8a05be3ccae366b9b96e176b51fbe54aab"
-paths = ["drivers/mtd/spi-nor/", "drivers/mtd/nand/spi/", "include/linux/mtd/spi-nor.h"]
-license = "GPL-2.0-only"
-
-[u-boot]
-url = "https://github.com/u-boot/u-boot"
-branch = "main"
-commit = "a06e89ab05eaa2b8344d521319399333cd760ae5"
-paths = ["drivers/mtd/spi/spi-nor-ids.c", "drivers/mtd/spi/sf_internal.h", "include/linux/mtd/spi-nor.h"]
-license = "GPL-2.0-or-later"
-
 [flashrom]
 url = "https://github.com/flashrom/flashrom"
 branch = "main"
@@ -39,6 +25,29 @@ branch = "main"
 commit = "bbe7393f16b710d7e5ddfb1d01c6dadd8c0a5aa7"
 paths = ["flashchips.c", "include/flashchips.h", "include/flash.h", "include/spi.h"]
 license = "GPL-2.0-or-later"
+
+[linux]
+url = "https://github.com/torvalds/linux"
+branch = "master"
+commit = "fd179f8a05be3ccae366b9b96e176b51fbe54aab"
+paths = ["drivers/mtd/spi-nor/", "drivers/mtd/nand/spi/", "include/linux/mtd/spi-nor.h"]
+license = "GPL-2.0-only"
+
+[u-boot]
+url = "https://github.com/u-boot/u-boot"
+branch = "main"
+commit = "a06e89ab05eaa2b8344d521319399333cd760ae5"
+paths = ["drivers/mtd/spi/spi-nor-ids.c", "drivers/mtd/spi/sf_internal.h", "include/linux/mtd/spi-nor.h"]
+license = "GPL-2.0-or-later"
+
+[dediprog]
+url = "https://github.com/DediProgSW/SF100Linux"
+branch = "master"
+commit = "091d257173afb3e1a34f3af3bb28e883dab67221"
+# UTF-16 XML, one <Chip .../> per line.
+paths = ["ChipInfoDb.dedicfg"]
+# Its LICENSE is the GPL, version 2; the files carry no licence header.
+license = "GPL-2.0-only"
 
 [openocd]
 url = "https://github.com/openocd-org/openocd"
