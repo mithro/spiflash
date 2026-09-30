@@ -151,6 +151,18 @@ def test_names_rank_by_sources() -> None:
         ]
     )
     assert db.flashes[0].names == ("W25Q32JV", "W25Q32")
+    # A part name before a pattern (flashrom's W25Q16.V) and before a
+    # rebrand's name (Spansion's S25FL016K, which three sources give);
+    # neither is dropped.
+    (w25q16,) = spiflash.lookup("ef4015")
+    assert w25q16.name == "W25Q16JV"
+    assert {"W25Q16.V", "S25FL016K"} <= set(w25q16.names)
+    # Linux's name for an entry it does not name is no part name.
+    (s28hs,) = spiflash.lookup("345b19")
+    assert s28hs.name == "S28HS256T"
+    # Three sources (Dediprog, Linux, QEMU) call Intel's 25F160S33B8 160S33B.
+    (s33,) = spiflash.lookup("898911")
+    assert s33.names == ("160S33B", "25F160S33B8")
 
 
 def test_bank_is_the_most_sources_then_the_higher() -> None:

@@ -432,21 +432,36 @@ class Flash:
 
     @cached_property
     def names(self) -> tuple[str, ...]:
-        """Every part name the sources give: the one the most sources give
-        first, then (as :func:`_consensus` breaks ties) the one the
-        higher-priority sources give, the one more records give, and the
-        one listed first."""
+        """Every part name the sources give, the chip's own part first: a
+        part name rather than a pattern (flashrom's wildcards, ``W25Q16.V``,
+        or the vendor-and-id name Linux gives an entry it does not name,
+        ``SPANSION-345B19``); one a record of the chip's :attr:`manufacturer`
+        gives (not a rebrand's, like Spansion's S25FL016K on a Winbond id);
+        then the one the most sources give, the higher-priority sources, the
+        most records (as :func:`_consensus` ranks values), and the one
+        listed first."""
         sources: dict[str, set[int]] = {}
         records: Counter[str] = Counter()
         first: dict[str, int] = {}
+        own: set[str] = set()
         for i, r in enumerate(self.records):
             for n in r.part_names:
                 sources.setdefault(n, set()).add(r.source.priority)
                 records[n] += 1
                 first.setdefault(n, i)
+                if r.manufacturer == self.manufacturer:
+                    own.add(n)
+        made_up = f"-{self.id_hex.upper()}"
 
-        def rank(n: str) -> tuple[int, list[int], int, int]:
-            return -len(sources[n]), sorted(sources[n]), -records[n], first[n]
+        def rank(n: str) -> tuple[bool, bool, int, list[int], int, int]:
+            return (
+                "." in n or n.endswith(made_up),
+                n not in own,
+                -len(sources[n]),
+                sorted(sources[n]),
+                -records[n],
+                first[n],
+            )
 
         return tuple(sorted(sources, key=rank))
 
