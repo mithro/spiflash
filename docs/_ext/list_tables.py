@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from sphinx.application import Sphinx
 
 ROW, CELL, MORE = "* - ", "  - ", "    "
+#: The comment between the cells of a table parsed at once.
+SEPARATOR = "sf-list-table-cell"
 
 #: The parsed cells, by the page's directory and the cell's text.
 _CELLS: dict[tuple[str, str], list[nodes.Node]] = {}
@@ -76,7 +78,9 @@ class CachedListTable(ListTable):
             return super().run()
         env = self.state.document.settings.env
         where = posixpath.dirname(env.docname)
-        data = [[self._cell(where, cell) for cell in row] for row in rows]
+        texts = {"\n".join(cell): cell for row in rows for cell in row}
+        fresh = self._parse([c for t, c in texts.items() if t.strip() and (where, t) not in _CELLS])
+        data = [[self._cell(where, "\n".join(cell), fresh) for cell in row] for row in rows]
         table = self.build_table_from_list(
             data,
             [100 // len(rows[0])] * len(rows[0]),
@@ -90,18 +94,41 @@ class CachedListTable(ListTable):
         self.add_name(table)
         return [table]
 
-    def _cell(self, where: str, lines: list[str]) -> list[nodes.Node]:
-        text = "\n".join(lines)
+    def _parse(self, cells: list[list[str]]) -> dict[str, list[nodes.Node]]:
+        """Parses ``cells`` at once, a comment line between each two, and
+        splits the nodes at the comments; each cell alone if that fails."""
+        if not cells:
+            return {}
+        lines = [line for cell in cells for line in [*cell, "", f"% {SEPARATOR}", ""]]
+        box = nodes.Element()
+        self.state.nested_parse(StringList(lines), self.content_offset, box)
+        parts: list[list[nodes.Node]] = [[]]
+        for node in box.children:
+            if isinstance(node, nodes.comment) and node.astext().strip() == SEPARATOR:
+                parts.append([])
+            else:
+                parts[-1].append(node)
+        if len(parts) != len(cells) + 1 or parts[-1]:
+            parts = [self._parse_one(cell) for cell in cells]
+        return {"\n".join(cell): nodes_ for cell, nodes_ in zip(cells, parts, strict=False)}
+
+    def _parse_one(self, lines: list[str]) -> list[nodes.Node]:
+        box = nodes.Element()
+        self.state.nested_parse(StringList(lines), self.content_offset, box)
+        return list(box.children)
+
+    def _cell(self, where: str, text: str, fresh: dict[str, list[nodes.Node]]) -> list[nodes.Node]:
+        """A cell's nodes: parsed for this table, or copied from the cache."""
         if not text.strip():
             return []
-        cached = _CELLS.get((where, text))
-        if cached is None:
-            box = nodes.Element()
-            self.state.nested_parse(StringList(lines), self.content_offset, box)
-            parsed = list(box.children)
+        if text in fresh:
+            parsed = fresh.pop(text)
             if _reusable(parsed):
                 _CELLS[where, text] = [n.deepcopy() for n in parsed]
             return parsed
+        cached = _CELLS.get((where, text))
+        if cached is None:  # a repeat of a cell that cannot be shared
+            return self._parse_one(text.split("\n"))
         copies = [n.deepcopy() for n in cached]
         env = self.state.document.settings.env
         source = self.state.document["source"]
