@@ -15,7 +15,8 @@ Facts about chips:
 
 - the id bytes a part answers, and its part and manufacturer names;
 - its size, page and sector sizes, erase opcodes and block layouts;
-- its other opcodes ({sfsrc}`openocd`, {sfsrc}`dediprog`'s command words, and the SFDP
+- its other opcodes ({sfsrc}`openocd`, {sfsrc}`dediprog`'s command words,
+  {sfsrc}`rockchip`'s quad read and program, and the SFDP
   tables {sfsrc}`zephyr`'s boards copy);
 - its supply voltage range ({sfsrc}`flashrom`, {sfsrc}`flashprog`);
 - the names of the capability flags each upstream sets, and each upstream's

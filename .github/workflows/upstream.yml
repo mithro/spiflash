@@ -6,8 +6,8 @@ name: Upstream flash tables
 #    tools/sources.toml produce? A hand edit, or an extractor change committed
 #    without regenerating, fails here.
 # 2. "latest": have the upstreams (flashrom, flashprog, Linux, U-Boot, Dediprog,
-#    OpenOCD, openFPGALoader, QEMU, Zephyr) changed their flash tables since?
-#    Weekly, since that is when drift arrives. A red run means:
+#    Rockchip, OpenOCD, openFPGALoader, QEMU, Zephyr) changed their flash
+#    tables since? Weekly, since that is when drift arrives. A red run means:
 #    `uv run tools/update_db.py --latest`, review the diff of the data, commit.
 #
 # Deliberately NOT part of deb.yml. That workflow going green on main is what

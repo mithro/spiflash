@@ -22,6 +22,7 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 | {sfsrc}`linux` | what {upstream}`linux:drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default; the `no_sfdp_flags` (dual, quad and octal read, 4 KiB erase); sector and chip erase; and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
 | {sfsrc}`u-boot` | the same from its {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | {sfsrc}`dediprog` | the id command, and the opcodes its entry packs into `ReadCmd`, `ProgramCmd` and `EraseCmd`: the single-line read and page program, and the chip, block and die erase (SPI NOR only) |
+| {sfsrc}`rockchip` | what its rkflash driver sets up for an SPI NOR entry ({upstream}`rockchip:drivers/rkflash/sfc_nor.c`): the read, page program, 4 KiB and block erase opcodes the entry gives, its quad read and program where its feature bits turn them on, and entering 4-byte mode for `FEA_4BYTE_ADDR_MODE` |
 | {sfsrc}`openocd` | the columns of its table: read, fastest read, page program, sector erase and chip erase |
 | {sfsrc}`openfpgaloader` | what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
 | {sfsrc}`qemu` | what its model ({upstream}`qemu:hw/block/m25p80.c`) decodes for every part (read, fast read, page program, sector erase, and chip erase as 0xc7 and 0x60), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for ({upstream}`qemu:hw/block/m25p80_sfdp.c`), everything those tables list, with the part's own dummy clocks |
@@ -30,7 +31,7 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 The opcode values themselves are read from each upstream's own headers
 (`SPINOR_OP_*`, `JEDEC_*`, `SPIFLASH_READ_ID`, `FLASH_*`, {sfsrc}`qemu`'s `FlashCMD`
 enum), from the SFDP tables ({sfsrc}`qemu`, {sfsrc}`zephyr`), or from {sfsrc}`dediprog`'s
-command words, and checked against
+command words and {sfsrc}`rockchip`'s tables, and checked against
 [the table below](#the-operations) by {repo}`tools/spiflash_extract/ops.py` when the
 data is built: a disagreement fails the build.
 

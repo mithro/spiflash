@@ -11,15 +11,16 @@ merged from the flash tables of every project that keeps one:
 | [Linux](https://github.com/torvalds/linux) | [`drivers/mtd/spi-nor/*.c`](https://github.com/torvalds/linux/tree/master/drivers/mtd/spi-nor), [`drivers/mtd/nand/spi/*.c`](https://github.com/torvalds/linux/tree/master/drivers/mtd/nand/spi) | 377 (127 SPI NAND) |
 | [U-Boot](https://github.com/u-boot/u-boot) | [`drivers/mtd/spi/spi-nor-ids.c`](https://github.com/u-boot/u-boot/blob/master/drivers/mtd/spi/spi-nor-ids.c) | 334 |
 | [Dediprog](https://github.com/DediProgSW/SF100Linux) | [`ChipInfoDb.dedicfg`](https://github.com/DediProgSW/SF100Linux/blob/master/ChipInfoDb.dedicfg), the chip database of its SF100/SF600 programmers | 1873 (210 SPI NAND) |
+| [Rockchip](https://github.com/rockchip-linux/u-boot) | [`drivers/rkflash/sfc_nor.c`](https://github.com/rockchip-linux/u-boot/blob/next-dev/drivers/rkflash/sfc_nor.c), [`drivers/rkflash/sfc_nand.c`](https://github.com/rockchip-linux/u-boot/blob/next-dev/drivers/rkflash/sfc_nand.c): the rkflash driver of its U-Boot | 226 (138 SPI NAND) |
 | [OpenOCD](https://github.com/openocd-org/openocd) | [`src/flash/nor/spi.c`](https://github.com/openocd-org/openocd/blob/master/src/flash/nor/spi.c), and [`src/helper/jep106.inc`](https://github.com/openocd-org/openocd/blob/master/src/helper/jep106.inc) for manufacturer names | 190 |
 | [openFPGALoader](https://github.com/trabucayre/openFPGALoader) | [`src/spiFlashdb.hpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlashdb.hpp) | 53 |
 | [QEMU](https://gitlab.com/qemu-project/qemu) | [`hw/block/m25p80.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80.c), and the SFDP dumps in [`hw/block/m25p80_sfdp.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80_sfdp.c) | 137 |
 | [Zephyr](https://github.com/zephyrproject-rtos/zephyr) | the devicetree of its [boards](https://github.com/zephyrproject-rtos/zephyr/tree/main/boards) and [SoCs](https://github.com/zephyrproject-rtos/zephyr/tree/main/dts): each flash node with a `jedec-id` | 99 |
 
-Together that is 1192 distinct chip ids (966 SPI NOR, 226 SPI NAND) from 62
-manufacturers, 651 of them described by more than one source, plus the full
+Together that is 1256 distinct chip ids (969 SPI NOR, 287 SPI NAND) from 62
+manufacturers, 696 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
-from, and where the sources disagree (86 ids do) both answers are kept.
+from, and where the sources disagree (88 ids do) both answers are kept.
 Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
 (JESD216) tables, decoded.
 
@@ -154,7 +155,7 @@ A `Flash` is one chip id, and several parts can share one (a W25Q128BV, FV and
 JV all answer `ef4018`), so it lists every name the sources give. Its single
 values (`size`, `page_size`, `sector_size`, `voltage`, `manufacturer`) are what
 most sources agree on, ties going to flashrom, then flashprog, Linux, U-Boot, Dediprog,
-OpenOCD, openFPGALoader, QEMU and Zephyr; `values("size")` shows who says what. `features`
+Rockchip, OpenOCD, openFPGALoader, QEMU and Zephyr; `values("size")` shows who says what. `features`
 is everything any source claims, from this list:
 
 | feature | meaning |
