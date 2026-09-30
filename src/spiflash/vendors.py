@@ -26,9 +26,9 @@ _ALIASES = {
     "boya microelectronics": "Boya",
     "boya/bohong microelectronics": "Boya",
     "boyamicro": "Boya",
-    "brightmoonsl": "Brightmoon",
+    "brightmoonsl": "Bright Moon",  # Bright Moon Semiconductor (Dediprog's spelling)
     "bsemi": "BSEMI",
-    "byte semiconductor": "BYTe Semiconductor",
+    "byte semiconductor": "Boya",  # Boya's BY25Q parts, with its 0x68 id
     "cfeon/eon": "Eon",
     "chuangfeixin": "Chuangfeixin",
     "cyp": "Cypress",
