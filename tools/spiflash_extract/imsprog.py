@@ -17,13 +17,19 @@ format" says and as ``MainWindow`` in
     0x43  VCC: 0 3.3 V, 1 1.8 V, 2 5.0 V, 3 2.5 V
 
 An all-zero entry ends the table. Only SPI NOR and SPI NAND are taken; the
-I2C, MicroWire and SPI EEPROMs, FRAMs and AT45 DataFlash are not.
-The file has no lines, so a record's ``line`` is the entry's number in it,
-from 1.
+I2C, MicroWire and SPI EEPROMs, FRAMs and AT45 DataFlash are not, nor the
+entries in :data:`WRONG`. The file has no lines, so a record's ``line`` is
+the entry's number in it, from 1.
+
+Every SPI NOR entry has a 256-byte page and a 64 KiB block: IMSProg programs
+every part in 256-byte pages and erases it with 0xd8 at every 64 KiB, and
+its GUI offers little else, so they are its defaults, not the part's. They
+are kept as flags, not as the record's page and sector size.
 
 A SPI NAND id is the three bytes after 0x9f and a dummy byte. A part with a
-two-byte id sends its manufacturer byte again as the third; that is dropped,
-so the id is the two bytes other sources give.
+two-byte id sends its manufacturer byte again as the third; for the makers
+in :data:`TWO_BYTE_IDS` that byte is dropped, so the id is the two bytes
+other sources give.
 """
 
 from __future__ import annotations
@@ -32,7 +38,7 @@ from collections import Counter
 from typing import TYPE_CHECKING
 
 from .ops import Opcodes
-from .record import ERASE_FEATURES, Record, make
+from .record import Record, make
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -62,6 +68,38 @@ LEFT_OUT = {
     4: "SPI EEPROM (95xx)",
     5: "AT45 DataFlash",
 }
+
+_SIZE = "size contradicts its part number and capacity byte"
+_ID = "wrong id, per its datasheet"
+
+#: Entries whose id or size is wrong, by part and id bytes as the file has
+#: them, and why; they are left out (see docs/_source_notes/imsprog.md).
+WRONG = {
+    ("ES25P10", "4a2011"): _SIZE,  # 1 Mbit, 0x11: 128 KiB, not 256
+    ("ES25P20", "4a2012"): _SIZE,
+    ("ES25P40", "4a2013"): _SIZE,
+    ("ES25P80", "4a2014"): _SIZE,
+    ("ES25P16", "4a2015"): _SIZE,
+    ("ES25P32", "4a2016"): _SIZE,
+    ("ES25M40A", "4a3213"): _SIZE,
+    ("ES25M80A", "4a3214"): _SIZE,
+    ("ES25M16A", "4a3215"): _SIZE,
+    ("F25L008A", "8c2014"): _SIZE,  # 8 Mbit, 0x14: 1 MiB, not 2
+    ("EN25E40A", "1c4213"): _SIZE,  # 4 Mbit, 0x13: 512 KiB, not 256
+    ("A25L40PT", "372022"): _ID,  # the A25L20PT's; its own is 7f 37 20 13
+    ("P25Q06H", "850010"): _ID,  # 85 40 10
+    ("MT29F4G01ABAFD12", "2c362c"): _ID,  # 2c 34
+    ("PCT25VF010A", "bf4900"): _ID,  # a REMS id: the part has no JEDEC read-id
+}
+
+#: The makers whose SPI NAND ids are two bytes: a third byte repeating the
+#: first is the id wrapping round. Anywhere else it raises, rather than be
+#: dropped unseen.
+TWO_BYTE_IDS = {0x0B, 0x2C, 0xBA, 0xC2, 0xC8, 0xE5}
+
+#: SPI NAND parts that answer read-id straight after the opcode, with no
+#: dummy byte (GigaDevice's GD5F1GQ4xF: "9FH MID DID DID").
+NO_DUMMY = {"c8a148", "c8a348", "c8b148", "c8b348"}
 
 VCC = {0: "3.3 V", 1: "1.8 V", 2: "5.0 V", 3: "2.5 V"}
 
@@ -96,22 +134,31 @@ def entries(root: Path) -> Iterator[tuple[int, list[str], bytes]]:
         yield n + 1, fields, e
 
 
+def _id(e: bytes) -> str:
+    """The id bytes as the file has them."""
+    return bytes([e[0x32], e[0x31], e[0x30]]).hex()
+
+
+def _left_out(fields: list[str], e: bytes) -> str | None:
+    """Why an entry is not taken, or None."""
+    return LEFT_OUT.get(e[0x3A]) or WRONG.get((fields[2], _id(e)))
+
+
 def skipped(root: Path) -> Counter[str]:
-    """How many entries are left out, by type."""
-    return Counter(LEFT_OUT[e[0x3A]] for _, _, e in entries(root) if e[0x3A] in LEFT_OUT)
+    """How many entries are left out, by reason."""
+    return Counter(r for _, f, e in entries(root) if (r := _left_out(f, e)))
 
 
 def extract(root: Path) -> list[Record]:
     records = []
     for n, fields, e in entries(root):
-        kind = e[0x3A]
-        if kind not in (NOR, NAND):
+        if _left_out(fields, e):
             continue
         where = f"{DAT}: entry {n} ({','.join(fields)})"
         if e[0x43] not in VCC:
             msg = f"{where}: unknown VCC code 0x{e[0x43]:02x}"
             raise ValueError(msg)
-        rec = _nor(e, where) if kind == NOR else _nand(e)
+        rec = _nor(e, where) if e[0x3A] == NOR else _nand(e, where)
         records.append(make("imsprog", DAT, n, fields[2], vendor=fields[1].strip(), **rec))
     return records
 
@@ -128,38 +175,34 @@ def _flags(e: bytes) -> list[str]:
 
 
 def _nor(e: bytes, where: str) -> dict[str, object]:
-    size = int.from_bytes(e[0x34:0x38], "little")
-    block = int.from_bytes(e[0x3F:0x41], "big") * 1024
     addr4 = e[0x3E]
-    if addr4 not in ADDR4 or not block:
-        msg = f"{where}: unknown 4-byte addressing 0x{addr4:02x}, or no block size"
+    if addr4 not in ADDR4:
+        msg = f"{where}: unknown 4-byte addressing 0x{addr4:02x}"
         raise ValueError(msg)
-    features = {"4byte_addr"} if addr4 else set()
-    if block in ERASE_FEATURES:
-        features.add(ERASE_FEATURES[block])
     return {
-        "id": bytes([e[0x32], e[0x31], e[0x30]]).hex(),
-        "size": size,
-        "page_size": int.from_bytes(e[0x38:0x3A], "little"),
-        "sector_size": block,
-        "erasers": [
-            {"opcode": 0xD8, "blocks": [[block, size // block]]},
-            {"opcode": 0xC7, "blocks": [[size, 1]]},
+        "id": _id(e),
+        "size": int.from_bytes(e[0x34:0x38], "little"),
+        "features": {"4byte_addr"} if addr4 else set(),
+        "flags": [
+            *_flags(e),
+            f"pageSize={int.from_bytes(e[0x38:0x3A], 'little')}",
+            f"blockSize={int.from_bytes(e[0x3F:0x41], 'big')}K",
         ],
-        "features": features,
-        "flags": _flags(e),
         "opcodes": _opcodes(addr4),
     }
 
 
-def _nand(e: bytes) -> dict[str, object]:
+def _nand(e: bytes, where: str) -> dict[str, object]:
     ident = bytes([e[0x32], e[0x31], e[0x30]])
     if ident[2] == ident[0]:
+        if ident[0] not in TWO_BYTE_IDS:
+            msg = f"{where}: third id byte repeats the first, from a maker not known for 2-byte ids"
+            raise ValueError(msg)
         ident = ident[:2]  # a two-byte id, wrapped round
     return {
         "type": "nand",
         "id": ident.hex(),
-        "id_method": "rdid_opcode_dummy",
+        "id_method": "rdid_opcode" if ident.hex() in NO_DUMMY else "rdid_opcode_dummy",
         "size": int.from_bytes(e[0x34:0x38], "little"),
         "page_size": int.from_bytes(e[0x38:0x3A], "little"),
         "sector_size": int.from_bytes(e[0x3F:0x41], "big") * 1024,
@@ -169,15 +212,15 @@ def _nand(e: bytes) -> dict[str, object]:
 
 def _opcodes(addr4: int) -> list[dict[str, object]]:
     """What :upstream:`imsprog:IMSProg_programmer/spi_nor_flash.c` sends to
-    a SPI NOR part: read-id, read, page program, the 64 KiB block erase and
-    chip erase, and above 16 MiB the 3-byte opcodes in 4-byte address mode,
-    entered the way the entry's 0x3e byte says."""
+    a SPI NOR part: read-id, read, page program and the 0xd8 block erase
+    (its erase loops over that; it never sends a chip erase), and above
+    16 MiB the 3-byte opcodes in 4-byte address mode, entered the way the
+    entry's 0x3e byte says."""
     ops = Opcodes()
     ops.add("RDID", "JEDEC id match")
     ops.add("READ_1_1_1", "every read")
-    ops.add("PP_1_1_1", "every write")
-    ops.add("SE", "every block erase")
-    ops.add("CHIP_ERASE", "full chip erase")
+    ops.add("PP_1_1_1", "every write, in 256-byte pages")
+    ops.add("SE", "every erase, at every 64 KiB")
     for op in ADDR4[addr4]:
         ops.add(op, f"4-byte addressing (addr4bit=0x{addr4:02x})")
     return ops.to_json()
