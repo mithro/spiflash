@@ -16,12 +16,15 @@ name and id.
 
 from __future__ import annotations
 
+import posixpath
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from docutils import nodes
+from sphinx.builders.html import StandaloneHTMLBuilder
+from sphinx.environment.adapters.toctree import global_toctree_for_doc
 from sphinx.transforms.post_transforms import SphinxPostTransform
 from sphinx.util.docutils import SphinxRole
 from sphinx.util.nodes import split_explicit_title
@@ -80,9 +83,9 @@ if TYPE_CHECKING:
 def chip_page(
     db: Database, f: Flash, vendor_slug: str, slugs: dict[int, str], issues: list[Issue]
 ) -> str:
-    out: list[str] = []
     kind = "SPI NAND" if f.type == "nand" else "SPI NOR"
-    out.append(f"# {esc(title_of(f))}\n")
+    # In no toctree: see _chip_nav.
+    out = ["---\norphan: true\n---\n", f"# {esc(title_of(f))}\n"]
     out.append(
         " ".join(
             [
@@ -554,11 +557,6 @@ def vendor_page(db: Database, vendor: str, flashes: list[Flash], slugs: dict[int
         out.append(f"Capacities from {human_size(sizes[0])} to {human_size(sizes[-1])}.\n")
     out.append(f"Type in the box to filter. {FILTER_SYNTAX} Click a heading to sort.\n")
     out.append(parts_table(flashes, slugs, "../chips/"))
-    out.append(
-        "\n```{toctree}\n:hidden:\n\n"
-        + "\n".join(f"../chips/{slugs[id(f)]}" for f in flashes)
-        + "\n```\n"
-    )
     return "\n".join(out)
 
 
@@ -682,7 +680,8 @@ def _write(path: Path, text: str) -> None:
         path.write_text(text)
 
 
-def generate(srcdir: Path) -> None:
+def generate(srcdir: Path) -> dict[str, str]:
+    """Write the pages; returns each chip page's vendor page, by docname."""
     db = spiflash.database()
     vendors: dict[str, list[Flash]] = defaultdict(list)
     for f in db.flashes:
@@ -732,6 +731,66 @@ def generate(srcdir: Path) -> None:
         for old in d.glob("*.md"):
             if old not in wanted:
                 old.unlink()
+    return {f"chips/{slugs[id(f)]}": f"vendors/{vslug[vendor_of(f)]}" for f in db.flashes}
+
+
+#: Each chip page's vendor page, by docname (see :func:`_chip_nav`).
+CHIP_VENDOR: dict[str, str] = {}
+#: The vendor pages' sidebars, by vendor and the theme's toctree() options.
+_VENDOR_NAV: dict[tuple[str, str], str] = {}
+
+
+def _builder_inited(app: Sphinx) -> None:
+    CHIP_VENDOR.clear()
+    CHIP_VENDOR.update(generate(Path(app.srcdir)))
+    _VENDOR_NAV.clear()
+
+
+def _chip_nav(
+    app: Sphinx, pagename: str, _template: str, context: dict[str, Any], _doctree: Any
+) -> None:
+    """A chip page's sidebar is its vendor page's.
+
+    The theme puts the whole toctree in every page's sidebar, so with the
+    chips in it every page carried a link to every chip: the site grew with
+    the square of the chips, and writing it took most of the build. Chip
+    pages are in no toctree; each shows its vendor's sidebar instead, with
+    the vendor as the current page, made once per vendor.
+    """
+    vendor = CHIP_VENDOR.get(pagename)
+    if vendor is None or "toctree" not in context:
+        return
+    builder = app.builder
+    assert isinstance(builder, StandaloneHTMLBuilder)
+
+    def toctree(*, collapse: bool = True, **kwargs: Any) -> str:
+        # As StandaloneHTMLBuilder._get_local_toctree, for the vendor page.
+        kwargs.setdefault("includehidden", False)
+        if kwargs.get("maxdepth") == "":
+            kwargs.pop("maxdepth")
+        key = (vendor, repr(sorted({**kwargs, "collapse": collapse}.items())))
+        if key not in _VENDOR_NAV:
+            tree = global_toctree_for_doc(
+                builder.env, vendor, builder, tags=builder.tags, collapse=collapse, **kwargs
+            )
+            if tree is not None:
+                _rebase_links(tree, builder.get_target_uri(vendor))
+            _VENDOR_NAV[key] = builder.render_partial(tree)["fragment"]
+        return _VENDOR_NAV[key]
+
+    context["toctree"] = toctree
+
+
+def _rebase_links(tree: nodes.Element, vendor_uri: str) -> None:
+    """Makes the links of a vendor page's toctree, relative to that page,
+    relative to a chip page: from ``vendors/`` to ``chips/``."""
+    for ref in tree.findall(nodes.reference):
+        uri = ref.get("refuri", "")
+        if "://" in uri:
+            continue
+        path, hash_, anchor = uri.partition("#")
+        target = posixpath.normpath(posixpath.join("vendors", path)) if path else vendor_uri
+        ref["refuri"] = posixpath.relpath(target, "chips") + (hash_ + anchor if anchor else "")
 
 
 class SpanRole(SphinxRole):
@@ -942,7 +1001,9 @@ def _substitutions(app: Sphinx, config: Config) -> None:
 
 def setup(app: Sphinx) -> dict[str, Any]:
     app.connect("config-inited", _substitutions)
-    app.connect("builder-inited", lambda app: generate(Path(app.srcdir)))
+    app.connect("builder-inited", _builder_inited)
+    # Before the theme's handler (500), which renders the sidebar.
+    app.connect("html-page-context", _chip_nav, priority=400)
     app.add_role("sfid", SpanRole("sf-id"))
     app.add_role("sfop", SpanRole("sf-op"))
     app.add_role("sfyes", SpanRole("sf-yes"))
