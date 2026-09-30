@@ -54,6 +54,11 @@ def header(f: Flash) -> str:
     return f"{f.key}  {maker}  {', '.join(f.names)}  ({f.type})"
 
 
+def volts(v: tuple[int, int]) -> str:
+    """A supply range in volts: ``2.7-3.6 V``."""
+    return f"{v[0] / 1000:g}-{v[1] / 1000:g} V"
+
+
 def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     lines = [header(f)]
     detail = [f"size {human_size(f.size)}"]
@@ -62,7 +67,7 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     if f.sector_size:
         detail.append(f"sector {human_size(f.sector_size)}")
     if f.voltage:
-        detail.append(f"{f.voltage[0] / 1000:g}-{f.voltage[1] / 1000:g} V")
+        detail.append(volts(f.voltage))
     lines.append("    " + ", ".join(detail))
     if f.features:
         lines.append("    features: " + " ".join(sorted(f.features)))
@@ -72,9 +77,10 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             f"{tuple(v) if isinstance(v, tuple) else v} ({', '.join(s)})" for v, s in vals.items()
         )
         lines.append(f"    sources disagree on {attr}: {said}")
-    for attr in ("size", "page_size", "sector_size"):
+    for attr in ("size", "page_size", "sector_size", "voltage"):
         if parts := f.by_ext_id(attr):
-            said = ", ".join(f"{human_size(v)} ({e.hex()})" for e, v in parts.items() if v)
+            show = volts if attr == "voltage" else human_size
+            said = ", ".join(f"{show(v)} ({e.hex()})" for e, v in parts.items() if v)
             lines.append(f"    parts differ on {attr} by ext id: {said}")
     if verbose:
         for r in f.records:

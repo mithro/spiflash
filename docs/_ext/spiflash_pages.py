@@ -125,14 +125,13 @@ def _summary_cards(f: Flash) -> list[str]:
         ("Sector", "sector_size"),
     ]
     out = ["::::{grid} 2 2 4 4\n:gutter: 2\n:class-container: sf-cards\n"]
-    for label, attr in cards:
-        value = size_text(getattr(f, attr))
+    for label, attr in [*cards, ("Supply", "voltage")]:
+        value = volts(f.voltage) if attr == "voltage" else size_text(getattr(f, attr))
         # Parts an extended id tells apart differ on it: each's is in the
         # Extended ids table.
         if f.by_ext_id(attr):
             value += "\n\n[Differs by part](#extended-ids)"
         out.append(f":::{{grid-item-card}} {label}\n:class-card: sf-card\n\n{value}\n:::")
-    out.append(f":::{{grid-item-card}} Supply\n:class-card: sf-card\n\n{volts(f.voltage)}\n:::")
     out.append("::::\n")
     return out
 

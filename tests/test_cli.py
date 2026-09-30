@@ -289,3 +289,9 @@ def test_id_says_where_parts_differ_by_ext_id(capsys: pytest.CaptureFixture[str]
     _, out = run(capsys, "id", "--type", "nand", "c8417f")
     assert "parts differ" not in out
     assert "datasheet:" not in out  # GigaDevice's is not the F50L2G41KA's
+
+
+def test_id_says_where_parts_differ_on_supply(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "010220")
+    assert "parts differ on voltage by ext id: " in out
+    assert "1.7-2 V (4d0081)" in out

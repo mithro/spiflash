@@ -55,3 +55,18 @@ def test_a_card_says_when_parts_differ() -> None:
     card = text[text.index("{grid-item-card} Capacity") : text.index("{grid-item-card} Page")]
     assert "[Differs by part](#extended-ids)" in card
     assert "Differs by part" not in page("c952")
+
+
+def test_the_supply_card_says_when_parts_differ() -> None:
+    db = spiflash.database()
+    f = next(g for g in db.flashes if g.key == "010220")
+    text = chip_page(db, f, "vendor", {id(g): chip_slug(g) for g in db.flashes}, [])
+    card = text[text.index("{grid-item-card} Supply") :]
+    assert card.split(":::")[0].count("[Differs by part](#extended-ids)") == 1
+
+
+def test_a_card_note_is_small_and_the_value_big() -> None:
+    css = (Path(__file__).resolve().parent.parent / "docs/_static/spiflash.css").read_text()
+    assert ".sf-card .sd-card-body p:first-of-type {" in css
+    assert ".sf-card .sd-card-body p + p {" in css
+    assert ".sf-card .sd-card-body p:last-child" not in css

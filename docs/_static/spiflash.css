@@ -96,11 +96,13 @@ a.sf-src-link:hover .sf-src { filter: brightness(1.2); text-decoration: underlin
   margin-bottom: 0.2rem;
 }
 .sf-card .sd-card-body { padding: 0.8rem 1rem; }
-.sf-card .sd-card-body p:last-child {
+/* The card's value, big; a note under it (parts that differ), small. */
+.sf-card .sd-card-body p:first-of-type {
   font-size: 1.45em;
   font-weight: 650;
   margin: 0;
 }
+.sf-card .sd-card-body p + p { font-size: 0.85em; margin: 0.2rem 0 0; }
 .sf-vendor-card { transition: transform 0.12s ease, box-shadow 0.12s ease; }
 .sf-vendor-card:hover { transform: translateY(-2px); }
 
