@@ -32,6 +32,7 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
     "sphinxcontrib.wavedrom",
+    "list_tables",
     "spiflash_pages",
     "alias_pages",
 ]
