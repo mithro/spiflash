@@ -22,6 +22,7 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 | {sfsrc}`linux` | what {upstream}`linux:drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default; the `no_sfdp_flags` (dual, quad and octal read, 4 KiB erase); sector and chip erase; and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
 | {sfsrc}`u-boot` | the same from its {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | {sfsrc}`dediprog` | the id command, and the opcodes its entry packs into `ReadCmd`, `ProgramCmd` and `EraseCmd`: the single-line read and page program, and the chip, block and die erase (SPI NOR only) |
+| {sfsrc}`mediatek` | none: its table is SPI NAND only, and the read-from-cache and program-load modes each entry allows (x1, x2, x4, dual and quad I/O) are kept in the record's `flags` |
 | {sfsrc}`openocd` | the columns of its table: read, fastest read, page program, sector erase and chip erase |
 | {sfsrc}`openfpgaloader` | what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
 | {sfsrc}`imsprog` | what its {upstream}`imsprog:IMSProg_programmer/spi_nor_flash.c` sends to a SPI NOR part: read, page program (in 256-byte pages) and the 0xd8 block erase (at every 64 KiB, whatever the part's blocks; it never sends a chip erase), and above 16 MiB the way the entry says to enter 4-byte addressing (`EN4B`, Winbond's, or Spansion's bank register) |

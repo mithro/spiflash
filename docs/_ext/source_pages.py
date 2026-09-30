@@ -59,6 +59,10 @@ SUMMARY = {
         "The chip database of Dediprog's SF100 and SF600 programmers: the largest "
         "table here, SPI NOR and SPI NAND, kept by the programmer maker."
     ),
+    Source.MEDIATEK: (
+        "The SPI NAND driver of MediaTek's OpenWrt U-Boot: the parts its routers boot "
+        "from, with each one's page, spare area, planes and dies."
+    ),
     Source.OPENOCD: (
         "The on-chip debugger's table of SPI flash for its flash drivers, with "
         "opcodes per part, and its copy of JEDEC's JEP106 list."
@@ -87,6 +91,7 @@ PARSERS = {
     Source.LINUX: ("tools/spiflash_extract/linux.py",),
     Source.UBOOT: ("tools/spiflash_extract/uboot.py",),
     Source.DEDIPROG: ("tools/spiflash_extract/dediprog.py",),
+    Source.MEDIATEK: ("tools/spiflash_extract/mediatek.py",),
     Source.OPENOCD: ("tools/spiflash_extract/openocd.py",),
     Source.OPENFPGALOADER: ("tools/spiflash_extract/openfpgaloader.py",),
     Source.IMSPROG: ("tools/spiflash_extract/imsprog.py",),
