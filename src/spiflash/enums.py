@@ -19,12 +19,16 @@ class Source(StrEnum):
     1. flashrom and flashprog: their entries are per part, tested on
        hardware, and carry the most detail.
     2. Linux, then U-Boot, which kept Linux's older table format.
-    3. OpenOCD and openFPGALoader: their tables are the smallest and the
+    3. Dediprog: a programmer maker's own table, per part and large, but
+       not reviewed in the open, with mistakes the others' reviews would
+       catch (ids under the wrong command, SPI NAND sizes counting the
+       spare area).
+    4. OpenOCD and openFPGALoader: their tables are the smallest and the
        least specific.
-    4. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
+    5. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
        boards emulate, though its SFDP dumps are the only complete ones any
        upstream has.
-    5. Zephyr: it has no table of parts, only boards describing the chip
+    6. Zephyr: it has no table of parts, only boards describing the chip
        each carries, whose values are written (and copied between boards)
        by each board's porter."""
 
@@ -32,6 +36,7 @@ class Source(StrEnum):
     FLASHPROG = "flashprog"
     LINUX = "linux"
     UBOOT = "u-boot"
+    DEDIPROG = "dediprog"
     OPENOCD = "openocd"
     OPENFPGALOADER = "openfpgaloader"
     QEMU = "qemu"
@@ -55,6 +60,7 @@ _SOURCE_LABELS = {
     Source.FLASHPROG: "flashprog",
     Source.LINUX: "Linux",
     Source.UBOOT: "U-Boot",
+    Source.DEDIPROG: "Dediprog",
     Source.OPENOCD: "OpenOCD",
     Source.OPENFPGALOADER: "openFPGALoader",
     Source.QEMU: "QEMU",
