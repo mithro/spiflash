@@ -66,6 +66,7 @@ def test_every_source_is_present() -> None:
         "linux",
         "u-boot",
         "dediprog",
+        "mediatek",
         "flashrom",
         "flashprog",
         "openocd",
@@ -268,9 +269,10 @@ def test_by_manufacturer_uses_any_spelling() -> None:
 def test_every_jedec_flash_has_a_name_and_manufacturer() -> None:
     for f in spiflash.flashes():
         assert f.names, f.id_hex
-        # Zephyr's devicetree often names no maker, and the id's first byte
-        # is not taken as naming one; every other source names one.
-        assert f.manufacturer or set(f.sources) == {Source.ZEPHYR}, f.id_hex
+        # Zephyr's devicetree often names no maker, and MediaTek's table
+        # never does, and the id's first byte is not taken as naming one;
+        # every other source names one.
+        assert f.manufacturer or set(f.sources) <= {Source.ZEPHYR, Source.MEDIATEK}, f.id_hex
 
 
 def test_vendor_spellings_all_canonical() -> None:
@@ -382,6 +384,9 @@ def test_sources_are_in_priority_order() -> None:
     # Dediprog's own table: after the reviewed ones, before the smallest.
     assert Source.UBOOT.priority < Source.DEDIPROG.priority < Source.OPENOCD.priority
     assert Source.DEDIPROG.label == "Dediprog"
+    # MediaTek's production driver: after Dediprog, before the smallest.
+    assert Source.DEDIPROG.priority < Source.MEDIATEK.priority < Source.OPENOCD.priority
+    assert Source.MEDIATEK.label == "MediaTek"
     # IMSProg below the curated tables: its format and some values came from
     # closed programmer databases.
     assert Source.OPENFPGALOADER.priority < Source.IMSPROG.priority < Source.QEMU.priority
