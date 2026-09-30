@@ -85,7 +85,7 @@ def chip_page(
     db: Database, f: Flash, vendor_slug: str, slugs: dict[int, str], issues: list[Issue]
 ) -> str:
     kind = "SPI NAND" if f.type == "nand" else "SPI NOR"
-    # In no toctree: see _chip_nav.
+    # In no toctree: see chip_nav.
     out = ["---\norphan: true\n---\n", f"# {esc(title_of(f))}\n"]
     out.append(
         " ".join(
@@ -735,19 +735,25 @@ def generate(srcdir: Path) -> dict[str, str]:
     return {f"chips/{slugs[id(f)]}": f"vendors/{vslug[vendor_of(f)]}" for f in db.flashes}
 
 
-#: Each chip page's vendor page, by docname (see :func:`_chip_nav`).
+#: Each chip page's vendor page, by docname (see :func:`chip_nav`).
 CHIP_VENDOR: dict[str, str] = {}
-#: The vendor pages' sidebars, by vendor and the theme's toctree() options.
-_VENDOR_NAV: dict[tuple[str, str], str] = {}
+#: The vendor pages' sidebars, by vendor, the directory of the page they
+#: are shown on, and the theme's toctree() options.
+_VENDOR_NAV: dict[tuple[str, str, str], str] = {}
 
 
-def _builder_inited(app: Sphinx) -> None:
+def set_chip_vendors(vendors: dict[str, str]) -> None:
+    """Sets each chip page's vendor page, by docname, for a build."""
     CHIP_VENDOR.clear()
-    CHIP_VENDOR.update(generate(Path(app.srcdir)))
+    CHIP_VENDOR.update(vendors)
     _VENDOR_NAV.clear()
 
 
-def _chip_nav(
+def _builder_inited(app: Sphinx) -> None:
+    set_chip_vendors(generate(Path(app.srcdir)))
+
+
+def chip_nav(
     app: Sphinx, pagename: str, _template: str, context: dict[str, Any], _doctree: Any
 ) -> None:
     """A chip page's sidebar is its vendor page's.
@@ -763,35 +769,44 @@ def _chip_nav(
         return
     builder = app.builder
     assert isinstance(builder, StandaloneHTMLBuilder)
+    page = builder.get_target_uri(pagename)
 
     def toctree(*, collapse: bool = True, **kwargs: Any) -> str:
         # As StandaloneHTMLBuilder._get_local_toctree, for the vendor page.
         kwargs.setdefault("includehidden", False)
         if kwargs.get("maxdepth") == "":
             kwargs.pop("maxdepth")
-        key = (vendor, repr(sorted({**kwargs, "collapse": collapse}.items())))
+        # Made once for each vendor and directory the links are relative to.
+        options = repr(sorted({**kwargs, "collapse": collapse}.items()))
+        key = (vendor, posixpath.dirname(page), options)
         if key not in _VENDOR_NAV:
             tree = global_toctree_for_doc(
                 builder.env, vendor, builder, tags=builder.tags, collapse=collapse, **kwargs
             )
             if tree is not None:
-                _rebase_links(tree, builder.get_target_uri(vendor))
+                _rebase_links(tree, builder.get_target_uri(vendor), page)
             _VENDOR_NAV[key] = builder.render_partial(tree)["fragment"]
         return _VENDOR_NAV[key]
 
     context["toctree"] = toctree
 
 
-def _rebase_links(tree: nodes.Element, vendor_uri: str) -> None:
-    """Makes the links of a vendor page's toctree, relative to that page,
-    relative to a chip page: from ``vendors/`` to ``chips/``."""
+def _rebase_links(tree: nodes.Element, from_uri: str, to_uri: str) -> None:
+    """Makes the links of the page at ``from_uri``, relative to it, relative
+    to the page at ``to_uri`` (both as the builder names them: a vendor's
+    ``vendors/winbond.html`` and a chip's ``chips/ef4018.html``, say, or
+    ``vendors/winbond/`` and ``chips/ef4018/``)."""
+    here, there = posixpath.dirname(from_uri), posixpath.dirname(to_uri) or "."
     for ref in tree.findall(nodes.reference):
         uri = ref.get("refuri", "")
         if "://" in uri:
             continue
         path, hash_, anchor = uri.partition("#")
-        target = posixpath.normpath(posixpath.join("vendors", path)) if path else vendor_uri
-        ref["refuri"] = posixpath.relpath(target, "chips") + (hash_ + anchor if anchor else "")
+        target = posixpath.join(here, path) if path else from_uri
+        rebased = posixpath.relpath(posixpath.normpath(target), there)
+        if target.endswith("/"):
+            rebased += "/"
+        ref["refuri"] = rebased + (hash_ + anchor if anchor else "")
 
 
 class SpanRole(SphinxRole):
@@ -1043,7 +1058,7 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.connect("config-inited", _substitutions)
     app.connect("builder-inited", _builder_inited)
     # Before the theme's handler (500), which renders the sidebar.
-    app.connect("html-page-context", _chip_nav, priority=400)
+    app.connect("html-page-context", chip_nav, priority=400)
     app.add_role("sfid", SpanRole("sf-id"))
     app.add_role("sfop", SpanRole("sf-op"))
     app.add_role("sfyes", SpanRole("sf-yes"))
