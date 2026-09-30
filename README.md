@@ -13,11 +13,11 @@ merged from the flash tables of every project that keeps one:
 | [Dediprog](https://github.com/DediProgSW/SF100Linux) | [`ChipInfoDb.dedicfg`](https://github.com/DediProgSW/SF100Linux/blob/master/ChipInfoDb.dedicfg), the chip database of its SF100/SF600 programmers | 1873 (210 SPI NAND) |
 | [OpenOCD](https://github.com/openocd-org/openocd) | [`src/flash/nor/spi.c`](https://github.com/openocd-org/openocd/blob/master/src/flash/nor/spi.c), and [`src/helper/jep106.inc`](https://github.com/openocd-org/openocd/blob/master/src/helper/jep106.inc) for manufacturer names | 190 |
 | [openFPGALoader](https://github.com/trabucayre/openFPGALoader) | [`src/spiFlashdb.hpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlashdb.hpp) | 53 |
-| [IMSProg](https://github.com/bigbigmdm/IMSProg) | [`IMSProg_programmer/database/IMSProg.Dat`](https://github.com/bigbigmdm/IMSProg/blob/main/IMSProg_programmer/database/IMSProg.Dat), a binary table (SPI NOR and NAND only) | 585 (97 SPI NAND) |
+| [IMSProg](https://github.com/bigbigmdm/IMSProg) | [`IMSProg_programmer/database/IMSProg.Dat`](https://github.com/bigbigmdm/IMSProg/blob/main/IMSProg_programmer/database/IMSProg.Dat), a binary table (SPI NOR and NAND only) | 584 (96 SPI NAND) |
 | [QEMU](https://gitlab.com/qemu-project/qemu) | [`hw/block/m25p80.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80.c), and the SFDP dumps in [`hw/block/m25p80_sfdp.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80_sfdp.c) | 137 |
 | [Zephyr](https://github.com/zephyrproject-rtos/zephyr) | the devicetree of its [boards](https://github.com/zephyrproject-rtos/zephyr/tree/main/boards) and [SoCs](https://github.com/zephyrproject-rtos/zephyr/tree/main/dts): each flash node with a `jedec-id` | 99 |
 
-Together that is 1300 distinct chip ids (1055 SPI NOR, 245 SPI NAND) from 65
+Together that is 1299 distinct chip ids (1055 SPI NOR, 244 SPI NAND) from 65
 manufacturers, 773 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
 from, and where the sources disagree (87 ids do) both answers are kept.
