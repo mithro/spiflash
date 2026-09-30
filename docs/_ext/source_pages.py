@@ -103,6 +103,13 @@ PARSERS = {
     ),
 }
 
+#: Where a source's id methods are its table's labels, not how it reads.
+ID_METHOD_CAVEATS = {
+    Source.MEDIATEK: (
+        "as each entry labels it: the driver tries every entry with the dummy byte and without"
+    ),
+}
+
 #: What every parser shares: the C evaluator, the opcodes, the record
 #: schema, the fetching, and the script running them.
 SHARED = (
@@ -227,6 +234,7 @@ def _taken(source: Source, records: list[Record], chips: list[Flash]) -> list[st
             ", ".join(
                 f"[`{m}`](../opcodes/{ID_OPERATION[m]}.md) {n:,}" for m, n in methods.most_common()
             )
+            + (f" ({ID_METHOD_CAVEATS[source]})" if source in ID_METHOD_CAVEATS else "")
             + (f"; {no_id:,} entries have no id, and are on no chip page" if no_id else ""),
         ],
         [

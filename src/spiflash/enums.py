@@ -26,8 +26,8 @@ class Source(StrEnum):
     4. MediaTek: a chip vendor's production driver, whose SPI NAND geometry
        (spare area, planes, dies) its boards boot from, per part; but SPI
        NAND only, not reviewed in the open, with entries its own others
-       contradict (one part under two ids) and id methods the driver does
-       not use.
+       contradict (one part under two ids) and id-method labels that decide
+       nothing (the driver tries every entry with a dummy byte and without).
     5. OpenOCD and openFPGALoader: their tables are the smallest and the
        least specific.
     6. IMSProg: a programmer's table of parts it reads, but every SPI NOR

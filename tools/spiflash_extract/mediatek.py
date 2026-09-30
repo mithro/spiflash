@@ -15,14 +15,18 @@ for a part of two dies, how to select a die::
 is the page size, the spare (OOB) size, pages per block, blocks per die,
 planes per die and dies. What each means is what ``mtk_snand_setup()`` in
 :upstream:`mediatek:drivers/mtd/mtk-snand/mtk-snand.c` does with it: the size
-is page x pages per block x blocks per die x dies, the main area only; the
-planes are not counted again (a two-plane part's blocks per die are all its
-blocks), and select which plane a page is in.
+is page x pages per block x blocks per die x dies, the main area only. The
+driver never reads the planes: a two-plane part's blocks per die are all
+its blocks, and ``mtk_snand_get_plane_address()`` takes the plane bit from
+the page address.
 
 ``mtk_snand_id_probe()`` sends 0x9f and a zero byte, then 0x9f alone, and
-matches both answers against every entry, first to last, whatever the
-entry's ``SNAND_ID_DYMMY`` (dummy byte) or ``SNAND_ID_ADDR`` (address byte):
-both are one enum value. The record's id method is the one the entry names.
+matches both answers against the entries, first to last.
+``snand_flash_id_lookup()`` compares the entry's id type, but both probes
+pass ``SNAND_ID_DYMMY`` and every entry's type is that same value
+(``SNAND_ID_ADDR`` is defined as it), so the label decides nothing: every
+entry is tried with and without the dummy byte. The record's id method is
+the one the entry names.
 
 The table names no vendor; the records name none. Left out, and counted by
 :func:`skipped`, are the entries in :data:`WRONG`. Anything else it does not

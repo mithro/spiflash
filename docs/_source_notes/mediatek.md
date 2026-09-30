@@ -26,19 +26,29 @@ it (`mtk_snand_setup()` in
 {upstream}`mediatek:drivers/mtd/mtk-snand/mtk-snand.c`):
 
 - the size is page x pages per block x blocks per die x dies. The spare
-  area is not in it, and nor are the planes: a two-plane part's blocks per
-  die are all its blocks (the MT29F2G01AAAED's 2048), and the plane is one
-  bit of the page address;
+  area is not in it, and nor are the planes, which the driver never reads:
+  a two-plane part's blocks per die are all its blocks (the
+  MT29F2G01AAAED's 2048), and the plane is one bit of the page address,
+  set from the page number (`mtk_snand_get_plane_address()`). So a wrong
+  `planes_per_die` does not change the size: the MT29F1G01AAADD's is 1,
+  where its datasheet has 2 planes of 512 blocks;
 - the sector size is the erase block, page x pages per block, as
   {sfsrc}`linux` gives it;
 - the id is every byte the entry lists, the manufacturer's first.
   `mtk_snand_id_probe()` sends 0x9f and a zero byte, then 0x9f alone, and
-  compares each answer with every entry in turn, taking the first whose
-  bytes it starts with. An entry's `SNAND_ID_DYMMY` (a dummy byte) or
-  `SNAND_ID_ADDR` (an address byte) is one enum value, which the lookup does
-  not use; the record keeps it as `rdid_opcode_dummy` or `rdid_opcode_addr`,
-  as the entry names it. The GD5F4GQ4UCxIG is named with a dummy byte but
-  answers with none ({sfsrc}`linux`), and is found by the second read.
+  compares each answer with the entries in turn, taking the first whose
+  bytes it starts with.
+
+**The driver tries every entry both ways**, with the dummy byte and without.
+Each entry names a way, `SNAND_ID_DYMMY` (a dummy byte) or `SNAND_ID_ADDR`
+(an address byte), and the lookup compares it, but both probes pass
+`SNAND_ID_DYMMY` and every entry's type is that same value (`SNAND_ID_ADDR`
+is defined as it), so the label decides nothing. The records keep it, as
+`rdid_opcode_dummy` or `rdid_opcode_addr`, so the "Ids read with" counts on
+this page are the table's labels, not how the driver reads. One is wrong:
+the GD5F4GQ4UCxIG ({sfid}`c8 b4`) is labelled with a dummy byte, but its
+datasheet and {sfsrc}`linux` read it with none; the driver's second read
+finds it.
 
 Each entry's I/O modes are one of a few `SNAND_IO_CAP` tables: read from
 cache on one, two or four lines (x1, x2, x4), with the address on two or
