@@ -13,6 +13,7 @@ import pytest
 from spiflash_extract import (
     dts,
     flashrom,
+    imsprog,
     linux,
     openfpgaloader,
     openocd,
@@ -468,6 +469,75 @@ def test_openfpgaloader_no_map(tmp_path: Path) -> None:
     write(tmp_path, {openfpgaloader.DB: "int x;", openfpgaloader.FLASH_CPP: ""})
     with pytest.raises(ValueError, match="no flash_list"):
         openfpgaloader.extract(tmp_path)
+
+
+IMSPROG = FIXTURES / "imsprog"
+
+IMSPROG_DAT = (IMSPROG / imsprog.DAT).read_bytes()
+
+
+def test_imsprog() -> None:
+    recs = imsprog.extract(IMSPROG)
+    # Ten SPI NOR and NAND entries; the EEPROMs, FRAM and DataFlash after
+    # them are not taken, and the all-zero entry ends the table.
+    assert len(recs) == 10
+    r = by_name(recs)
+    s = r["S25FL256S"]
+    assert (s["file"], s["line"]) == (imsprog.DAT, 2)
+    assert s["vendor"] == "SPANSION"
+    assert s["id"] == "010219"
+    assert (s["size"], s["page_size"], s["sector_size"]) == (32 << 20, 256, 64 << 10)
+    assert s["features"] == ["4byte_addr", "erase_64k"]
+    assert s["erasers"] == [
+        {"opcode": 0xD8, "blocks": [[64 << 10, 512]]},
+        {"opcode": 0xC7, "blocks": [[32 << 20, 1]]},
+    ]
+    assert s["flags"] == ["addr4bit=0x21", "algorithmCode=0x00", "chipVCC=3.3 V", "delay=1000"]
+    # Spansion's 4-byte mode is a bank register; Winbond's also clears its
+    # extended address register on the way out.
+    assert set(ops(s)) == {"RDID", "READ_1_1_1", "PP_1_1_1", "SE", "CHIP_ERASE", "BRWR", "BRRD"}
+    assert "WREAR" in ops(r["EN25Q256"])
+    assert "EN4B" in ops(r["GD25LB512ME(1.8V)"])
+    assert set(ops(r["FL016AIF"])) == {"RDID", "READ_1_1_1", "PP_1_1_1", "SE", "CHIP_ERASE"}
+    assert r["XT25Q16D(1.8V)"]["flags"][2] == "chipVCC=1.8 V"
+    assert "delay=200" in r["EN25F10A"]["flags"]
+    assert r["PN25F08"]["vendor"] == "PARAGON"  # "PARAGON " upstream
+    # SPI NAND: 0x9f and a dummy byte, then three id bytes, of which a
+    # two-byte id repeats its first.
+    g = r["GD5F1GQ5UEXXG"]
+    assert (g["type"], g["id"], g["id_method"]) == ("nand", "c851", "rdid_opcode_dummy")
+    assert (g["size"], g["page_size"], g["sector_size"]) == (128 << 20, 2048, 128 << 10)
+    assert "ECCsize=128" in g["flags"]
+    assert g["opcodes"] == []
+    assert r["MX35LF1G24AD-Z41"]["id"] == "c21403"
+    assert r["F35SQA002G"]["id"] == "cd7272"
+
+
+def dat(tmp_path: Path, *entries: bytes) -> Path:
+    path = tmp_path / imsprog.DAT
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"".join(entries))
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("entry", "error"),
+    [
+        (IMSPROG_DAT[:0x43], "not a whole number"),
+        (b"SPI_NAND" + IMSPROG_DAT[8:0x44], "not a type, vendor and part"),
+        (IMSPROG_DAT[:0x43] + b"\x09", "unknown VCC"),
+        (IMSPROG_DAT[:0x3E] + b"\x02" + IMSPROG_DAT[0x3F:0x44], "unknown 4-byte"),
+        (IMSPROG_DAT[:0x40] + b"\x00" + IMSPROG_DAT[0x41:0x44], "no block size"),
+    ],
+)
+def test_imsprog_refuses(tmp_path: Path, entry: bytes, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        imsprog.extract(dat(tmp_path, entry))
+
+
+def test_imsprog_without_an_end_entry(tmp_path: Path) -> None:
+    (r,) = imsprog.extract(dat(tmp_path, IMSPROG_DAT[:0x44]))
+    assert r["name"] == "FL016AIF"
 
 
 def test_record_make_validates() -> None:
