@@ -136,6 +136,23 @@ def test_continuation_codes_are_optional() -> None:
     assert spiflash.jep106(0x1C, bank=1) == "Eon Silicon Devices"
 
 
+def test_bank_is_the_most_sources_then_the_higher() -> None:
+    # ATXP032 answers seven continuation codes, then 43 (OpenOCD); Dediprog
+    # leaves them out. A tie goes to the codes, which no upstream adds.
+    (atxp,) = spiflash.lookup("43a700")
+    assert atxp.jedec_id == "7f7f7f7f7f7f7f43a700"
+    db = Database(
+        [
+            rec(source="flashrom", id="1c7018"),
+            rec(source="linux", id="1c7018"),
+            rec(source="dediprog", id="7f1c7018"),
+            rec(source="dediprog", id="7f1c7018"),
+            rec(source="dediprog", id="7f1c7018"),
+        ]
+    )
+    assert db.flashes[0].bank == 0  # two sources to one, however many records
+
+
 def test_extended_id_narrows_variants() -> None:
     (everything,) = spiflash.lookup("012018")
     (s1,) = spiflash.lookup("01 20 18 4d 01 80")
