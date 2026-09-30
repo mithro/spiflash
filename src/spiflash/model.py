@@ -17,7 +17,7 @@ from .sfdp import parse as parse_sfdp
 from .vendors import canonical
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
 T = TypeVar("T")
 
@@ -321,18 +321,14 @@ def name_matches(pattern: str, query: str, *, prefix: bool = False) -> bool:
 
 
 def same_part(a: str, b: str) -> bool:
-    """Whether part names ``a`` and ``b`` name one part: the same name, or
-    it with a suffix (ZB35Q01B, ZB35Q01BYIG: package and grade), reading
-    flashrom's ``.`` and a datasheet's ``XX`` placeholder as any character
-    (GD5F1GQ5REXXG, GD5F1GQ5REYIG). A flashrom name's stem, before its
-    first ``.``, is the part too: S25FL128S......0 and S25FL128S_UL are
-    both S25FL128S parts."""
-    a, b = a.upper(), b.upper()
-    for x, y in ((a, b), (b, a)):
-        stem = x.split(".", 1)[0] if "." in x else ""
-        if name_matches(x.replace("XX", ".."), y, prefix=True) or (stem and y.startswith(stem)):
-            return True
-    return False
+    """Whether part names ``a`` and ``b`` name one part: they agree up to
+    the end of the shorter, so one may add a suffix (ZB35Q01B, ZB35Q01BYIG:
+    package and grade), and flashrom's ``.`` and a datasheet's ``XX``
+    placeholder match any character (GD5F1GQ5REXXG and GD5F1GQ5REYIG;
+    S25FL128S......0 and S25FL128S_UL). W25Q64.W (1.8 V) is not the W25Q64FV,
+    nor B.25D80A the BY25Q80BS."""
+    a, b = a.upper().replace("XX", ".."), b.upper().replace("XX", "..")
+    return all(x == y or "." in (x, y) for x, y in zip(a, b, strict=False))
 
 
 #: What :func:`name_distance` charges: an edit (a character changed, added,
@@ -432,6 +428,19 @@ class Flash:
     #: The manufacturer, where no record names one, inferred from the other
     #: sources' parts (see :func:`~spiflash.db.infer_manufacturer`).
     inferred_manufacturer: str | None = field(default=None, repr=False, compare=False)
+    #: For a chip narrowed by extended id (:meth:`with_ext_id`): its records
+    #: from the most specific to the least, each value taken from the first
+    #: layer that gives one. Empty: all the records are one layer.
+    layers: tuple[tuple[Record, ...], ...] = field(default=(), repr=False, compare=False)
+
+    def _value(self, get: Callable[[Record], T | None]) -> T | None:
+        """The value the sources agree on, from the most specific records
+        that give one (:attr:`layers`)."""
+        for layer in self.layers or (self.records,):
+            found = _consensus((get(r), r.source) for r in layer)
+            if found is not None:
+                return found
+        return None
 
     @property
     def key(self) -> str:
@@ -531,19 +540,19 @@ class Flash:
 
     @cached_property
     def size(self) -> int | None:
-        return _consensus((r.size, r.source) for r in self.records)
+        return self._value(lambda r: r.size)
 
     @cached_property
     def page_size(self) -> int | None:
-        return _consensus((r.page_size, r.source) for r in self.records)
+        return self._value(lambda r: r.page_size)
 
     @cached_property
     def sector_size(self) -> int | None:
-        return _consensus((r.sector_size, r.source) for r in self.records)
+        return self._value(lambda r: r.sector_size)
 
     @cached_property
     def voltage(self) -> Voltage | None:
-        return _consensus((r.voltage, r.source) for r in self.records)
+        return self._value(lambda r: r.voltage)
 
     @cached_property
     def features(self) -> frozenset[Feature]:
@@ -628,24 +637,31 @@ class Flash:
         (``"size"``, ``"page_size"``, ...): each extended id's value, as
         :meth:`with_ext_id` narrows the chip; ``{}`` where they agree. The
         GD5F1GQ5REYIG (``c8``) is 128 MiB and the F50L2G41KA (``7f``)
-        256 MiB, both at ``c8 41``."""
-        exts = sorted({r.ext_id for r in self.records if r.ext_id})
-        values = {e: getattr(self.with_ext_id(e), attribute) for e in exts}
+        256 MiB, both at ``c8 41``. The extended ids are those of
+        :attr:`variants`: a shorter one that starts longer ones is not a
+        part of its own. (A lookup narrows through
+        :meth:`Database.narrow <spiflash.db.Database.narrow>`, which only adds
+        the maker and the datasheets to these values.)"""
+        values = {e: getattr(self.with_ext_id(e), attribute) for e in self._part_ext_ids}
         return values if len(set(values.values()) - {None}) > 1 else {}
+
+    @cached_property
+    def _part_ext_ids(self) -> tuple[bytes, ...]:
+        """The extended ids that each stand for one part: all of them but a
+        shorter one that starts a longer one (4d 00, of 4d 00 80 and
+        4d 00 81), which covers several."""
+        given = {r.ext_id for r in self.records if r.ext_id}
+        return tuple(sorted(e for e in given if not any(o != e and o.startswith(e) for o in given)))
 
     @cached_property
     def variants(self) -> tuple[tuple[Record, ...], ...]:
         """The records, in groups that each describe one part: all of them,
         where no record has an extended id; otherwise those with none, and
         for each extended id what :meth:`with_ext_id` keeps for it."""
-        given = {r.ext_id for r in self.records if r.ext_id}
-        if not given:
+        if not self._part_ext_ids:
             return (self.records,)
-        # A shorter one that starts a longer covers several (4d 00, of
-        # 4d 00 80 and 4d 00 81): each longer one is a part.
-        exts = sorted(e for e in given if not any(o != e and o.startswith(e) for o in given))
         groups = [tuple(r for r in self.records if r.ext_id is None)]
-        groups += [self.with_ext_id(e).records for e in exts]
+        groups += [self.with_ext_id(e).records for e in self._part_ext_ids]
         return tuple(dict.fromkeys(g for g in groups if g))
 
     def with_ext_id(self, ext: bytes) -> Flash:
@@ -686,7 +702,16 @@ class Flash:
             for r in self.records
             if exact(r) or ((r.ext_id is None or agrees(r)) and not elsewhere(r))
         )
-        return replace(self, records=keep or self.records)
+        if not keep:
+            return self
+        # Each value from the records naming this variant exactly, then from
+        # the shorter extended ids that agree, then from those with none.
+        layers = (
+            tuple(r for r in keep if exact(r)),
+            tuple(r for r in keep if r.ext_id is not None and not exact(r)),
+            tuple(r for r in keep if r.ext_id is None),
+        )
+        return replace(self, records=keep, layers=tuple(la for la in layers if la))
 
     def to_json(self) -> dict[str, Any]:
         """A plain-JSON summary, as the ``spiflash`` command prints it."""

@@ -379,6 +379,36 @@ def test_shipped_ext_id_lookups_keep_the_other_sources() -> None:
     assert any("GD5F1GQ5RE" in d.url for d in gd.datasheets)
 
 
+def test_narrowed_values_come_from_the_most_specific_records() -> None:
+    # The S25FS128S is a 1.8 V part: the records at its own extended id say
+    # so, over the no-ext S25FL128S parts' 3 V.
+    assert spiflash.lookup("0120184d0081")[0].voltage == (1700, 2000)
+    assert spiflash.lookup("0120184d0181")[0].voltage == (1700, 2000)
+    # The S25FL256S0 has uniform 256 KiB sectors.
+    assert spiflash.lookup("0102194d0080")[0].sector_size == 256 << 10
+    # The S70FL01GS is 1 Gbit, whatever Dediprog's one-die S79FS01GS says.
+    assert spiflash.lookup("0102214d0080")[0].size == 128 << 20
+    # The records stay as broad as before, for display.
+    assert "S79FS01GS" in spiflash.lookup("0102214d0080")[0].names
+
+
+def test_parts_that_differ_by_ext_id() -> None:
+    differ = {
+        (f.key, attr)
+        for f in spiflash.flashes()
+        for attr in ("size", "page_size", "sector_size", "voltage")
+        if f.by_ext_id(attr)
+    }
+    assert differ == {
+        ("010219", "sector_size"),  # 4d 00 xx: 256 KiB sectors; 4d 01 xx: 64 KiB
+        ("010220", "sector_size"),  # U-Boot's S25FL512S_64K at 4d 01
+        ("010220", "voltage"),  # the 1.8 V S25FS512S
+        ("012018", "sector_size"),
+        ("012018", "voltage"),  # flashrom's 1.7-2.0 V S25FL128S_UL/US, an issue
+        ("c841", "size"),  # the GD5F1GQ5RE and the F50L2G41KA
+    }
+
+
 def test_by_ext_id() -> None:
     (f,) = spiflash.lookup("c841", flash_type="nand")
     assert f.by_ext_id("size") == {bytes.fromhex("7f"): 256 << 20, bytes.fromhex("c8"): 128 << 20}
@@ -391,11 +421,16 @@ def test_same_part() -> None:
         ("ZB35Q01B", "ZB35Q01BYIG"),
         ("GD5F1GQ5REXXG", "GD5F1GQ5REYIG"),
         ("S25FL128S......1", "S25FL128SAGMFI011"),
-        ("S25FL128S......0", "S25FL128S_UL"),  # the stem
+        ("S25FL128S......0", "S25FL128S_UL"),  # dots over the length they share
     ]:
         assert same_part(a, b), (a, b)
         assert same_part(b, a), (b, a)
-    for a, b in [("F50L2G41KA", "GD5F1GQ5REXXG"), ("MX25L6433F", "MX25L6435F")]:
+    for a, b in [
+        ("F50L2G41KA", "GD5F1GQ5REXXG"),
+        ("MX25L6433F", "MX25L6435F"),
+        ("W25Q64.W", "W25Q64FV"),  # the 1.8 V pattern, not the 3 V part
+        ("B.25D80A", "BY25Q80BS"),  # not every Boya part
+    ]:
         assert not same_part(a, b), (a, b)
         assert not same_part(b, a), (b, a)
 
