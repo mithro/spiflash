@@ -10,6 +10,12 @@ build:
     # version the site shows.
     post_checkout:
       - git fetch --unshallow --tags || true
+    # In parallel, as CI builds it (.github/workflows/docs.yml): one process
+    # runs past Read the Docs' 15 minute limit now that the site has a page
+    # for each of some 1,200 chips.
+    build:
+      html:
+        - python -m sphinx -T -W --keep-going -j auto -b html -d _build/doctrees docs $READTHEDOCS_OUTPUT/html
 
 python:
   install:
