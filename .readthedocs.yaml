@@ -10,11 +10,6 @@ build:
     # version the site shows.
     post_checkout:
       - git fetch --unshallow --tags || true
-    # The default build is serial, and with a page per chip it no longer fits
-    # the 15-minute limit; this is the default command with -j auto added.
-    build:
-      html:
-        - python -m sphinx -T -W --keep-going -j auto -b html -d _build/doctrees -D language=en docs $READTHEDOCS_OUTPUT/html
 
 python:
   install:

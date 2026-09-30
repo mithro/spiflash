@@ -940,24 +940,7 @@ def _substitutions(app: Sphinx, config: Config) -> None:
     config.myst_substitutions = {**numbers, "version": app.config.release}
 
 
-#: How deep the sidebar goes: to the vendor pages, not the chips under them.
-SIDEBAR_DEPTH = 2
-
-
-def _shallow_sidebar(
-    _app: Sphinx, _pagename: str, _template: str, context: dict[str, Any], _doctree: Any
-) -> None:
-    """Cut the sidebar at :data:`SIDEBAR_DEPTH`. Furo draws the whole toctree
-    on every page, and with a page per chip that is most of the build's time
-    (and of every page's size)."""
-    toctree = context.get("toctree")
-    if toctree is not None:
-        context["toctree"] = lambda **kw: toctree(**{**kw, "maxdepth": SIDEBAR_DEPTH})
-
-
 def setup(app: Sphinx) -> dict[str, Any]:
-    # Before Furo's own handler (at the default 500), which builds its sidebar.
-    app.connect("html-page-context", _shallow_sidebar, priority=400)
     app.connect("config-inited", _substitutions)
     app.connect("builder-inited", lambda app: generate(Path(app.srcdir)))
     app.add_role("sfid", SpanRole("sf-id"))
