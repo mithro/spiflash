@@ -48,3 +48,10 @@ def test_the_own_source_ring_does_not_follow_the_text() -> None:
     assert "0 0 0 4px var(--sf-ring)" in mine
     assert "currentColor" not in mine
     assert "--sf-ring: #fff;" in css
+
+
+def test_a_card_says_when_parts_differ() -> None:
+    text = page("c841")
+    card = text[text.index("{grid-item-card} Capacity") : text.index("{grid-item-card} Page")]
+    assert "[Differs by part](#extended-ids)" in card
+    assert "Differs by part" not in page("c952")

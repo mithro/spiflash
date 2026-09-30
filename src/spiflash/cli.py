@@ -72,6 +72,10 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             f"{tuple(v) if isinstance(v, tuple) else v} ({', '.join(s)})" for v, s in vals.items()
         )
         lines.append(f"    sources disagree on {attr}: {said}")
+    for attr in ("size", "page_size", "sector_size"):
+        if parts := f.by_ext_id(attr):
+            said = ", ".join(f"{human_size(v)} ({e.hex()})" for e, v in parts.items() if v)
+            lines.append(f"    parts differ on {attr} by ext id: {said}")
     if verbose:
         for r in f.records:
             ext = f" ext {r.ext_id.hex()}" if r.ext_id else ""

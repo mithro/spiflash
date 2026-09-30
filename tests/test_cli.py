@@ -281,3 +281,11 @@ def test_sfdp_garbage() -> None:
 
 def test_sfdp_summary() -> None:
     assert cli.sfdp_summary(parse(W25Q512JV)) == "JESD216B (BFPT 1.6, 4BAIT 1.0)"
+
+
+def test_id_says_where_parts_differ_by_ext_id(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "--type", "nand", "c841")
+    assert "    parts differ on size by ext id: 256 MiB (7f), 128 MiB (c8)\n" in out
+    _, out = run(capsys, "id", "--type", "nand", "c8417f")
+    assert "parts differ" not in out
+    assert "datasheet:" not in out  # GigaDevice's is not the F50L2G41KA's

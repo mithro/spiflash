@@ -120,14 +120,19 @@ def chip_page(
 
 def _summary_cards(f: Flash) -> list[str]:
     cards = [
-        ("Capacity", size_text(f.size)),
-        ("Page", size_text(f.page_size)),
-        ("Sector", size_text(f.sector_size)),
-        ("Supply", volts(f.voltage)),
+        ("Capacity", "size"),
+        ("Page", "page_size"),
+        ("Sector", "sector_size"),
     ]
     out = ["::::{grid} 2 2 4 4\n:gutter: 2\n:class-container: sf-cards\n"]
-    for label, value in cards:
+    for label, attr in cards:
+        value = size_text(getattr(f, attr))
+        # Parts an extended id tells apart differ on it: each's is in the
+        # Extended ids table.
+        if f.by_ext_id(attr):
+            value += "\n\n[Differs by part](#extended-ids)"
         out.append(f":::{{grid-item-card}} {label}\n:class-card: sf-card\n\n{value}\n:::")
+    out.append(f":::{{grid-item-card}} Supply\n:class-card: sf-card\n\n{volts(f.voltage)}\n:::")
     out.append("::::\n")
     return out
 
