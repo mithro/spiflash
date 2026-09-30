@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any
 from docutils import nodes
 from sphinx.builders.html import StandaloneHTMLBuilder
 from sphinx.environment.adapters.toctree import global_toctree_for_doc
-from sphinx.transforms.post_transforms import SphinxPostTransform
 from sphinx.util.docutils import SphinxRole
 from sphinx.util.nodes import split_explicit_title
 
@@ -76,6 +75,7 @@ if TYPE_CHECKING:
 
     from sphinx.application import Sphinx
     from sphinx.config import Config
+    from sphinx.writers.html5 import HTML5Translator
 
     from spiflash import Database, Flash, Record, SfdpDump
 
@@ -809,6 +809,40 @@ class SpanRole(SphinxRole):
         return [nodes.reference(self.rawtext, "", span, refuri=target)], []
 
 
+class SourceBadge(nodes.inline):
+    """A source's label from ``{sfsrc}``: one node, where a link and a span
+    for the label and for each of its lines made four or more, so the pages'
+    thousands of labels read, resolve and write faster. ``node["lines"]`` is
+    its text; ``node["sfsource"]``, if set, the source whose page it links
+    to (the link is made when the page is written, relative to it)."""
+
+
+def _in_link(node: nodes.Node) -> bool:
+    parent = node.parent
+    while parent is not None:
+        if isinstance(parent, nodes.reference):
+            return True
+        parent = parent.parent
+    return False
+
+
+def visit_source_badge(self: HTML5Translator, node: SourceBadge) -> None:
+    # Not in a link already, such as a heading's entry in the sidebar.
+    source = None if _in_link(node) else node.get("sfsource")
+    if source:
+        builder = self.builder
+        uri = builder.get_relative_uri(builder.current_docname, f"sources/{page_name(source)}")
+        title = self.attval(f"About {source_label(source)}")
+        self.body.append(
+            f'<a class="sf-src-link reference external" href="{self.attval(uri or "#")}" '
+            f'title="{title}">'
+        )
+    self.body.append(self.starttag(node, "span", ""))
+    self.body += [f"<span>{self.encode(line)}</span>" for line in node["lines"]]
+    self.body.append("</span></a>" if source else "</span>")
+    raise nodes.SkipNode
+
+
 class SourceRole(SphinxRole):
     """``{sfsrc}`linux``` as a coloured label naming the source, linked to
     its page. A count and a link are optional: ``{sfsrc}`linux <count>
@@ -827,22 +861,11 @@ class SourceRole(SphinxRole):
         classes = ["sf-src", f"sf-src-{slug(source)}"] + (["sf-src-mine"] if self.mine else [])
         if len(lines) > 1:
             classes.append("sf-src-split")
-        badge = nodes.inline(self.rawtext, "", classes=classes)
-        badge += [nodes.inline(line, line) for line in lines]
-        out: list[nodes.Node] = [badge]
+        text = [nodes.Text(line) for line in lines]
+        badge = SourceBadge(self.rawtext, "", *text, classes=classes, lines=lines)
         if source in set(Source):
-            # SourcePageLinks sets the link once the page's own URL is known.
-            out = [
-                nodes.reference(
-                    self.rawtext,
-                    "",
-                    badge,
-                    refuri="#",
-                    classes=["sf-src-link"],
-                    reftitle=f"About {source_label(source)}",
-                    sfsource=source,
-                )
-            ]
+            badge["sfsource"] = source
+        out: list[nodes.Node] = [badge]
         if has_link:
             up = nodes.reference("", UP_ARROW, refuri=target, classes=["sf-src-up"])
             up["reftitle"] = f"Open in {source_label(source)}"
@@ -850,17 +873,17 @@ class SourceRole(SphinxRole):
         return out, []
 
 
-class SourcePageLinks(SphinxPostTransform):
-    """Points each source label at its page, relative to the page it is on."""
+class Number(nodes.inline):
+    """A number from ``{sfnum}``: one node, where a span for each part made
+    up to a dozen (see :class:`SourceBadge`). ``node["parts"]`` is its
+    parts, ``(css class, text)``."""
 
-    default_priority = 5
 
-    def run(self, **_: Any) -> None:
-        for ref in self.document.findall(nodes.reference):
-            if source := ref.get("sfsource"):
-                ref["refuri"] = self.app.builder.get_relative_uri(
-                    self.env.docname, f"sources/{page_name(source)}"
-                )
+def visit_number(self: HTML5Translator, node: Number) -> None:
+    self.body.append(self.starttag(node, "span", ""))
+    self.body += [f'<span class="{css}">{self.encode(text)}</span>' for css, text in node["parts"]]
+    self.body.append("</span>")
+    raise nodes.SkipNode
 
 
 class NumberRole(SphinxRole):
@@ -885,10 +908,10 @@ class NumberRole(SphinxRole):
             return [nodes.inline(self.rawtext, self.text, classes=["sf-num"])], []
         unit = m["unit"] or ""
         kind = "volt" if unit == "V" else "plain" if not unit else "size"
-        number = nodes.inline(self.rawtext, "", classes=["sf-num", f"sf-num-{kind}"])
+        parts: list[tuple[str, str]] = []
 
         def part(text: str, css: str) -> None:
-            number.append(nodes.inline(text, text, classes=[css]))
+            parts.append((css, text))
 
         if m["count"]:
             part(m["count"], "sf-n-count")
@@ -904,7 +927,9 @@ class NumberRole(SphinxRole):
         if unit:
             # A missing value keeps the unit's room but not its text.
             part("" if m["a"] == "\u2014" else f" {unit}", "sf-n-unit")
-        return [number], []
+        text = "".join(t for _, t in parts)
+        classes = ["sf-num", f"sf-num-{kind}"]
+        return [Number(self.rawtext, text, classes=classes, parts=parts)], []
 
 
 class MoreRole(SphinxRole):
@@ -1011,8 +1036,9 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_role("sfsub", SpanRole("sf-sub"))
     app.add_role("sfsrc", SourceRole())
     app.add_role("sfsrcme", SourceRole(mine=True))
-    app.add_post_transform(SourcePageLinks)
+    app.add_node(SourceBadge, html=(visit_source_badge, None))
     app.add_role("sfnum", NumberRole())
+    app.add_node(Number, html=(visit_number, None))
     app.add_role("sfmore", MoreRole())
     app.add_role("repo", RepoRole())
     app.add_role("upstream", UpstreamRole())
