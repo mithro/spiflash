@@ -71,6 +71,10 @@ SUMMARY = {
         "A tool for programming FPGAs and their configuration flash; its table gives "
         "each part's block-protection layout."
     ),
+    Source.IMSPROG: (
+        "A programmer for CH341A, CH347 and FT232H adapters; its binary chip database "
+        "has many parts no other source lists."
+    ),
     Source.QEMU: (
         "The emulator's SPI NOR flash model: the parts its boards emulate, and "
         "complete SFDP dumps for thirteen of them."
@@ -90,6 +94,7 @@ PARSERS = {
     Source.ROCKCHIP: ("tools/spiflash_extract/rockchip.py",),
     Source.OPENOCD: ("tools/spiflash_extract/openocd.py",),
     Source.OPENFPGALOADER: ("tools/spiflash_extract/openfpgaloader.py",),
+    Source.IMSPROG: ("tools/spiflash_extract/imsprog.py",),
     Source.QEMU: ("tools/spiflash_extract/qemu.py", "src/spiflash/sfdp.py"),
     Source.ZEPHYR: (
         "tools/spiflash_extract/zephyr.py",
@@ -338,7 +343,7 @@ def _entries(db: Database, records: list[Record], slugs: dict[int, str]) -> list
             "Vendor": vendor_link(vendor_of(f)) if f else esc(r.vendor or EM_DASH),
             # The line in the title too: GitHub shows some files (Dediprog's)
             # without line anchors.
-            "Name": f'[{esc(r.name)}](<{link}> "{r.file}:{r.line}")' if link else esc(r.name),
+            "Name": f'[{esc(r.name)}](<{link}> "{r.url}")' if link else esc(r.name),
             "Type": "NAND" if r.type == FlashType.NAND else "NOR",
             "Ext. id": f"{{sfid}}`{spaced(r.ext_id.hex())}`" if r.ext_id else EM_DASH,
             "Size": size_text(r.size),
@@ -395,10 +400,10 @@ def source_page(db: Database, source: Source, slugs: dict[int, str], issues: lis
         f"{{sfsrcme}}`{source}`",
         badge(f"{len(records):,} entries", "primary"),
         badge(f"{len(chips):,} chip ids", "primary"),
-        badge(f"{nor:,} SPI NOR", "info"),
+        badge(f"{nor:,} SPI NOR ids", "info"),
     ]
     if len(chips) > nor:
-        counts.append(badge(f"{len(chips) - nor:,} SPI NAND", "info"))
+        counts.append(badge(f"{len(chips) - nor:,} SPI NAND ids", "info"))
     return "\n".join(
         [
             f"# {esc(source_label(source))}\n",

@@ -1,8 +1,8 @@
 """A database of SPI flash chips, merged from the tables in flashrom,
-flashprog, Linux, U-Boot, Dediprog, Rockchip, OpenOCD, openFPGALoader and
-QEMU, and the flash chips Zephyr's boards describe, with the SFDP (JESD216)
-tables of the parts QEMU has them for (:mod:`spiflash.sfdp` decodes those,
-and any other dump).
+flashprog, Linux, U-Boot, Dediprog, Rockchip, OpenOCD, openFPGALoader,
+IMSProg and QEMU, and the flash chips Zephyr's boards describe, with the
+SFDP (JESD216) tables of the parts QEMU has them for (:mod:`spiflash.sfdp`
+decodes those, and any other dump).
 
 >>> import spiflash
 >>> [f.manufacturer for f in spiflash.lookup("ef4018")]

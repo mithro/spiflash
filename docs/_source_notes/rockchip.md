@@ -72,7 +72,7 @@ such as Macronix's MX35LF2GE4AD (`c2 26 03`, where Rockchip matches
 `c2 26`) and Foresee's F35SQA001G (`cd 71 71`). Such a shorter id is folded
 into the longer one when exactly one longer SPI NAND id starts with it, and
 it names the same part. The chip page lists it as matched on its first
-bytes, and a lookup finds the chip by either id. Seventeen of Rockchip's ids
+bytes, and a lookup finds the chip by either id. Twenty of Rockchip's ids
 fold this way.
 
 The driver takes the first entry an id matches. A later entry for the same

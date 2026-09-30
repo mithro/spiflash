@@ -29,10 +29,14 @@ class Source(StrEnum):
        with entries the driver never reaches (a second entry for an id).
     5. OpenOCD and openFPGALoader: their tables are the smallest and the
        least specific.
-    6. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
+    6. IMSProg: a programmer's table of parts it reads, but every SPI NOR
+       entry has the same page and block size, and its format (and some of
+       its values) came from the closed databases of commercial programmers
+       (EZP2019 to EZP2023, Minipro, XP866+), which cannot be checked.
+    7. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
        boards emulate, though its SFDP dumps are the only complete ones any
        upstream has.
-    7. Zephyr: it has no table of parts, only boards describing the chip
+    8. Zephyr: it has no table of parts, only boards describing the chip
        each carries, whose values are written (and copied between boards)
        by each board's porter."""
 
@@ -44,6 +48,7 @@ class Source(StrEnum):
     ROCKCHIP = "rockchip"
     OPENOCD = "openocd"
     OPENFPGALOADER = "openfpgaloader"
+    IMSPROG = "imsprog"
     QEMU = "qemu"
     ZEPHYR = "zephyr"
 
@@ -69,6 +74,7 @@ _SOURCE_LABELS = {
     Source.ROCKCHIP: "Rockchip",
     Source.OPENOCD: "OpenOCD",
     Source.OPENFPGALOADER: "openFPGALoader",
+    Source.IMSPROG: "IMSProg",
     Source.QEMU: "QEMU",
     Source.ZEPHYR: "Zephyr",
 }

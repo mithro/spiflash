@@ -31,6 +31,7 @@ _ALIASES = {
     "byte semiconductor": "Boya",  # Boya's BY25Q parts, with its 0x68 id
     "cfeon/eon": "Eon",
     "chuangfeixin": "Chuangfeixin",
+    "cxf": "CXF",
     "cyp": "Cypress",
     "cypress": "Cypress",
     "dosilicon": "Dosilicon",
@@ -40,6 +41,7 @@ _ALIASES = {
     "esmt": "ESMT",
     "etron": "Etron",
     "everspin": "Everspin",
+    "excelsemi": "ESI",  # Excel Semiconductor Inc.
     "fidelix": "Fidelix",
     "foresee": "FORESEE",
     "fremont": "Fremont",
@@ -51,6 +53,7 @@ _ALIASES = {
     "gd": "GigaDevice",
     "generalplus": "Generalplus",
     "genitop": "Genitop",
+    "giantec": "Giantec",
     "giantec semiconductor": "Giantec",
     "gigadevice": "GigaDevice",
     "hed": "HED",
@@ -72,12 +75,17 @@ _ALIASES = {
     "micron(numonyx)": "Micron",
     "micron/numonyx/st": "Micron",
     "mt35xu": "Micron",  # U-Boot's CONFIG_SPI_FLASH_MT35XU block
+    "mxic": "Macronix",
     "mxicy": "Macronix",  # Macronix's devicetree vendor prefix (Zephyr)
     "nantronics": "Nantronics",
+    "nantronix": "Nantronics",
     "neumem": "NeuMem",
     "nor-mem": "Nor-Mem",
     "on semiconductor": "ON Semiconductor",
+    "onsemi": "ON Semiconductor",
     "paragon": "Paragon",
+    "pct": "PCT",
+    "pflash": "PMC",  # PMC's name for its Pm25 serial flash
     "pmc": "PMC",
     "puya": "Puya",
     "renesas": "Renesas",
@@ -95,6 +103,7 @@ _ALIASES = {
     "terra semiconductor": "Terra Semiconductor",
     "toshiba": "Toshiba",
     "tsingteng": "Tsingteng",
+    "ucundata": "UCUNDATA",
     "unionchip": "UnionChip",
     "westberry": "Westberry",
     "win": "Winbond",
@@ -105,6 +114,7 @@ _ALIASES = {
     "xtx": "XTX",
     "xtx technology": "XTX",
     "xtx technology limited": "XTX",
+    "yuchuang": "Yuchuang",
     "yxsc": "YXSC",
     "zbit": "Zbit",
     "zbit semiconductor": "Zbit",

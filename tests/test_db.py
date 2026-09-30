@@ -71,6 +71,7 @@ def test_every_source_is_present() -> None:
         "flashprog",
         "openocd",
         "openfpgaloader",
+        "imsprog",
         "qemu",
         "zephyr",
         "jep106",
@@ -111,6 +112,7 @@ def test_w25q128() -> None:
         "rockchip",
         "openocd",
         "openfpgaloader",
+        "imsprog",
         "zephyr",
     }
     assert f.type == "nor"
@@ -287,7 +289,6 @@ def test_every_jedec_flash_has_a_name_and_manufacturer() -> None:
 # Rockchip's clones and makers no other source lists, and a Zephyr board's
 # misread MX25L12833F.
 NO_MANUFACTURER = {
-    "1c4018",  # GM25Q128A, on Eon's id
     "3cd2",  # HSESYHDSW2G
     "52ba13",  # GSS01GSAK1, on Alliance Memory's id
     "52ba23",
@@ -360,6 +361,11 @@ def test_nand_ids_fold_into_the_longer_id_of_the_same_part() -> None:
     # Found by either id, and by the longer one first.
     assert db.lookup("c226") == [f]
     assert db.lookup("c22603") == [f]
+    # Ids each starting the next all go into the longest (F50L1G41LB's
+    # c8 01, c8 01 7f and c8 01 7f 7f 7f).
+    line = Database([rec_at("c801", "P1"), rec_at("c8017f", "P1"), rec_at("c8017f7f7f", "P1")])
+    assert [x.id_hex for x in line.flashes] == ["c8017f7f7f"]
+    assert len(line.flashes[0].ids) == 3
     # A name with a suffix is the same part (ZB35Q01B, ZB35Q01BYIG).
     suffix = Database([rec_at("5ea1", "ZB35Q01BYIG"), rec_at("5ea1a1", "ZB35Q01B")])
     assert [x.id_hex for x in suffix.flashes] == ["5ea1a1"]
@@ -368,7 +374,7 @@ def test_nand_ids_fold_into_the_longer_id_of_the_same_part() -> None:
 @pytest.mark.parametrize(
     "records",
     [
-        # Two longer ids start with it: which is it?
+        # Two longer ids start with it, neither the start of the other.
         [rec_at("c226", "P1"), rec_at("c22603", "P1"), rec_at("c22604", "P1")],
         # The names differ: two parts.
         [rec_at("c226", "P1"), rec_at("c22603", "P2")],
@@ -491,6 +497,9 @@ def test_sources_are_in_priority_order() -> None:
     # Dediprog's own table: after the reviewed ones, before the smallest.
     assert Source.UBOOT.priority < Source.DEDIPROG.priority < Source.OPENOCD.priority
     assert Source.DEDIPROG.label == "Dediprog"
+    # IMSProg below the curated tables: its format and some values came from
+    # closed programmer databases.
+    assert Source.OPENFPGALOADER.priority < Source.IMSPROG.priority < Source.QEMU.priority
     # QEMU, then Zephyr last: board descriptions, not a curated table of parts.
     assert list(Source)[-2:] == [Source.QEMU, Source.ZEPHYR]
     assert Source.QEMU.label == "QEMU"
@@ -675,6 +684,11 @@ def test_link_to_the_upstream_line() -> None:
     # flashprog lives on Gerrit; links go to its GitHub mirror.
     assert db.link(by_source["flashprog"]).startswith(
         "https://github.com/SourceArcade/flashprog/blob/"
+    )
+    # IMSProg's table is a binary file: the link is to the file.
+    assert db.link(by_source["imsprog"]) == (
+        f"https://github.com/bigbigmdm/IMSProg/blob/{db.sources['imsprog'].commit}"
+        "/IMSProg_programmer/database/IMSProg.Dat"
     )
     assert Database([rec()]).link(rec()) is None  # no sources known
     elsewhere = SourceInfo(

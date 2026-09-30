@@ -44,6 +44,18 @@
    "records": 512,
    "url": "https://github.com/flashrom/flashrom"
   },
+  "imsprog": {
+   "branch": "main",
+   "browse": "https://github.com/bigbigmdm/IMSProg",
+   "commit": "9f7d14ec9e7f6b4e7d1508bd45bd4a946c292779",
+   "date": "2026-09-30T09:34:28+03:00",
+   "license": "GPL-3.0-or-later",
+   "paths": [
+    "IMSProg_programmer/database/IMSProg.Dat"
+   ],
+   "records": 584,
+   "url": "https://github.com/bigbigmdm/IMSProg"
+  },
   "jep106": {
    "branch": "master",
    "browse": "https://github.com/openocd-org/openocd",

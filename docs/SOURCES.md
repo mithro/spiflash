@@ -18,7 +18,8 @@ Facts about chips:
 - its other opcodes ({sfsrc}`openocd`, {sfsrc}`dediprog`'s command words,
   {sfsrc}`rockchip`'s quad read and program, and the SFDP
   tables {sfsrc}`zephyr`'s boards copy);
-- its supply voltage range ({sfsrc}`flashrom`, {sfsrc}`flashprog`);
+- its supply voltage range ({sfsrc}`flashrom`, {sfsrc}`flashprog`), and the
+  nominal supply {sfsrc}`imsprog` gives, among its `flags`;
 - the names of the capability flags each upstream sets, and each upstream's
   test status;
 - from {sfsrc}`qemu`, the SFDP
@@ -39,7 +40,10 @@ description {sfsrc}`dediprog` gives a part, each traceable to its file and
 line through the record's `file` and `line`.
 
 The package is Apache-2.0, as are the files read from {sfsrc}`openfpgaloader` and
-{sfsrc}`zephyr`; the others are GPL (the table above gives each licence). Whether a
+{sfsrc}`zephyr`; the others are GPL (the table above gives each licence).
+{sfsrc}`imsprog`'s table is GPL-3.0-or-later, and its author says its format was
+based on the databases of closed programmers (EZP2019, EZP2020, EZP2023, Minipro,
+XP866+), so some of its values may have come from those. Whether a
 compilation of facts extracted from GPL sources carries any obligation is a
 question for your own lawyer; the provenance of every value is recorded so
 that anyone who needs to can find, or drop, what came from where

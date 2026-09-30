@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from .enums import FlashType, IdFamily, Source
 from .model import (
+    BINARY_SOURCES,
     Datasheet,
     Flash,
     Record,
@@ -152,10 +153,12 @@ def _nand_folds(groups: Mapping[_Key, list[Record]]) -> dict[_Key, _Key]:
     """The SPI NAND ids that are the start of one other, longer SPI NAND id
     of the same part, and that id: sources match different numbers of id
     bytes for one part (Rockchip's rkflash ``c2 26`` and Linux's
-    ``c2 26 03`` for the MX35LF2GE4AD). A group folds only where exactly one
-    longer id starts with it and every record of the group names one of its
-    parts: Linux's GD5F1GM7REXXG (``c8 81``) does not fold into the
-    GD5F1GM9REXXG (``c8 81 01``) because Dediprog lists both at ``c8 81``."""
+    ``c2 26 03`` for the MX35LF2GE4AD). A group folds where every record of
+    it names a part of the longer ids starting with it, and those are one
+    line of ids, each starting the next (the F50L1G41LB's ``c8 01``,
+    ``c8 01 7f`` and ``c8 01 7f 7f 7f``): it goes into the longest. Linux's
+    GD5F1GM7REXXG (``c8 81``) does not fold into the GD5F1GM9REXXG
+    (``c8 81 01``), because Dediprog lists both at ``c8 81``."""
 
     def names(recs: Iterable[Record]) -> set[str]:
         return {n for r in recs for n in r.part_names if "." not in n}
@@ -174,10 +177,9 @@ def _nand_folds(groups: Mapping[_Key, list[Record]]) -> dict[_Key, _Key]:
             if k[1] is key[1] and len(k[2]) > len(key[2]) and k[2].startswith(key[2])
             if all(same_part(names([r]), names(theirs)) for r in recs)
         ]
-        if len(longer) == 1:
-            folds[key] = longer[0]
-    # No chains: an id longer than the one folded into would start with the
-    # short id too, and make two.
+        longest = max(longer, key=lambda k: len(k[2]), default=None)
+        if longest is not None and all(longest[2].startswith(k[2]) for k in longer):
+            folds[key] = longest
     return folds
 
 
@@ -399,14 +401,16 @@ class Database:
 
     def link(self, record: Record) -> str | None:
         """A web link to the upstream line a record came from, at the commit
-        the data was extracted from (GitHub and its mirrors only)."""
+        the data was extracted from (GitHub and its mirrors only), or to the
+        file, for a binary one (:data:`~spiflash.model.BINARY_SOURCES`)."""
         src = self.sources.get(record.source)
         if not src:
             return None
         base = src.browse.rstrip("/")
         if not base.startswith("https://github.com/"):
             return None
-        return f"{base}/blob/{src.commit}/{record.file}#L{record.line}"
+        url = f"{base}/blob/{src.commit}/{record.file}"
+        return url if record.source in BINARY_SOURCES else f"{url}#L{record.line}"
 
     def jep106(self, manufacturer_id: int, bank: int = 0) -> str | None:
         """The JEP106 name of a manufacturer id byte (with its parity bit)."""

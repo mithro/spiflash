@@ -63,6 +63,7 @@ def test_folded_ids_redirect_to_their_chip() -> None:
         ("c21e-nand", "c21e01-nand"),
         ("c22e-nand", "c22e01-nand"),
         ("c801-nand", "c8017f7f7f-nand"),
+        ("c8017f-nand", "c8017f7f7f-nand"),
         ("c8117f-nand", "c8117f7f7f-nand"),
     ]:
         assert pages[f"{old}.html"] == redirect_page(old, f"{new}.html")

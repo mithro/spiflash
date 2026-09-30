@@ -28,6 +28,7 @@ from spiflash_extract import (
     dediprog,
     fetch,
     flashrom,
+    imsprog,
     linux,
     openfpgaloader,
     openocd,
@@ -59,6 +60,7 @@ EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
     "rockchip": rockchip.extract,
     "openocd": openocd.extract,
     "openfpgaloader": openfpgaloader.extract,
+    "imsprog": imsprog.extract,
     "qemu": qemu.extract,
     "zephyr": zephyr.extract,
 }
@@ -66,6 +68,7 @@ EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
 #: For an extractor that leaves known kinds of entry out: how many, by reason.
 SKIPPED: dict[str, Callable[[Path], Counter[str]]] = {
     "dediprog": dediprog.skipped,
+    "imsprog": imsprog.skipped,
 }
 
 
