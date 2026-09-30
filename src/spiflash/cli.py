@@ -48,8 +48,10 @@ def opcode_table(f: Flash, *, verbose: bool = False) -> list[str]:
 
 
 def header(f: Flash) -> str:
-    """The first line describing a chip: its id, maker, part names and type."""
-    return f"{f.key}  {f.manufacturer or '?'}  {', '.join(f.names)}  ({f.type})"
+    """The first line describing a chip: its id, maker (marked where no
+    source names it), part names and type."""
+    maker = f"{f.manufacturer} (inferred)" if f.manufacturer_inferred else f.manufacturer or "?"
+    return f"{f.key}  {maker}  {', '.join(f.names)}  ({f.type})"
 
 
 def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:

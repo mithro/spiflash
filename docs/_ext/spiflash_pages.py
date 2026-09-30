@@ -19,6 +19,7 @@ from __future__ import annotations
 import posixpath
 import re
 from collections import Counter, defaultdict
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -68,6 +69,7 @@ from source_pages import commit_link, page_name
 from source_pages import generate_all as source_pages
 from source_pages import sources_table as sources_list
 from spiflash.enums import Feature, OperationKind, Source
+from spiflash.model import strip_continuation
 from spiflash.opcodes import OPERATIONS
 from spiflash.units import human_size, human_time
 
@@ -90,7 +92,9 @@ def chip_page(
     out.append(
         " ".join(
             [
-                f"{{bdg-link-primary}}`{esc(vendor_of(f))} <../vendors/{vendor_slug}.html>`",
+                f"{{bdg-link-primary}}`{esc(vendor_of(f))}"
+                + (" (inferred)" if f.manufacturer_inferred else "")
+                + f" <../vendors/{vendor_slug}.html>`",
                 badge(kind, "info"),
                 f"{{sfid}}`{spaced(f.jedec_id if f.family == 'jedec' else f.id_hex)}`",
             ]
@@ -225,6 +229,12 @@ def _extended_ids(db: Database, f: Flash) -> list[str]:
     rows = []
     for ext in sorted(groups, key=lambda e: (e is None, e or b"")):
         recs = groups[ext]
+        # Whose part it is: an extended id can tell two makers' parts apart
+        # (GigaDevice's GD5F1GQ5REYIG and ESMT's F50L2G41KA at c8 41).
+        part = db.narrow(f, ext) if ext else replace(f, records=tuple(recs))
+        maker = esc(part.manufacturer or "Unknown") + (
+            " (inferred)" if part.manufacturer_inferred else ""
+        )
         names = dict.fromkeys(r.name for r in recs)
         notes = dict.fromkeys(n for r in recs for n in r.notes)
         by_source: dict[str, str] = {}
@@ -234,6 +244,7 @@ def _extended_ids(db: Database, f: Flash) -> list[str]:
             [
                 f"{{sfid}}`{spaced(ext.hex())}`" if ext else "none (any variant)",
                 ", ".join(esc(n) for n in names),
+                maker,
                 " ".join(
                     f"{{sfsrc}}`{s} <{u}>`" if u else source_badge(s) for s, u in by_source.items()
                 ),
@@ -252,7 +263,7 @@ def _extended_ids(db: Database, f: Flash) -> list[str]:
             "id covers every variant):\n"
         ),
         list_table(
-            ["Ext. id", "Listed as", "By", "Size", "Page", "Sector", "Upstream notes"],
+            ["Ext. id", "Listed as", "Maker", "By", "Size", "Page", "Sector", "Upstream notes"],
             rows,
             "sf-table sf-ext-ids",
         ),
@@ -426,7 +437,13 @@ def _erase_layouts(f: Flash) -> list[str]:
     ]
 
 
+def _record_id(r: Record) -> bytes:
+    return strip_continuation(r.id or b"")[1]
+
+
 def _sources(db: Database, f: Flash) -> list[str]:
+    # A chip that answers a shorter id too says which id each source gives.
+    folded = len(f.ids) > 1
     rows = []
     for r in f.records:
         link = db.link(r)
@@ -435,6 +452,7 @@ def _sources(db: Database, f: Flash) -> list[str]:
             [
                 source_badge(r.source),
                 esc(r.name),
+                *([f"{{sfid}}`{spaced(_record_id(r).hex())}`"] if folded else []),
                 f"{{sfid}}`{spaced(r.ext_id.hex())}`" if r.ext_id else EM_DASH,
                 size_text(r.size),
                 size_text(r.page_size),
@@ -451,6 +469,7 @@ def _sources(db: Database, f: Flash) -> list[str]:
             [
                 "Source",
                 "Name",
+                *(["Id"] if folded else []),
                 "Ext. id",
                 "Size",
                 "Page",

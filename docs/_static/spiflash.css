@@ -7,6 +7,8 @@ body {
   --sf-border: var(--color-background-border);
   --sf-row-alt: var(--color-background-secondary);
   --sf-yes: #16a34a;
+  /* The ring around a page's own source label, whatever its text colour. */
+  --sf-ring: #fff;
 }
 
 /* Furo's content is 46em wide whatever the window: the wide tables scroll
@@ -80,7 +82,7 @@ h1 + p .sf-id { font-size: 1em; }
 /* A linked label (to the upstream line) and the page's own source. */
 a.sf-src-link { text-decoration: none; }
 a.sf-src-link:hover .sf-src { filter: brightness(1.2); text-decoration: underline; }
-.sf-src-mine { box-shadow: 0 0 0 2px var(--color-background-primary, #fff), 0 0 0 4px currentColor; color: #fff; outline: 2px solid #111827; outline-offset: 1px; }
+.sf-src-mine { box-shadow: 0 0 0 2px var(--color-background-primary, #fff), 0 0 0 4px var(--sf-ring); color: #fff; outline: 2px solid #111827; outline-offset: 1px; }
 /* The one light label: dark text, on its own page too. */
 .sf-src.sf-src-rockchip { color: #1c1917; }
 

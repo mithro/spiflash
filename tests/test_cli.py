@@ -38,6 +38,20 @@ def test_id_finds_a_folded_nand_id(capsys: pytest.CaptureFixture[str]) -> None:
         assert out.startswith("98e240  Toshiba  TC58CVG0S3HRAIJ"), query
 
 
+def test_id_marks_an_inferred_manufacturer(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "--type", "nand", "c952")
+    assert out.startswith("c952  HeYangTek (inferred)  HYF2GQ4UAACAE")
+    _, out = run(capsys, "id", "ef4018")
+    assert "(inferred)" not in out
+
+
+def test_id_json_lists_every_id(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "--json", "--type", "nand", "c226")
+    (doc,) = json.loads(out)
+    assert (doc["id"], doc["ids"]) == ("c22603", ["c22603", "c226"])
+    assert doc["manufacturer_inferred"] is False
+
+
 def test_id_verbose_lists_records(capsys: pytest.CaptureFixture[str]) -> None:
     _, out = run(capsys, "id", "-v", "01 20 18 4d 01 80")
     assert "ext 4d0180" in out
