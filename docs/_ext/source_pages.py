@@ -331,7 +331,9 @@ def _entries(db: Database, records: list[Record], slugs: dict[int, str]) -> list
         cells = {
             "Id": table_id(f, f"../chips/{slugs[id(f)]}.md") if f else EM_DASH,
             "Vendor": vendor_link(vendor_of(f)) if f else esc(r.vendor or EM_DASH),
-            "Name": f"[{esc(r.name)}](<{link}>)" if link else esc(r.name),
+            # The line in the title too: GitHub shows some files (Dediprog's)
+            # without line anchors.
+            "Name": f'[{esc(r.name)}](<{link}> "{r.file}:{r.line}")' if link else esc(r.name),
             "Type": "NAND" if r.type == FlashType.NAND else "NOR",
             "Ext. id": f"{{sfid}}`{spaced(r.ext_id.hex())}`" if r.ext_id else EM_DASH,
             "Size": size_text(r.size),

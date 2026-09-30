@@ -1,5 +1,5 @@
-"""A database of SPI flash chips, merged from the tables in Linux, U-Boot,
-Dediprog, flashrom, flashprog, OpenOCD, openFPGALoader and QEMU, and the
+"""A database of SPI flash chips, merged from the tables in flashrom,
+flashprog, Linux, U-Boot, Dediprog, OpenOCD, openFPGALoader and QEMU, and the
 flash chips Zephyr's boards describe, with the SFDP (JESD216) tables of the
 parts QEMU has them for (:mod:`spiflash.sfdp` decodes those, and any other dump).
 
