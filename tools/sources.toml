@@ -40,6 +40,21 @@ commit = "bbe7393f16b710d7e5ddfb1d01c6dadd8c0a5aa7"
 paths = ["flashchips.c", "include/flashchips.h", "include/flash.h", "include/spi.h"]
 license = "GPL-2.0-or-later"
 
+[rockchip]
+url = "https://github.com/rockchip-linux/u-boot"
+# next-dev is the branch Rockchip maintains rkflash on, and the default one;
+# v5, on a newer U-Boot, has no rkflash.
+branch = "next-dev"
+commit = "1c535d65b8509f388d09e49fb6961f49fda35a1d"
+paths = [
+    "drivers/rkflash/sfc_nor.c",
+    "drivers/rkflash/sfc_nor.h",
+    "drivers/rkflash/sfc_nand.c",
+    "drivers/rkflash/sfc_nand.h",
+    "drivers/rkflash/sfc.h",
+]
+license = "GPL-2.0-only"
+
 [openocd]
 url = "https://github.com/openocd-org/openocd"
 branch = "master"

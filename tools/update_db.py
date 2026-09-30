@@ -31,6 +31,7 @@ from spiflash_extract import (
     openfpgaloader,
     openocd,
     qemu,
+    rockchip,
     uboot,
     zephyr,
 )
@@ -52,6 +53,7 @@ EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
     "u-boot": uboot.extract,
     "flashrom": lambda root: flashrom.extract(root, "flashrom"),
     "flashprog": lambda root: flashrom.extract(root, "flashprog"),
+    "rockchip": rockchip.extract,
     "openocd": openocd.extract,
     "openfpgaloader": openfpgaloader.extract,
     "qemu": qemu.extract,

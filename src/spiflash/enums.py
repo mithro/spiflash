@@ -19,12 +19,16 @@ class Source(StrEnum):
     1. flashrom and flashprog: their entries are per part, tested on
        hardware, and carry the most detail.
     2. Linux, then U-Boot, which kept Linux's older table format.
-    3. OpenOCD and openFPGALoader: their tables are the smallest and the
+    3. Rockchip: a chip vendor's production driver, whose values its boards
+       boot from, with SPI NAND geometry and opcodes per part; but only the
+       parts its boards use, not reviewed in the open, and with entries
+       the driver never reaches (a second entry for an id).
+    4. OpenOCD and openFPGALoader: their tables are the smallest and the
        least specific.
-    4. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
+    5. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
        boards emulate, though its SFDP dumps are the only complete ones any
        upstream has.
-    5. Zephyr: it has no table of parts, only boards describing the chip
+    6. Zephyr: it has no table of parts, only boards describing the chip
        each carries, whose values are written (and copied between boards)
        by each board's porter."""
 
@@ -32,6 +36,7 @@ class Source(StrEnum):
     FLASHPROG = "flashprog"
     LINUX = "linux"
     UBOOT = "u-boot"
+    ROCKCHIP = "rockchip"
     OPENOCD = "openocd"
     OPENFPGALOADER = "openfpgaloader"
     QEMU = "qemu"
@@ -55,6 +60,7 @@ _SOURCE_LABELS = {
     Source.FLASHPROG: "flashprog",
     Source.LINUX: "Linux",
     Source.UBOOT: "U-Boot",
+    Source.ROCKCHIP: "Rockchip",
     Source.OPENOCD: "OpenOCD",
     Source.OPENFPGALOADER: "openFPGALoader",
     Source.QEMU: "QEMU",
