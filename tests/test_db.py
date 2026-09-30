@@ -249,6 +249,32 @@ def test_consensus_prefers_majority_then_priority() -> None:
     assert tie.flashes[0].size == 2  # flashrom outranks openocd
 
 
+def test_consensus_is_one_vote_per_source() -> None:
+    # A source listing a part three times is one vote, for what it says most.
+    db = Database(
+        [
+            rec(source="dediprog", sector_size=64 << 10),
+            rec(source="dediprog", sector_size=64 << 10),
+            rec(source="dediprog", sector_size=64 << 10),
+            rec(source="dediprog", sector_size=32 << 10),
+            rec(source="flashrom", sector_size=32 << 10),
+            rec(source="flashprog", sector_size=32 << 10),
+        ]
+    )
+    assert db.flashes[0].sector_size == 32 << 10
+    # A source giving two values equally often votes for both; a tie between
+    # values goes to the one the higher-priority sources give.
+    db = Database(
+        [
+            rec(source="flashrom", page_size=1024),
+            rec(source="flashrom", page_size=256),
+            rec(source="flashprog", page_size=1024),
+            rec(source="u-boot", page_size=256),
+        ]
+    )
+    assert db.flashes[0].page_size == 1024
+
+
 def test_features_union_and_sources() -> None:
     db = Database(
         [
