@@ -182,6 +182,10 @@ def test_dediprog_does_not_outvote() -> None:
     assert s25.size == 1 << 20  # Dediprog's S25FL208K says 2 MiB
     # One flashrom entry each for 2 and 4 MiB, and two of Dediprog's three
     # for 4 MiB (the density byte, 0x16, is 4 MiB).
+    # flashrom's two 1.8 V S25FS256S entries do not outvote the 3 V
+    # S25FL256S both flashrom and flashprog give.
+    (s25fl256,) = spiflash.lookup("010219")
+    assert s25fl256.voltage == (2700, 3600)
     (w77,) = spiflash.lookup("ef8a16")
     assert w77.size == 4 << 20
 
@@ -264,8 +268,8 @@ def test_consensus_prefers_majority_then_priority() -> None:
     assert tie.flashes[0].size == 2  # flashrom outranks openocd
 
 
-def test_consensus_is_one_vote_per_source() -> None:
-    # A source listing a part three times is one vote, for what it says most.
+def test_consensus_counts_sources() -> None:
+    # Sources are counted, not records: three of one source are one.
     db = Database(
         [
             rec(source="dediprog", sector_size=64 << 10),
@@ -277,8 +281,8 @@ def test_consensus_is_one_vote_per_source() -> None:
         ]
     )
     assert db.flashes[0].sector_size == 32 << 10
-    # A source giving two values equally often votes for both; a tie between
-    # values goes to the one the higher-priority sources give.
+    # A source giving two values counts for each; a tie between values goes
+    # to the one the higher-priority sources give, then to more records.
     db = Database(
         [
             rec(source="flashrom", page_size=1024),
@@ -288,6 +292,16 @@ def test_consensus_is_one_vote_per_source() -> None:
         ]
     )
     assert db.flashes[0].page_size == 1024
+    db = Database(
+        [
+            rec(source="linux", page_size=512),
+            rec(source="dediprog", page_size=256),
+            rec(source="linux", page_size=256),
+            rec(source="dediprog", page_size=512),
+            rec(source="dediprog", page_size=512),
+        ]
+    )
+    assert db.flashes[0].page_size == 512  # the same sources, but more records
 
 
 def test_features_union_and_sources() -> None:

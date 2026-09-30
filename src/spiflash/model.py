@@ -370,24 +370,21 @@ def name_distance(query: str, name: str) -> tuple[int, int]:
 
 
 def _consensus(values: Iterable[tuple[T | None, Source]]) -> T | None:
-    """The value most sources give; on a tie, the one the higher-priority
-    sources give.
+    """The value the most sources give; on a tie, the one the
+    higher-priority sources give, then the one more records give.
 
-    Each source votes once, for the value it gives most often (for each of
-    them, if it gives several equally often): a source listing a part five
-    times does not outvote five sources listing it once."""
-    per_source: dict[Source, Counter[T]] = {}
+    Sources are counted, not records: a source listing a part five times
+    does not outvote five sources listing it once, and a source giving two
+    values counts for each."""
+    sources: dict[T, set[int]] = {}
+    records: Counter[T] = Counter()
     for value, source in values:
         if value is not None:
-            per_source.setdefault(source, Counter())[value] += 1
-    voters: dict[T, list[int]] = {}
-    for source, given in per_source.items():
-        top = max(given.values())
-        for value in (v for v, n in given.items() if n == top):
-            voters.setdefault(value, []).append(source.priority)
-    if not voters:
+            sources.setdefault(value, set()).add(source.priority)
+            records[value] += 1
+    if not sources:
         return None
-    return min(voters, key=lambda v: (-len(voters[v]), sorted(voters[v])))
+    return min(sources, key=lambda v: (-len(sources[v]), sorted(sources[v]), -records[v]))
 
 
 @dataclass(frozen=True)
