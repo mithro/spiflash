@@ -73,7 +73,8 @@ _SIZE = "size contradicts its part number and capacity byte"
 _ID = "wrong id, per its datasheet"
 
 #: Entries whose id or size is wrong, by part and id bytes as the file has
-#: them, and why; they are left out (see docs/_source_notes/imsprog.md).
+#: them, and why; they are left out (:repo:`docs/_source_notes/imsprog.md`
+#: gives the evidence).
 WRONG = {
     ("ES25P10", "4a2011"): _SIZE,  # 1 Mbit, 0x11: 128 KiB, not 256
     ("ES25P20", "4a2012"): _SIZE,

@@ -50,8 +50,8 @@ and its link goes to the file itself.
   addressing.
 
 Some entries are wrong, and are left out rather than add a chip that does
-not exist, or a size only IMSProg gives; `update_db.py` counts them, and
-{py:data}`spiflash_extract.imsprog.WRONG` lists them:
+not exist, or a size only IMSProg gives; {repo}`tools/update_db.py` counts
+them, and {py:data}`spiflash_extract.imsprog.WRONG` lists them:
 
 - **Size contradicts the part number and the id's capacity byte:** the
   Excel Semiconductor ES25P10, P20, P40, P80, P16 and P32 and ES25M40A,
