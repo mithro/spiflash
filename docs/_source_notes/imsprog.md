@@ -67,9 +67,14 @@ them, and {py:data}`spiflash_extract.imsprog.WRONG` lists them:
   Micron MT29F4G01ABAFD under {sfid}`2c 36`, the MT29F4G01ADAGD's (its own is
   {sfid}`2c 34`); the PCT25VF010A under {sfid}`bf 49 00`, the SST25VF010A's
   REMS answer padded out, where the part has no JEDEC read-id.
+- **Wrong name:** the "DS35Q4GM(1.8V)" at {sfid}`e5 a4` is the DS35M4GM:
+  Dosilicon's Q parts are 3.3 V and its M parts 1.8 V, as the entry's own
+  VCC byte says. Kept, it would have a search for the DS35Q4GM find it as
+  well as the real one, at {sfid}`e5 f4`.
 
-One is kept: the "DS35Q4GM(1.8V)" at {sfid}`e5 a4` is Dosilicon's 1.8 V
-DS35M4GM. Only the name is wrong, and no other source has that id.
+Each is named by its part, its id and, for a wrong size, that size, so an
+entry corrected upstream is taken again, and the extraction stops on a
+known error that is no longer there, for it to be removed.
 
 IMSProg's README says the format was based on the databases of the EZP2019,
 EZP2020 and EZP2023, Minipro and XP866+ programmers, whose software is

@@ -485,10 +485,17 @@ IMSPROG = FIXTURES / "imsprog"
 
 IMSPROG_DAT = (IMSPROG / imsprog.DAT).read_bytes()
 
+# The known errors the fixture has (the rest would raise, as stale).
+IMSPROG_WRONG = {
+    k: v
+    for k, v in imsprog.WRONG.items()
+    if k[0] in {"A25L40PT", "ES25P10", "P25Q06H", "DS35Q4GM(1.8V)"}
+}
+
 
 def test_imsprog() -> None:
-    recs = imsprog.extract(IMSPROG)
-    # Fifteen SPI NOR and NAND entries, three of them known to be wrong; the
+    recs = imsprog.extract(IMSPROG, IMSPROG_WRONG)
+    # Sixteen SPI NOR and NAND entries, four of them known to be wrong; the
     # EEPROMs, FRAM and DataFlash after them are not taken, and the all-zero
     # entry ends the table.
     assert len(recs) == 12
@@ -523,7 +530,7 @@ def test_imsprog() -> None:
     # Known wrong entries are left out: the A25L40PT has the A25L20PT's id,
     # the ES25P10 twice its size, the P25Q06H an id no part has.
     assert r["A25L20PT"]["id"] == "372022"
-    assert not {"A25L40PT", "ES25P10", "P25Q06H"} & set(r)
+    assert not {"A25L40PT", "ES25P10", "P25Q06H", "DS35Q4GM(1.8V)"} & set(r)
     # SPI NAND: 0x9f and a dummy byte, then three id bytes, of which a
     # two-byte id repeats its first.
     g = r["GD5F1GQ5UEXXG"]
@@ -568,11 +575,11 @@ UNKNOWN_WRAP = nth(12)[:0x30] + b"\x77" + nth(12)[0x31:0x32] + b"\x77" + nth(12)
 )
 def test_imsprog_refuses(tmp_path: Path, entry: bytes, error: str) -> None:
     with pytest.raises(ValueError, match=error):
-        imsprog.extract(dat(tmp_path, entry))
+        imsprog.extract(dat(tmp_path, entry), {})
 
 
 def test_imsprog_skipped() -> None:
-    assert imsprog.skipped(IMSPROG) == {
+    assert imsprog.skipped(IMSPROG, IMSPROG_WRONG) == {
         "I2C EEPROM or FRAM (24xx)": 1,
         "MicroWire EEPROM (93xx)": 1,
         "SPI EEPROM or FRAM (25xx)": 1,
@@ -580,27 +587,59 @@ def test_imsprog_skipped() -> None:
         "AT45 DataFlash": 1,
         "wrong id, per its datasheet": 2,
         "size contradicts its part number and capacity byte": 1,
+        "wrong name, per its maker's naming and its own VCC": 1,
     }
 
 
 def test_imsprog_known_errors() -> None:
-    # Each names the part and the id the file gives it, so an entry
-    # corrected upstream is taken again, and the A25L20PT, whose id the
-    # A25L40PT repeats, is not left out with it.
-    assert imsprog.WRONG[("A25L40PT", "372022")] == "wrong id, per its datasheet"
-    assert ("A25L20PT", "372022") not in imsprog.WRONG
-    assert sum(1 for part, _ in imsprog.WRONG if part.startswith("ES25")) == 9
-    assert imsprog.WRONG[("F25L008A", "8c2014")] == imsprog.WRONG[("EN25E40A", "1c4213")]
-    assert ("MT29F4G01ABAFD12", "2c362c") in imsprog.WRONG
-    assert ("PCT25VF010A", "bf4900") in imsprog.WRONG
-    assert len(imsprog.WRONG) == 15
-    # The DS35Q4GM(1.8V) at e5a4 is really the DS35M4GM: only its name is
-    # wrong, and no other source gives that id, so it is kept.
-    assert not any(part.startswith("DS35") for part, _ in imsprog.WRONG)
+    # Each names the part and the id the file gives it, and a wrong size
+    # that size, so an entry corrected upstream is taken again; the
+    # A25L20PT, whose id the A25L40PT repeats, is not left out with it.
+    assert imsprog.WRONG[("A25L40PT", "372022", None)] == "wrong id, per its datasheet"
+    assert not any(part == "A25L20PT" for part, _, _ in imsprog.WRONG)
+    sizes = {k: v for k, v in imsprog.WRONG.items() if k[2] is not None}
+    assert len(sizes) == 11
+    assert set(sizes.values()) == {"size contradicts its part number and capacity byte"}
+    assert ("F25L008A", "8c2014", 2 << 20) in sizes
+    assert ("MT29F4G01ABAFD12", "2c362c", None) in imsprog.WRONG
+    assert ("PCT25VF010A", "bf4900", None) in imsprog.WRONG
+    # The DS35Q4GM(1.8V) is the 1.8 V DS35M4GM: left out, so that a search
+    # for the DS35Q4GM finds only the real one.
+    assert imsprog.WRONG[("DS35Q4GM(1.8V)", "e5a4e5", None)].startswith("wrong name")
+    assert len(imsprog.WRONG) == 16
+
+
+def test_imsprog_takes_a_corrected_size(tmp_path: Path) -> None:
+    # ES25P10 (the fixture's eighth entry) at 128 KiB, as it should be: no
+    # longer the known error, so taken, and the stale key raises.
+    es25p10 = nth(7)
+    fixed = es25p10[:0x34] + (128 << 10).to_bytes(4, "little") + es25p10[0x38:]
+    key = ("ES25P10", "4a2011", 256 << 10)
+    wrong = {key: imsprog.WRONG[key]}
+    assert imsprog.extract(dat(tmp_path, es25p10), wrong) == []
+    with pytest.raises(ValueError, match=r"no entry is \[\('ES25P10', '4a2011', 262144\)\]"):
+        imsprog.extract(dat(tmp_path / "fixed", fixed), wrong)
+    (r,) = imsprog.extract(dat(tmp_path / "taken", fixed), {})
+    assert r["size"] == 128 << 10
+
+
+def test_imsprog_stale_keys_raise(tmp_path: Path) -> None:
+    # A25L40PT under its right id: the key for the wrong one matches
+    # nothing, and says so, in extract and in skipped.
+    a25l40pt = nth(6)
+    fixed = a25l40pt[:0x30] + b"\x13\x20\x37" + a25l40pt[0x33:]
+    key = ("A25L40PT", "372022", None)
+    root = dat(tmp_path, fixed)
+    with pytest.raises(ValueError, match="remove it from WRONG"):
+        imsprog.extract(root, {key: imsprog.WRONG[key]})
+    with pytest.raises(ValueError, match="A25L40PT"):
+        imsprog.skipped(root, {key: imsprog.WRONG[key]})
+    (r,) = imsprog.extract(root, {})
+    assert (r["name"], r["id"]) == ("A25L40PT", "372013")
 
 
 def test_imsprog_without_an_end_entry(tmp_path: Path) -> None:
-    (r,) = imsprog.extract(dat(tmp_path, IMSPROG_DAT[:0x44]))
+    (r,) = imsprog.extract(dat(tmp_path, IMSPROG_DAT[:0x44]), {})
     assert r["name"] == "FL016AIF"
 
 

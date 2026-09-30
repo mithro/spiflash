@@ -41,7 +41,7 @@ from .ops import Opcodes
 from .record import Record, make
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
     from pathlib import Path
 
 DAT = "IMSProg_programmer/database/IMSProg.Dat"
@@ -71,26 +71,31 @@ LEFT_OUT = {
 
 _SIZE = "size contradicts its part number and capacity byte"
 _ID = "wrong id, per its datasheet"
+_NAME = "wrong name, per its maker's naming and its own VCC"
 
-#: Entries whose id or size is wrong, by part and id bytes as the file has
-#: them, and why; they are left out (:repo:`docs/_source_notes/imsprog.md`
-#: gives the evidence).
-WRONG = {
-    ("ES25P10", "4a2011"): _SIZE,  # 1 Mbit, 0x11: 128 KiB, not 256
-    ("ES25P20", "4a2012"): _SIZE,
-    ("ES25P40", "4a2013"): _SIZE,
-    ("ES25P80", "4a2014"): _SIZE,
-    ("ES25P16", "4a2015"): _SIZE,
-    ("ES25P32", "4a2016"): _SIZE,
-    ("ES25M40A", "4a3213"): _SIZE,
-    ("ES25M80A", "4a3214"): _SIZE,
-    ("ES25M16A", "4a3215"): _SIZE,
-    ("F25L008A", "8c2014"): _SIZE,  # 8 Mbit, 0x14: 1 MiB, not 2
-    ("EN25E40A", "1c4213"): _SIZE,  # 4 Mbit, 0x13: 512 KiB, not 256
-    ("A25L40PT", "372022"): _ID,  # the A25L20PT's; its own is 7f 37 20 13
-    ("P25Q06H", "850010"): _ID,  # 85 40 10
-    ("MT29F4G01ABAFD12", "2c362c"): _ID,  # 2c 34
-    ("PCT25VF010A", "bf4900"): _ID,  # a REMS id: the part has no JEDEC read-id
+#: Entries that are wrong, and why; they are left out
+#: (:repo:`docs/_source_notes/imsprog.md` gives the evidence). Each is
+#: keyed by its part, its id bytes as the file has them and, for a wrong
+#: size, that size, so an entry corrected upstream is taken again; a key
+#: that matches no entry raises, to be removed.
+WRONG: dict[tuple[str, str, int | None], str] = {
+    ("ES25P10", "4a2011", 256 << 10): _SIZE,  # 1 Mbit, 0x11: 128 KiB
+    ("ES25P20", "4a2012", 512 << 10): _SIZE,
+    ("ES25P40", "4a2013", 1 << 20): _SIZE,
+    ("ES25P80", "4a2014", 2 << 20): _SIZE,
+    ("ES25P16", "4a2015", 4 << 20): _SIZE,
+    ("ES25P32", "4a2016", 8 << 20): _SIZE,
+    ("ES25M40A", "4a3213", 1 << 20): _SIZE,
+    ("ES25M80A", "4a3214", 2 << 20): _SIZE,
+    ("ES25M16A", "4a3215", 4 << 20): _SIZE,
+    ("F25L008A", "8c2014", 2 << 20): _SIZE,  # 8 Mbit, 0x14: 1 MiB
+    ("EN25E40A", "1c4213", 256 << 10): _SIZE,  # 4 Mbit, 0x13: 512 KiB
+    ("A25L40PT", "372022", None): _ID,  # the A25L20PT's; its own is 7f 37 20 13
+    ("P25Q06H", "850010", None): _ID,  # 85 40 10
+    ("MT29F4G01ABAFD12", "2c362c", None): _ID,  # 2c 34
+    ("PCT25VF010A", "bf4900", None): _ID,  # a REMS id: the part has no JEDEC read-id
+    # Dosilicon's Q parts are 3.3 V and its M parts 1.8 V, as the entry is.
+    ("DS35Q4GM(1.8V)", "e5a4e5", None): _NAME,  # the DS35M4GM
 }
 
 #: The makers whose SPI NAND ids are two bytes: a third byte repeating the
@@ -140,20 +145,32 @@ def _id(e: bytes) -> str:
     return bytes([e[0x32], e[0x31], e[0x30]]).hex()
 
 
-def _left_out(fields: list[str], e: bytes) -> str | None:
-    """Why an entry is not taken, or None."""
-    return LEFT_OUT.get(e[0x3A]) or WRONG.get((fields[2], _id(e)))
-
-
-def skipped(root: Path) -> Counter[str]:
-    """How many entries are left out, by reason."""
-    return Counter(r for _, f, e in entries(root) if (r := _left_out(f, e)))
-
-
-def extract(root: Path) -> list[Record]:
-    records = []
+def _sorted(
+    root: Path, wrong: Mapping[tuple[str, str, int | None], str]
+) -> Iterator[tuple[int, list[str], bytes, str | None]]:
+    """Each entry, with why it is left out (None for one that is taken).
+    Raises, at the end, for a key of ``wrong`` no entry matched."""
+    unused = set(wrong)
     for n, fields, e in entries(root):
-        if _left_out(fields, e):
+        size = int.from_bytes(e[0x34:0x38], "little")
+        keys = [(fields[2], _id(e), size), (fields[2], _id(e), None)]
+        found = [k for k in keys if k in wrong]
+        unused -= set(found)
+        yield n, fields, e, LEFT_OUT.get(e[0x3A]) or (wrong[found[0]] if found else None)
+    if unused:
+        msg = f"{DAT}: no entry is {sorted(unused, key=str)}: remove it from WRONG"
+        raise ValueError(msg)
+
+
+def skipped(root: Path, wrong: Mapping[tuple[str, str, int | None], str] = WRONG) -> Counter[str]:
+    """How many entries are left out, by reason."""
+    return Counter(why for _, _, _, why in _sorted(root, wrong) if why)
+
+
+def extract(root: Path, wrong: Mapping[tuple[str, str, int | None], str] = WRONG) -> list[Record]:
+    records = []
+    for n, fields, e, why in _sorted(root, wrong):
+        if why:
             continue
         where = f"{DAT}: entry {n} ({','.join(fields)})"
         if e[0x43] not in VCC:
