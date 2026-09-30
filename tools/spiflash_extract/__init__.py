@@ -2,7 +2,8 @@
 
 Each extractor here (one module per upstream format) reads one upstream
 project's flash table straight from its C (or C++) source, or for Zephyr the
-flash nodes of its boards' devicetree (:mod:`spiflash_extract.dts`), and
+flash nodes of its boards' devicetree (:mod:`spiflash_extract.dts`), or for
+Dediprog its XML chip database, and
 returns a list of records in the common schema that
 :repo:`src/spiflash/data/records.json` holds (see :mod:`spiflash_extract.record`).
 Nothing is compiled: the tables are parsed as text, with just enough of a C
