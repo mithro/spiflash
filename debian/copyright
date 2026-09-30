@@ -15,7 +15,8 @@ Comment:
  opcodes, supply voltages, capability flags, part and manufacturer names)
  extracted by tools/update_db.py from the flash tables of the Linux kernel
  (GPL-2.0-only), U-Boot, flashrom, flashprog, OpenOCD and QEMU
- (GPL-2.0-or-later) and openFPGALoader (Apache-2.0), at the commits recorded
+ (GPL-2.0-or-later), IMSProg (GPL-3.0-or-later) and openFPGALoader
+ (Apache-2.0), at the commits recorded
  in src/spiflash/data/sources.json. No code from those projects is included;
  the free-text notes reproduce short comments from their tables, credited
  to the file and line they came from, and the SFDP tables of QEMU's flash

@@ -63,6 +63,10 @@ SUMMARY = {
         "A tool for programming FPGAs and their configuration flash; its table gives "
         "each part's block-protection layout."
     ),
+    Source.IMSPROG: (
+        "A programmer for CH341A, CH347 and FT232H adapters; its binary chip database "
+        "has many parts no other source lists."
+    ),
     Source.QEMU: (
         "The emulator's SPI NOR flash model: the parts its boards emulate, and "
         "complete SFDP dumps for thirteen of them."
@@ -80,6 +84,7 @@ PARSERS = {
     Source.UBOOT: ("tools/spiflash_extract/uboot.py",),
     Source.OPENOCD: ("tools/spiflash_extract/openocd.py",),
     Source.OPENFPGALOADER: ("tools/spiflash_extract/openfpgaloader.py",),
+    Source.IMSPROG: ("tools/spiflash_extract/imsprog.py",),
     Source.QEMU: ("tools/spiflash_extract/qemu.py", "src/spiflash/sfdp.py"),
     Source.ZEPHYR: (
         "tools/spiflash_extract/zephyr.py",

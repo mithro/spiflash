@@ -23,6 +23,7 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 | {sfsrc}`u-boot` | the same from its {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | {sfsrc}`openocd` | the columns of its table: read, fastest read, page program, sector erase and chip erase |
 | {sfsrc}`openfpgaloader` | what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
+| {sfsrc}`imsprog` | what its {upstream}`imsprog:IMSProg_programmer/spi_nor_flash.c` sends to a SPI NOR part: read, page program, the 64 KiB block erase (0xd8) and chip erase (0xc7), and above 16 MiB the way the entry says to enter 4-byte addressing (`EN4B`, Winbond's, or Spansion's bank register) |
 | {sfsrc}`qemu` | what its model ({upstream}`qemu:hw/block/m25p80.c`) decodes for every part (read, fast read, page program, sector erase, and chip erase as 0xc7 and 0x60), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for ({upstream}`qemu:hw/block/m25p80_sfdp.c`), everything those tables list, with the part's own dummy clocks |
 | {sfsrc}`zephyr` | the board's devicetree: the reads and erase types in the chip's own SFDP table where the board copies it (`sfdp-bfp`, JESD216's Basic Flash Parameter table), and the read and program modes the board uses (`readoc`, `writeoc`, `use-fast-read`, `enter-4byte-addr`, ...) |
 
