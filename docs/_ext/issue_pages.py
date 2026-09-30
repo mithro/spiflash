@@ -293,8 +293,8 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
     rows.append(
         [
             "**All**",
-            f"**{len(issues)}**",
-            *(f"[**{len(_involving(issues, s))}**]({source_page(s)}.md)" for s in Source),
+            f"**{count(len(issues))}**",
+            *(f"[**{count(len(_involving(issues, s)))}**]({source_page(s)}.md)" for s in Source),
         ]
     )
     out.append(list_table(header, rows, "sf-table sf-issue-summary") + "\n")

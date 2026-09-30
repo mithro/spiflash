@@ -180,6 +180,9 @@ def test_summary_has_a_row_per_value() -> None:
     # Only the value page has the targets.
     assert "(value-voltage)=" in pages["value.md"]
     assert "(value-voltage)=" not in pages["index.md"]
+    # The totals line up with the counts above them.
+    assert "**{sfnum}`1`**" in pages["index.md"]
+    assert "[**{sfnum}`1`**](source-linux.md)" in pages["index.md"]
 
 
 def test_supply_ends_are_numbers_of_their_own() -> None:
