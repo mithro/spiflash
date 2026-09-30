@@ -6,7 +6,7 @@ from __future__ import annotations
 import datetime
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 
@@ -145,11 +145,13 @@ class Datasheet:
             sha256=d.get("sha256"),
         )
 
-    def rank(self, key: str) -> tuple[bool, bool, int]:
-        """Sorts the best datasheet for chip ``key`` first: one showing the
-        id, then the manufacturer's own, then the newest."""
+    def rank(self, key: str, *more: str) -> tuple[bool, bool, int]:
+        """Sorts the best datasheet for chip ``key`` (also answering ids
+        ``more``) first: one showing the id, then the manufacturer's own,
+        then the newest."""
         newest = -self.date.toordinal() if self.date else 0
-        return (key not in self.confirmed, not self.official, newest)
+        shown = any(k in self.confirmed for k in (key, *more))
+        return (not shown, not self.official, newest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,6 +407,9 @@ class Flash:
     family: IdFamily = IdFamily.JEDEC
     #: Datasheets for the id's parts, the best first (see :meth:`Datasheet.rank`).
     datasheets: tuple[Datasheet, ...] = field(default=(), repr=False, compare=False)
+    #: The manufacturer, where no record names one, inferred from the other
+    #: sources' parts (see :func:`~spiflash.db.infer_manufacturer`).
+    inferred_manufacturer: str | None = field(default=None, repr=False, compare=False)
 
     @property
     def key(self) -> str:
@@ -415,6 +420,24 @@ class Flash:
     @property
     def id_hex(self) -> str:
         return self.id.hex()
+
+    @cached_property
+    def ids(self) -> tuple[bytes, ...]:
+        """Every id the records give, longest first: :attr:`id`, and the
+        shorter ids of sources that match fewer bytes of a SPI NAND part
+        (Rockchip's ``c226`` for the MX35LF2GE4AD's ``c22603``)."""
+        found = {strip_continuation(r.id)[1] for r in self.records if r.id is not None}
+        return tuple(sorted(found | {self.id}, key=lambda i: (-len(i), i)))
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """:attr:`key` for each of :attr:`ids`."""
+        prefix = "7f" * self.bank if self.family == IdFamily.JEDEC else f"{self.family}:"
+        return tuple(prefix + i.hex() for i in self.ids)
+
+    def confirms(self, sheet: Datasheet) -> bool:
+        """Whether ``sheet`` gives the bytes of one of this chip's :attr:`ids`."""
+        return any(k in sheet.confirmed for k in self.keys)
 
     @property
     def jedec_id(self) -> str:
@@ -428,7 +451,18 @@ class Flash:
 
     @cached_property
     def manufacturer(self) -> str | None:
-        return _consensus((r.manufacturer, r.source) for r in self.records)
+        """The one the sources name, or failing that the one inferred
+        (:attr:`manufacturer_inferred`)."""
+        named = _consensus((r.manufacturer, r.source) for r in self.records)
+        return named or self.inferred_manufacturer
+
+    @property
+    def manufacturer_inferred(self) -> bool:
+        """Whether no source names the manufacturer, and it is inferred from
+        the id and the part name."""
+        return self.inferred_manufacturer is not None and not any(
+            r.manufacturer for r in self.records
+        )
 
     @cached_property
     def names(self) -> tuple[str, ...]:
@@ -576,9 +610,7 @@ class Flash:
             for r in self.records
             if r.ext_id is None or r.ext_id[: len(ext)] == ext[: len(r.ext_id)]
         )
-        return Flash(
-            self.id, self.type, keep or self.records, self.bank, self.family, self.datasheets
-        )
+        return replace(self, records=keep or self.records)
 
     def to_json(self) -> dict[str, Any]:
         """A plain-JSON summary, as the ``spiflash`` command prints it."""
@@ -588,6 +620,7 @@ class Flash:
             "id_family": self.family,
             "type": self.type,
             "manufacturer": self.manufacturer,
+            "manufacturer_inferred": self.manufacturer_inferred,
             "names": list(self.names),
             "size": self.size,
             "page_size": self.page_size,
@@ -619,7 +652,7 @@ class Flash:
                     "revision": d.revision,
                     "date": d.date.isoformat() if d.date else None,
                     "official": d.official,
-                    "id_confirmed": self.key in d.confirmed,
+                    "id_confirmed": self.confirms(d),
                 }
                 for d in self.datasheets
             ],

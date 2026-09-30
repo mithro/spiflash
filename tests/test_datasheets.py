@@ -31,7 +31,8 @@ def sheet(**kw: object) -> Datasheet:
 def test_shipped_datasheets_all_belong_to_a_chip() -> None:
     db = spiflash.database()
     assert db.datasheets
-    keys = {f.key for f in db.flashes}
+    # A SPI NAND chip can answer a shorter id too (Flash.keys).
+    keys = {k for f in db.flashes for k in f.keys}
     for d in db.datasheets:
         assert d.url.startswith(("http://", "https://")), d.url
         assert d.title
@@ -41,7 +42,8 @@ def test_shipped_datasheets_all_belong_to_a_chip() -> None:
         assert len(d.sha256) == 64
     # Each is on every chip it covers, and only there.
     attached = sum(len(f.datasheets) for f in db.flashes)
-    assert attached == sum(len(d.ids) for d in db.datasheets)
+    covering = sum(1 for f in db.flashes for d in db.datasheets if set(f.keys) & set(d.ids))
+    assert attached == covering
 
 
 def test_urls_are_unique() -> None:

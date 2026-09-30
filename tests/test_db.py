@@ -277,9 +277,101 @@ def test_every_jedec_flash_has_a_name_and_manufacturer() -> None:
     for f in spiflash.flashes():
         assert f.names, f.id_hex
         # Zephyr's devicetree often names no maker and Rockchip's tables
-        # never do, and the id's first byte is not taken as naming one; every
-        # other source names one.
-        assert f.manufacturer or set(f.sources) <= {Source.ROCKCHIP, Source.ZEPHYR}, f.id_hex
+        # never do; where no other source's part confirms the id's byte
+        # (infer_manufacturer), these chips have none.
+        assert bool(f.manufacturer) is (f.key not in NO_MANUFACTURER), f.key
+        if f.manufacturer_inferred:
+            assert set(f.sources) <= {Source.ROCKCHIP, Source.ZEPHYR}, f.key
+
+
+# Rockchip's clones and makers no other source lists, and a Zephyr board's
+# misread MX25L12833F.
+NO_MANUFACTURER = {
+    "1c4018",  # GM25Q128A, on Eon's id
+    "3cd2",  # HSESYHDSW2G
+    "52ba13",  # GSS01GSAK1, on Alliance Memory's id
+    "52ba23",
+    "52ca13",
+    "52ca23",
+    "666620",  # Zephyr's MX25L12833F
+    "8c01",  # XCSP1AAPK, on ESMT's id
+    "8ca1",
+    "a14019",  # FM25Q256I3: Fudan, which no other source names
+    "a1a1",
+    "a1a5",
+    "b00c",  # Unim's UM19A
+    "b00d",
+    "b014",
+    "b015",
+    "b024",
+    "b025",
+    "bcb3",  # BWJX08K-2Gb
+    "bf21",  # JS28U1GQSCAHG-83
+    "eac1",  # SGM7000I-S24W1GH
+}
+
+
+def test_manufacturer_inferred_from_id_and_part_name() -> None:
+    (f,) = spiflash.lookup("c952", flash_type="nand")  # Rockchip's HYF2GQ4UAACAE
+    assert (f.manufacturer, f.manufacturer_inferred) == ("HeYangTek", True)
+    assert f.to_json()["manufacturer_inferred"] is True
+    assert all(r.vendor is None for r in f.records)  # the records stay as read
+    (w,) = spiflash.lookup("ef4018")
+    assert not w.manufacturer_inferred
+
+
+def rec_at(chip_id: str, name: str, *, vendor: str | None = None, source: str = "linux") -> Record:
+    return rec(id=chip_id, name=name, vendor=vendor, source=source, type="nand")
+
+
+def test_infer_manufacturer_needs_the_byte_and_one_maker() -> None:
+    mine = rec_at("c952", "HYF2GQ4UAACAE", source="rockchip")
+    same = rec_at("c921", "HYF1GQ4UDACAE", vendor="HeYangTek")
+    db = Database([mine, same])
+    assert db.lookup("c952")[0].manufacturer == "HeYangTek"
+    # Another maker's byte is not enough without the part name (GSS on 0x52)...
+    clone = rec_at("52ba13", "GSS01GSAK1", source="rockchip")
+    other = rec_at("522f", "AS5F34G04SND", vendor="Alliance Memory")
+    assert Database([clone, other]).lookup("52ba13")[0].manufacturer is None
+    # ...and two makers for the name's start is no answer.
+    two = rec_at("c9aa", "HYF9", vendor="Someone Else")
+    assert Database([mine, same, two]).lookup("c952")[0].manufacturer is None
+
+
+def test_nand_ids_fold_into_the_longer_id_of_the_same_part() -> None:
+    short = rec_at("c226", "MX35LF2GE4AD", source="rockchip")
+    long = rec_at("c22603", "MX35LF2GE4AD", vendor="Macronix")
+    db = Database([short, long])
+    (f,) = db.flashes
+    assert (f.id_hex, f.ids, f.keys) == (
+        "c22603",
+        (b"\xc2\x26\x03", b"\xc2\x26"),
+        ("c22603", "c226"),
+    )
+    assert f.sources == ("linux", "rockchip")
+    # Found by either id, and by the longer one first.
+    assert db.lookup("c226") == [f]
+    assert db.lookup("c22603") == [f]
+    # A name with a suffix is the same part (ZB35Q01B, ZB35Q01BYIG).
+    suffix = Database([rec_at("5ea1", "ZB35Q01BYIG"), rec_at("5ea1a1", "ZB35Q01B")])
+    assert [x.id_hex for x in suffix.flashes] == ["5ea1a1"]
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        # Two longer ids start with it: which is it?
+        [rec_at("c226", "P1"), rec_at("c22603", "P1"), rec_at("c22604", "P1")],
+        # The names differ: two parts.
+        [rec_at("c226", "P1"), rec_at("c22603", "P2")],
+        # One of its records names another part (Dediprog's M9 at c8 81).
+        [rec_at("c881", "GD5F1GM7"), rec_at("c881", "GD5F1GM9"), rec_at("c88101", "GD5F1GM9")],
+        # SPI NOR ids never fold.
+        [rec(id="c220", name="P1"), rec(id="c22018", name="P1")],
+    ],
+)
+def test_nand_ids_do_not_fold(records: list[Record]) -> None:
+    assert len(Database(records).flashes) == len({r.id for r in records})
 
 
 def test_vendor_spellings_all_canonical() -> None:

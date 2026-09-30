@@ -199,7 +199,7 @@ def _datasheets(flashes: Iterable[Flash]) -> Iterator[Issue]:
     for f in flashes:
         for part in f.names:
             own = tuple(d for d in f.datasheets if part in d.parts)
-            if own and not any(f.key in d.confirmed for d in own):
+            if own and not any(f.confirms(d) for d in own):
                 listing = tuple(r for r in f.records if part in r.part_names)
                 yield Issue(
                     IssueKind.DATASHEET,

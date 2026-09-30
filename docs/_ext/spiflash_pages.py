@@ -154,7 +154,7 @@ def _datasheets(f: Flash) -> list[str]:
                 d.date.isoformat() if d.date else EM_DASH,
                 ", ".join(esc(n) for n in d.parts),
                 where,
-                "{sfyes}`✓`" if f.key in d.confirmed else " ",
+                "{sfyes}`✓`" if f.confirms(d) else " ",
             ]
         )
     return [
@@ -181,7 +181,12 @@ def _identification(db: Database, f: Flash, kind: str) -> list[str]:
             rows.append(["With JEP106 continuation codes", f"{{sfid}}`{spaced(f.jedec_id)}`"])
     else:
         rows.append([f"Legacy id ({f.family.upper()})", f"{{sfid}}`{spaced(f.id_hex)}`"])
-    rows.append(["Manufacturer", vendor_link(vendor_of(f))])
+    if len(f.ids) > 1:
+        # A SPI NAND source matching fewer bytes of the id (see Database).
+        shorter = ", ".join(f"{{sfid}}`{spaced(i.hex())}`" for i in f.ids[1:])
+        rows.append(["Also matched on its first bytes", shorter])
+    inferred = " (inferred from the id and part name)" if f.manufacturer_inferred else ""
+    rows.append(["Manufacturer", vendor_link(vendor_of(f)) + inferred])
     if db.jep106(f.id[0], f.bank):
         rows.append(
             [
