@@ -66,6 +66,7 @@ def test_every_source_is_present() -> None:
         "linux",
         "u-boot",
         "dediprog",
+        "rockchip",
         "flashrom",
         "flashprog",
         "openocd",
@@ -107,6 +108,7 @@ def test_w25q128() -> None:
         "linux",
         "u-boot",
         "dediprog",
+        "rockchip",
         "openocd",
         "openfpgaloader",
         "zephyr",
@@ -246,6 +248,14 @@ def test_nand() -> None:
     assert spiflash.lookup("efaa21", flash_type="nor") == []
 
 
+def test_nand_ids_merge_across_read_id_methods() -> None:
+    # Rockchip reads the id after an address byte, Linux after a dummy byte
+    # (W25N01GV) or an address byte (GD5F1GQ4UAYIG): one chip each.
+    for chip_id in ("efaa21", "c8f1"):
+        (f,) = spiflash.lookup(chip_id, flash_type="nand")
+        assert {"linux", "rockchip"} <= set(f.sources), chip_id
+
+
 def test_find() -> None:
     assert "ef4018" in [f.id_hex for f in spiflash.find("w25q128jv")]
     # A family prefix finds the parts; a full order code finds the family.
@@ -266,9 +276,10 @@ def test_by_manufacturer_uses_any_spelling() -> None:
 def test_every_jedec_flash_has_a_name_and_manufacturer() -> None:
     for f in spiflash.flashes():
         assert f.names, f.id_hex
-        # Zephyr's devicetree often names no maker, and the id's first byte
-        # is not taken as naming one; every other source names one.
-        assert f.manufacturer or set(f.sources) == {Source.ZEPHYR}, f.id_hex
+        # Zephyr's devicetree often names no maker and Rockchip's tables
+        # never do, and the id's first byte is not taken as naming one; every
+        # other source names one.
+        assert f.manufacturer or set(f.sources) <= {Source.ROCKCHIP, Source.ZEPHYR}, f.id_hex
 
 
 def test_vendor_spellings_all_canonical() -> None:
