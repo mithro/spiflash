@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from spiflash_extract import (
+    dediprog,
     fetch,
     flashrom,
     linux,
@@ -56,6 +57,7 @@ EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
     "openfpgaloader": openfpgaloader.extract,
     "qemu": qemu.extract,
     "zephyr": zephyr.extract,
+    "dediprog": dediprog.extract,
 }
 
 
@@ -76,6 +78,9 @@ def build(ups: list[fetch.Upstream]) -> dict[str, str]:
         tree = fetch.fetch(up, UPSTREAM)
         recs = EXTRACTORS[up.name](tree)
         print(f"{up.name:15} {up.commit[:12]} {len(recs):5} records", file=sys.stderr)
+        if up.name == "dediprog":
+            for reason, n in dediprog.skipped(tree).most_common():
+                print(f"{'':28} {n:5} left out: {reason}", file=sys.stderr)
         records += recs
         sources[up.name] = {
             "url": up.url,

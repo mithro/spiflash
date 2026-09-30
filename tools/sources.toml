@@ -70,3 +70,12 @@ commit = "9f0253dcc66ccecc92a699dd81cb1034c3f6875b"
 # Only the devicetree files: boards/ is mostly photographs.
 paths = ["boards/**/*.dts", "boards/**/*.dtsi", "boards/**/*.overlay", "dts/**/*.dtsi"]
 license = "Apache-2.0"
+
+[dediprog]
+url = "https://github.com/DediProgSW/SF100Linux"
+branch = "master"
+commit = "091d257173afb3e1a34f3af3bb28e883dab67221"
+# UTF-16 XML, one <Chip .../> per line.
+paths = ["ChipInfoDb.dedicfg"]
+# Its LICENSE is the GPL, version 2; the files carry no licence header.
+license = "GPL-2.0-only"

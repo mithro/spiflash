@@ -65,6 +65,7 @@ def test_every_source_is_present() -> None:
     assert set(spiflash.sources()) == {
         "linux",
         "u-boot",
+        "dediprog",
         "flashrom",
         "flashprog",
         "openocd",
@@ -105,6 +106,7 @@ def test_w25q128() -> None:
         "flashprog",
         "linux",
         "u-boot",
+        "dediprog",
         "openocd",
         "openfpgaloader",
         "zephyr",
@@ -174,6 +176,8 @@ def test_nand() -> None:
     assert found
     assert found[0].type == "nand"
     assert "W25N01GV" in found[0].names
+    # Dediprog's id, read after a dummy byte, is the same chip as Linux's.
+    assert {"linux", "dediprog"} <= set(found[0].sources)
     assert spiflash.lookup("efaa21", flash_type="nor") == []
 
 
@@ -272,6 +276,9 @@ def test_unknown_source_is_rejected() -> None:
 def test_sources_are_in_priority_order() -> None:
     assert [s.priority for s in Source] == list(range(len(Source)))
     assert Source.FLASHROM.priority < Source.LINUX.priority < Source.OPENFPGALOADER.priority
+    # Dediprog's own table: after the reviewed ones, before the smallest.
+    assert Source.UBOOT.priority < Source.DEDIPROG.priority < Source.OPENOCD.priority
+    assert Source.DEDIPROG.label == "Dediprog"
     # QEMU, then Zephyr last: board descriptions, not a curated table of parts.
     assert list(Source)[-2:] == [Source.QEMU, Source.ZEPHYR]
     assert Source.QEMU.label == "QEMU"
