@@ -3,12 +3,14 @@ that docs.yml runs over the built HTML."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 import spiflash
 from check_links import bare_urls
 from page_markup import esc, trim_url
-from spiflash_pages import repo_url, upstream_url
+from spiflash_pages import SIDEBAR_DEPTH, _shallow_sidebar, repo_url, upstream_url
 
 
 @pytest.mark.parametrize(
@@ -89,3 +91,14 @@ def test_link_roles() -> None:
     assert upstream_url("flashprog", "flashchips.c").startswith(
         "https://github.com/SourceArcade/flashprog/blob/"
     )
+
+
+def test_the_sidebar_stops_at_the_vendor_pages() -> None:
+    asked: dict[str, object] = {}
+    context: dict[str, Any] = {"toctree": lambda **kw: asked.update(kw)}
+    _shallow_sidebar(None, "chips/ef4018", "page.html", context, None)
+    context["toctree"](collapse=False, maxdepth=-1)
+    assert asked == {"collapse": False, "maxdepth": SIDEBAR_DEPTH}
+    no_toctree: dict[str, Any] = {}
+    _shallow_sidebar(None, "search", "search.html", no_toctree, None)
+    assert no_toctree == {}
