@@ -17,10 +17,10 @@ merged from the flash tables of every project that keeps one:
 | [QEMU](https://gitlab.com/qemu-project/qemu) | [`hw/block/m25p80.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80.c), and the SFDP dumps in [`hw/block/m25p80_sfdp.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80_sfdp.c) | 137 |
 | [Zephyr](https://github.com/zephyrproject-rtos/zephyr) | the devicetree of its [boards](https://github.com/zephyrproject-rtos/zephyr/tree/main/boards) and [SoCs](https://github.com/zephyrproject-rtos/zephyr/tree/main/dts): each flash node with a `jedec-id` | 99 |
 
-Together that is 1256 distinct chip ids (969 SPI NOR, 287 SPI NAND) from 62
-manufacturers, 696 of them described by more than one source, plus the full
+Together that is 1233 distinct chip ids (969 SPI NOR, 264 SPI NAND) from 61
+manufacturers, 703 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
-from, and where the sources disagree (88 ids do) both answers are kept.
+from, and where the sources disagree (89 ids do) both answers are kept.
 Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
 (JESD216) tables, decoded.
 

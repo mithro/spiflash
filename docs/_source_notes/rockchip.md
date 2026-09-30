@@ -12,8 +12,16 @@ Each entry is a positional `struct` initialiser, with the part name in a
 comment above it. A comment can name several parts
 (`MT29F2G01ABA, XT26G02E, F50L2G41XA`) or go on in prose (`1*4096`, kept in
 the record's notes). The one written as a pattern, `XM25QH(QU)256B`, is read
-as the XM25QH256B and the XM25QU256B. The tables name no manufacturer, so a
-chip that only Rockchip lists has none.
+as the XM25QH256B alone, with a note: the XM25QU256B answers `20 70 19`
+({sfsrc}`dediprog`), not the entry's `20 60 19`.
+
+The tables name no manufacturer. For a chip that only Rockchip lists, the
+chip page gives the manufacturer inferred from the other sources' parts: the
+one they all name for parts that answer its first id byte and whose names
+start like its own (HeYangTek for the HYF2GQ4UAACAE). The byte alone is not
+enough, as clones answer another maker's (GSS's GSS01GSAK1 answers Alliance
+Memory's 0x52). Where nothing confirms one, as for GSS's and Unim's parts,
+the chip has none.
 
 The fields are read as the driver uses them. For an SPI NOR entry,
 `snor_parse_flash_table()` in sfc_nor.c:
@@ -45,7 +53,10 @@ For an SPI NAND entry, `sfc_nand_init()` in sfc_nand.c:
 - the id is read with 0x9f and an address byte, like {sfsrc}`linux`'s
   `SPINAND_READID_METHOD_OPCODE_ADDR`; the first two bytes must match, and
   the third only where the entry's is not 0, so an id of 0 in the third
-  byte is not part of it;
+  byte is not part of it. A third byte that repeats the manufacturer's, or
+  is 0x7f, is what the part sends after its id, and is taken as its
+  extended id: the GD5F1GQ5REYIG (`c8 41`, then `c8`) and the F50L2G41KA
+  (`c8 41`, then `7f`);
 - the page is `sec_per_page` sectors of 512 bytes, the erase block
   `page_per_blk` pages, and the size `plane_per_die` times `blk_per_plane`
   blocks, which `density` agrees with in every entry;
@@ -53,12 +64,16 @@ For an SPI NAND entry, `sfc_nand_init()` in sfc_nand.c:
   load (0x32). SPI NAND records have no opcodes, as {sfsrc}`linux`'s have
   none.
 
-An SPI NAND id is two bytes where the third is 0. It merges with
+An SPI NAND id is two bytes where the third is 0. It is the same chip as
 {sfsrc}`linux`'s id for the same part wherever Linux matches the same bytes,
-whether Linux reads the id after a dummy byte or an address byte. Linux
-matches a third byte for some parts that Rockchip does not, such as Macronix's
-MX35LF2GE4AD (`c2 26 03`) and Foresee's F35SQA001G (`cd 71 71`). Rockchip
-matches `c2 26` and `cd 71`, so these are separate chip ids here.
+whether Linux reads the id after a dummy byte or an address byte. Linux and
+{sfsrc}`dediprog` match a third byte for some parts that Rockchip does not,
+such as Macronix's MX35LF2GE4AD (`c2 26 03`, where Rockchip matches
+`c2 26`) and Foresee's F35SQA001G (`cd 71 71`). Such a shorter id is folded
+into the longer one when exactly one longer SPI NAND id starts with it, and
+it names the same part. The chip page lists it as matched on its first
+bytes, and a lookup finds the chip by either id. Seventeen of Rockchip's ids
+fold this way.
 
 The driver takes the first entry an id matches. A later entry for the same
 id is never used, and its record says which line wins
