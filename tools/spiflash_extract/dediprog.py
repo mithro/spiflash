@@ -32,8 +32,9 @@ program are taken: the wider ones are often a template's defaults (the
 single-I/O SST25LF040A lists quad read, 0x6b, and quad program, 0x32).
 ``BlockSizeInByte`` is a template's too: 64 KiB in nearly every entry, where
 the other sources give 0xd8 and 0xdc 32, 128 or 256 KiB, or boot blocks. So
-those two erases have no layout, and a sector size is given only for 0x20
-(``SectorSizeInByte``) and 0x52 (see :func:`_erasers`).
+those two erases have no layout, and an SPI NOR record has a sector size only
+for 0x20 (``SectorSizeInByte``) and 0x52 (see :func:`_erasers`); an SPI NAND
+record's is its erase block, ``BlockSizeInByte``.
 
 Entries of some classes are not what their attributes say. The DataFlash
 (``Class="AT45DB..."``) entries carry a SPI NOR template (0xd8 erase, 256-byte

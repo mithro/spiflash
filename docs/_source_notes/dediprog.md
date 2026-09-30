@@ -29,8 +29,9 @@ parser ignores; spiflash's reads the id with them:
 The number holds the bytes as they come. An SPI NAND id read with a dummy
 byte first starts with that byte, 00 (`0x00EFAA21`), which is not part of
 the id. RES, read without its three dummy address bytes, starts with three
-0xff. Up to three bytes are compared, so a NAND id can be a byte longer or
-shorter than the one {sfsrc}`linux` gives the same part.
+0xff. The entries' SPI NAND ids give two or three bytes after that dummy
+byte, and spiflash keeps them as given, so a NAND id can be a byte longer or
+shorter than the one {sfsrc}`linux` matches for the same part.
 
 Some ids are under the wrong command, and spiflash's parser reads each for
 what it is:
@@ -59,9 +60,11 @@ read and quad page program). For the same reason the 0xd8 and 0xdc erases
 have no layout. `BlockSizeInByte` is 64 KiB in nearly every entry, where the
 other sources give those erases 32 KiB (M25P05, EN25F10, SST25VF010A),
 128 KiB (MT35XU01G), 256 KiB (M25P128, S25FL512S) or boot blocks (AMIC's
-A25L..P). A sector size is given only for 0x20 (`SectorSizeInByte`) and
-0x52: 32 KiB on the SST parts, and `SectorSizeInByte` on the AT25F parts
-where it is not the template's 4 KiB (0x52 erases 64 KiB on the AT25F2048).
+A25L..P). An SPI NOR record has a sector size only for 0x20
+(`SectorSizeInByte`) and 0x52: 32 KiB on the SST parts, and
+`SectorSizeInByte` on the AT25F parts where it is not the template's 4 KiB
+(0x52 erases 64 KiB on the AT25F2048). An SPI NAND record's sector size is
+its erase block, `BlockSizeInByte`, as {sfsrc}`linux` gives it.
 
 Some classes of part are not what their attributes say:
 

@@ -92,6 +92,9 @@ def test_part_case() -> None:
     assert record.part_case("EN25B10(Bottom Boot)") == "EN25B10(Bottom Boot)"
     assert record.part_case("mt25tl256b ( for one die)") == "MT25TL256B ( for one die)"
     assert record.part_case("S25FL032(A/P)") == "S25FL032(A/P)"
+    # Text straight after the parentheses is the word before them.
+    assert record.part_case("S79FS01GS(one die)_es") == "S79FS01GS(one die)_ES"
+    assert record.part_case("x(3MHz) board") == "X(3MHz) board"
 
 
 def test_linux_nor(linux_tree: Path) -> None:
