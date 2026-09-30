@@ -520,7 +520,10 @@ def test_rockchip_nor() -> None:
     }
     assert {"4byte_addr", "4byte_opcodes", "quad_pp"} <= set(gd256["features"])
     assert gd256["notes"][0].startswith("prog_cmd_4 0x3e left out")
-    assert r["XM25QH256B/XM25QU256B"]["notes"][0].startswith("prog_cmd_4 0x3e left out")
+    # XM25QH(QU)256B: the QU answers another id, so only the QH is taken.
+    xm = r["XM25QH256B"]
+    assert xm["notes"][0].startswith("the comment also names the XM25QU256B")
+    assert xm["notes"][1].startswith("prog_cmd_4 0x3e left out")
     mx = r["MX25L25635E/MX25L25635F/MX25L25645G/MX25L25645GMI-08G"]
     assert ops(mx)["PP_1_4_4_4B"] == (0x3E, "prog_cmd_4 (FEA_4BIT_PROG)")
     assert "write_status=snor_write_status2" in mx["flags"]
@@ -554,7 +557,10 @@ def test_rockchip_nand() -> None:
     assert "FEA_SOFT_QOP_BIT" in r["W25N01GV"]["flags"]
     assert r["W25N01GV"]["features"] == ["quad_pp", "quad_read"]
     gd = r["GD5F1GQ5REYIG"]
-    assert gd["id"] == "c841c8"
+    # A third byte repeating the manufacturer's, or 0x7f, follows the id.
+    assert (gd["id"], gd["ext_id"]) == ("c841", "c8")
+    assert (r["F50L2G41KA"]["id"], r["F50L2G41KA"]["ext_id"]) == ("c841", "7f")
+    assert r["W25N01GV"]["ext_id"] is None
     assert gd["notes"] == [
         "Add 3rd code to distingush with F50L2G41KA",
         "1 plane(s) of 1024 blocks",

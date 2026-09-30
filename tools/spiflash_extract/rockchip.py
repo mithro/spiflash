@@ -66,8 +66,14 @@ _BLOCK_ERASE = {0xD8: "SE", 0xDC: "SE_4B"}
 # for each value of the FEA_READ_STATUE_MASK bits of the feature.
 _WRITE_STATUS = ("snor_write_status", "snor_write_status1", "snor_write_status2")
 
-# The one name comment written as a pattern.
-_NAMES = {"XM25QH(QU)256B": "XM25QH256B/XM25QU256B"}
+# The one name comment written as a pattern, and what is taken from it: the
+# XM25QU256B answers 20 70 19 (Dediprog), not this entry's 20 60 19.
+_NAMES = {
+    "XM25QH(QU)256B": (
+        "XM25QH256B",
+        "the comment also names the XM25QU256B, which answers another id",
+    )
+}
 
 # A part number: a capital, then at least one digit.
 _PART = re.compile(r"[A-Z][\w/-]*\d[\w/-]*")
@@ -80,12 +86,16 @@ def _name(comment: str) -> tuple[str | None, list[str]]:
     GD25Q128C/E"``) and go on in prose (``"GD5F4GQ6RExxG 1*4096"``)."""
     words = comment.replace(",", " ").split()
     parts: list[str] = []
+    notes = []
     while words and (words[0] in _NAMES or words[0] == "and" or _PART.fullmatch(words[0])):
         word = words.pop(0)
+        if word in _NAMES:
+            word, note = _NAMES[word]
+            notes.append(note)
         if word != "and":
-            parts += part_names(_NAMES.get(word, word))
+            parts += part_names(word)
     rest = " ".join(words)
-    return "/".join(parts) or None, [rest] if rest else []
+    return "/".join(parts) or None, [rest, *notes] if rest else notes
 
 
 def _entries(
@@ -288,11 +298,16 @@ def _nand_record(
         features.add("quad_read")
     if "FEA_4BIT_PROG" in bits:
         features.add("quad_pp")
+    # sfc_nand_read_id() sends 0x9f and an address byte. An id2 of 0 is not
+    # compared, so not part of the id. One that repeats the manufacturer byte
+    # or is 0x7f is not a device byte either, but what follows one: the
+    # GD5F1GQ5REYIG answers c8 41 (then c8 again, DS-00889 Table 8-1) and
+    # the F50L2G41KA c8 41 7f, and the entries tell them apart by it.
+    device = [id0, id1, id2] if id2 and id2 not in (id0, 0x7F) else [id0, id1]
     return {
         "type": "nand",
-        # sfc_nand_read_id() sends 0x9f and an address byte; an id2 of 0 is
-        # not compared, so not part of the id.
-        "id": bytes([id0, id1, id2] if id2 else [id0, id1]).hex(),
+        "id": bytes(device).hex(),
+        "ext_id": bytes([id2]).hex() if len(device) == 2 and id2 else None,
         "id_method": "rdid_opcode_addr",
         "size": size,
         "page_size": page,
