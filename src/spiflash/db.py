@@ -21,6 +21,7 @@ from .model import (
     name_distance,
     name_matches,
     parse_id,
+    same_part,
     squash_name,
     strip_continuation,
 )
@@ -158,15 +159,28 @@ def _nand_folds(groups: Mapping[_Key, list[Record]]) -> dict[_Key, _Key]:
     line of ids, each starting the next (the F50L1G41LB's ``c8 01``,
     ``c8 01 7f`` and ``c8 01 7f 7f 7f``): it goes into the longest. Linux's
     GD5F1GM7REXXG (``c8 81``) does not fold into the GD5F1GM9REXXG
-    (``c8 81 01``), because Dediprog lists both at ``c8 81``."""
+    (``c8 81 01``), because Dediprog lists both at ``c8 81``. Nor does a
+    group whose sizes, pages or erase blocks the longer id's records do not
+    give: a part of another size is another part.
+
+    Each fold is resolved to the id it ends at, where the id it goes into
+    folds on in turn."""
 
     def names(recs: Iterable[Record]) -> set[str]:
         return {n for r in recs for n in r.part_names if "." not in n}
 
-    def same_part(mine: set[str], theirs: set[str]) -> bool:
-        # A name and the same name with a suffix (ZB35Q01B, ZB35Q01BYIG) are
-        # one part.
-        return any(a.startswith(b) or b.startswith(a) for a in mine for b in theirs)
+    def one_part(recs: list[Record], theirs: list[Record]) -> bool:
+        mine = [names([r]) for r in recs]
+        into = names(theirs)
+        if not all(any(same_part(a, b) for a in m for b in into) for m in mine):
+            return False
+        # Every size, page and erase block the group gives, the longer id's
+        # records give too, where they give any.
+        for attr in ("size", "page_size", "sector_size"):
+            given = {getattr(r, attr) for r in theirs} - {None}
+            if given and not {getattr(r, attr) for r in recs} - {None} <= given:
+                return False
+        return True
 
     nand = {k: recs for k, recs in groups.items() if k[0] is FlashType.NAND}
     folds = {}
@@ -175,32 +189,38 @@ def _nand_folds(groups: Mapping[_Key, list[Record]]) -> dict[_Key, _Key]:
             k
             for k, theirs in nand.items()
             if k[1] is key[1] and len(k[2]) > len(key[2]) and k[2].startswith(key[2])
-            if all(same_part(names([r]), names(theirs)) for r in recs)
+            if one_part(recs, theirs)
         ]
         longest = max(longer, key=lambda k: len(k[2]), default=None)
         if longest is not None and all(longest[2].startswith(k[2]) for k in longer):
             folds[key] = longest
-    return folds
+
+    def end(key: _Key) -> _Key:
+        return end(folds[key]) if key in folds else key
+
+    return {key: end(into) for key, into in folds.items()}
 
 
-def infer_manufacturer(flash: Flash, records: Iterable[Record]) -> str | None:
+def infer_manufacturer(flash: Flash, chips: Iterable[Flash]) -> str | None:
     """The manufacturer of a chip whose records name none (Rockchip's never
-    do): the one all of ``records`` name that have the chip's manufacturer
-    byte and bank and a part name starting with the same three characters
-    as one of the chip's. The byte alone is not enough, as clones answer
-    another maker's (GSS's GSS01GSAK1 answers Alliance Memory's 0x52), and
-    nor is a driver's list of manufacturer bytes (Rockchip's sfc.h makes
-    ESMT's F50L2G41KA, answering 0xc8, GigaDevice's)."""
+    do): the one all of ``chips`` are made by (as their sources agree) that
+    answer the chip's manufacturer byte and bank with a part name starting
+    with the same three characters as one of the chip's. The byte alone is
+    not enough, as clones answer another maker's (GSS's GSS01GSAK1 answers
+    Alliance Memory's 0x52), and nor is a driver's list of manufacturer bytes
+    (Rockchip's sfc.h makes ESMT's F50L2G41KA, answering 0xc8, GigaDevice's).
+    Each chip counts with the maker its sources agree on, not each record's,
+    so one source's slip (Dediprog's FM25Q64 made by Fidelix, on Fudan's
+    0xa1) does not stop the inference."""
     prefixes = {n[:3] for n in flash.names}
-    found = set()
-    for r in records:
-        if r.manufacturer is None or r.id is None:
-            continue
-        bank, core = strip_continuation(r.id)
-        if (bank, core[0]) == (flash.bank, flash.id[0]) and any(
-            n[:3] in prefixes for n in r.part_names
-        ):
-            found.add(r.manufacturer)
+    found = {
+        g.manufacturer
+        for g in chips
+        if g.manufacturer
+        and (g.type, g.key) != (flash.type, flash.key)  # other chips
+        and (g.bank, g.id[0]) == (flash.bank, flash.id[0])
+        and any(n[:3] in prefixes for n in g.names)
+    }
     return found.pop() if len(found) == 1 else None
 
 
@@ -237,8 +257,10 @@ class Database:
             key = (r.type, r.id_method.family, core)
             groups[key].append(r)
             banks[key].setdefault(bank, set()).add(r.source)
+        # Each fold goes to where it ends, which never folds itself, so no
+        # key is read after it has been popped.
         for short, into in _nand_folds(groups).items():
-            groups[into] += groups.pop(short)
+            groups[into].extend(groups.pop(short))
             for n, giving in banks.pop(short).items():
                 banks[into].setdefault(n, set()).update(giving)
         #: Every datasheet known, each once (a chip's own are in its
@@ -260,13 +282,24 @@ class Database:
             for (typ, fam, core), recs in sorted(groups.items(), key=lambda kv: (kv[0][2], kv[0]))
         )
         # A JEDEC chip no record names a manufacturer for gets one inferred.
-        named = [r for r in self.records if r.manufacturer and r.id_method and r.is_jedec]
-        self.flashes = tuple(
-            replace(f, inferred_manufacturer=infer_manufacturer(f, named))
-            if f.family is IdFamily.JEDEC and f.manufacturer is None
-            else f
-            for f in self.flashes
-        )
+        self._named = [f for f in self.flashes if f.family is IdFamily.JEDEC and f.manufacturer]
+        self.flashes = tuple(self._inferred(f) for f in self.flashes)
+
+    def _inferred(self, f: Flash) -> Flash:
+        """``f``, with its manufacturer inferred if no record names one."""
+        if f.family is not IdFamily.JEDEC or f.manufacturer is not None:
+            return f
+        return replace(f, inferred_manufacturer=infer_manufacturer(f, self._named))
+
+    def narrow(self, flash: Flash, ext: bytes) -> Flash:
+        """``flash`` narrowed to the parts sending ``ext`` after its id
+        (:meth:`Flash.with_ext_id`), with its manufacturer inferred again if
+        those parts' records name none (the F50L2G41KA at ``c8 41``, then
+        ``7f``, is ESMT's, where the GD5F1GQ5REXXG there is GigaDevice's)."""
+        narrowed = flash.with_ext_id(ext)
+        if any(r.manufacturer for r in narrowed.records):
+            return replace(narrowed, inferred_manufacturer=None)
+        return self._inferred(replace(narrowed, inferred_manufacturer=None))
 
     @classmethod
     def load(cls) -> Database:
@@ -315,7 +348,7 @@ class Database:
             fits = next((i for i in f.ids if core[: len(i)] == i), None)
             if fits is not None:
                 ext = core[len(f.id) :]
-                found.append((len(fits), f.with_ext_id(ext) if ext else f))
+                found.append((len(fits), self.narrow(f, ext) if ext else f))
         # Of the ids that fit, only the longest of each type: Linux's
         # one-byte "any Macronix part" entry (c2) is not an answer when the
         # MX25L12835F's c22018 is.

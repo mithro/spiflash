@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 from collections import Counter
@@ -25,6 +26,7 @@ from spiflash.model import (
     name_matches,
     parse_id,
     part_names,
+    same_part,
     squash_name,
     strip_continuation,
 )
@@ -297,9 +299,6 @@ NO_MANUFACTURER = {
     "666620",  # Zephyr's MX25L12833F
     "8c01",  # XCSP1AAPK, on ESMT's id
     "8ca1",
-    "a14019",  # FM25Q256I3: Fudan, which no other source names
-    "a1a1",
-    "a1a5",
     "b00c",  # Unim's UM19A
     "b00d",
     "b014",
@@ -323,6 +322,65 @@ def test_manufacturer_inferred_from_id_and_part_name() -> None:
 
 def rec_at(chip_id: str, name: str, *, vendor: str | None = None, source: str = "linux") -> Record:
     return rec(id=chip_id, name=name, vendor=vendor, source=source, type="nand")
+
+
+def test_parts_told_apart_by_ext_id() -> None:
+    # GigaDevice's GD5F1GQ5RE and ESMT's F50L2G41KA both answer c8 41, and
+    # only Rockchip gives what follows: c8 for one, 7f for the other.
+    (esmt,) = spiflash.lookup("c8417f", flash_type="nand")
+    assert esmt.names == ("F50L2G41KA",)
+    assert (esmt.manufacturer, esmt.manufacturer_inferred, esmt.size) == ("ESMT", True, 256 << 20)
+    assert spiflash.lookup("c8417f7f7f", flash_type="nand")[0].names == ("F50L2G41KA",)
+    (gd,) = spiflash.lookup("c841c8", flash_type="nand")
+    assert "F50L2G41KA" not in gd.names
+    assert {"GD5F1GQ5REXXG", "GD5F1GQ5REYIG"} <= set(gd.names)  # XX: any two
+    assert (gd.manufacturer, gd.size) == ("GigaDevice", 128 << 20)
+    # The whole id holds both parts, but they are not a disagreement.
+    (both,) = spiflash.lookup("c841", flash_type="nand")
+    assert both.conflicts == {}
+    assert len(both.variants) == 3
+
+
+def test_with_ext_id_keeps_the_same_part_without_one() -> None:
+    f = Database(
+        [
+            rec(ext_id="4d00", name="S25FL129P0"),
+            rec(ext_id=None, name="S25FL129P"),  # the same part, any variant
+            rec(ext_id=None, name="S25FL127S"),  # another
+        ]
+    ).flashes[0]
+    assert [r.name for r in f.with_ext_id(bytes.fromhex("4d00")).records] == [
+        "S25FL129P0",
+        "S25FL129P",
+    ]
+    # No extended id agrees: every record without one.
+    assert [r.name for r in f.with_ext_id(b"\x99").records] == ["S25FL129P", "S25FL127S"]
+
+
+def test_same_part() -> None:
+    for a, b in [
+        ("ZB35Q01B", "ZB35Q01BYIG"),
+        ("GD5F1GQ5REXXG", "GD5F1GQ5REYIG"),
+        ("S25FL128S......1", "S25FL128SAGMFI011"),
+    ]:
+        assert same_part(a, b), (a, b)
+        assert same_part(b, a), (b, a)
+    for a, b in [("F50L2G41KA", "GD5F1GQ5REXXG"), ("MX25L6433F", "MX25L6435F")]:
+        assert not same_part(a, b), (a, b)
+        assert not same_part(b, a), (b, a)
+
+
+def test_infer_manufacturer_counts_each_chip_once() -> None:
+    # Dediprog alone calls Fudan's FM25Q64 Fidelix's: the chip is Fudan's.
+    mine = rec_at("a1a1", "FM25S01", source="rockchip")
+    fm64 = [
+        rec(id="a14017", name="FM25Q64", vendor="Fudan", source="flashrom"),
+        rec(id="a14017", name="FM25Q64", vendor="Fudan", source="imsprog"),
+        rec(id="a14017", name="FM25Q64", vendor="Fidelix", source="dediprog"),
+    ]
+    assert Database([mine, *fm64]).lookup("a1a1")[0].manufacturer == "Fudan"
+    (fm,) = spiflash.lookup("a14019")
+    assert (fm.manufacturer, fm.manufacturer_inferred) == ("Fudan", True)
 
 
 def test_infer_manufacturer_needs_the_byte_and_one_maker() -> None:
@@ -369,6 +427,25 @@ def test_nand_ids_fold_into_the_longer_id_of_the_same_part() -> None:
     # A name with a suffix is the same part (ZB35Q01B, ZB35Q01BYIG).
     suffix = Database([rec_at("5ea1", "ZB35Q01BYIG"), rec_at("5ea1a1", "ZB35Q01B")])
     assert [x.id_hex for x in suffix.flashes] == ["5ea1a1"]
+    # The same size, page and block: one part (a different size: see below).
+    sized = Database([rec_at("c8a1", "GD5F1G"), rec(id="c8a101", name="GD5F1G", type="nand")])
+    assert [x.id_hex for x in sized.flashes] == ["c8a101"]
+    # A size the longer id's records do not give at all is no conflict.
+    unsized = Database(
+        [rec_at("c8a1", "GD5F1G"), rec(id="c8a101", name="GD5F1G", type="nand", size=None)]
+    )
+    assert [x.id_hex for x in unsized.flashes] == ["c8a101"]
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations(range(3))))
+def test_nand_folds_end_where_they_end_in_any_order(order: tuple[int, ...]) -> None:
+    # ab31 names X1, which ab3101 names too; ab3101 names Z9, as ab310155
+    # does: all three end at ab310155, however the records come.
+    records = [rec_at("ab31", "X1"), rec_at("ab3101", "X1/Z9"), rec_at("ab310155", "Z9")]
+    db = Database([records[i] for i in order])
+    assert [f.id_hex for f in db.flashes] == ["ab310155"]
+    assert sorted(len(i) for i in db.flashes[0].ids) == [2, 3, 4]
+    assert len(db.flashes[0].records) == 3
 
 
 @pytest.mark.parametrize(
@@ -382,6 +459,8 @@ def test_nand_ids_fold_into_the_longer_id_of_the_same_part() -> None:
         [rec_at("c881", "GD5F1GM7"), rec_at("c881", "GD5F1GM9"), rec_at("c88101", "GD5F1GM9")],
         # SPI NOR ids never fold.
         [rec(id="c220", name="P1"), rec(id="c22018", name="P1")],
+        # Another size is another part ("GD5F1G" and a GD5F1GQ4UAYIG).
+        [rec_at("c8a1", "GD5F1G"), rec(id="c8a101", name="GD5F1GQ4UAYIG", type="nand", size=1)],
     ],
 )
 def test_nand_ids_do_not_fold(records: list[Record]) -> None:

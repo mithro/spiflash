@@ -320,6 +320,17 @@ def name_matches(pattern: str, query: str, *, prefix: bool = False) -> bool:
     return match(rx, query.upper()) is not None
 
 
+def same_part(a: str, b: str) -> bool:
+    """Whether part names ``a`` and ``b`` name one part: the same name, or
+    it with a suffix (ZB35Q01B, ZB35Q01BYIG: package and grade), reading
+    flashrom's ``.`` and a datasheet's ``XX`` placeholder as any character
+    (GD5F1GQ5REXXG, GD5F1GQ5REYIG)."""
+    a, b = a.upper(), b.upper()
+    return name_matches(a.replace("XX", ".."), b, prefix=True) or name_matches(
+        b.replace("XX", ".."), a, prefix=True
+    )
+
+
 #: What :func:`name_distance` charges: an edit (a character changed, added,
 #: dropped, or two neighbours swapped), and each character one name has past
 #: the end of the other (a suffix: package, temperature, ordering code).
@@ -600,23 +611,47 @@ class Flash:
 
     @property
     def conflicts(self) -> dict[str, dict[Any, tuple[Source, ...]]]:
-        """The attributes the sources disagree on."""
+        """The attributes the sources disagree on, for one part: records
+        that extended ids tell apart (:attr:`variants`) are not compared."""
         out = {}
         for attr in ("size", "page_size", "sector_size", "voltage"):
-            v = self.values(attr)
-            if len(v) > 1:
-                out[attr] = v
+            if any(len({getattr(r, attr) for r in v} - {None}) > 1 for v in self.variants):
+                out[attr] = self.values(attr)
         return out
 
+    @cached_property
+    def variants(self) -> tuple[tuple[Record, ...], ...]:
+        """The records, in groups that each describe one part: all of them,
+        where no record has an extended id; otherwise those with none, and
+        for each extended id what :meth:`with_ext_id` keeps for it."""
+        exts = sorted({r.ext_id for r in self.records if r.ext_id})
+        if not exts:
+            return (self.records,)
+        groups = [tuple(r for r in self.records if r.ext_id is None)]
+        groups += [self.with_ext_id(e).records for e in exts]
+        return tuple(dict.fromkeys(g for g in groups if g))
+
     def with_ext_id(self, ext: bytes) -> Flash:
-        """This id narrowed by the bytes a chip sends after it: records whose
-        extended id disagrees with ``ext`` are dropped (records with none
-        stay, as they cover every variant)."""
-        keep = tuple(
-            r
-            for r in self.records
-            if r.ext_id is None or r.ext_id[: len(ext)] == ext[: len(r.ext_id)]
-        )
+        """This id narrowed by the bytes a chip sends after it: the records
+        whose extended id agrees with ``ext``, and those with none that name
+        one of their parts (:func:`same_part`). Where no extended id agrees,
+        the records with none, which cover every variant. Two parts can
+        share an id and differ only after it: the GD5F1GQ5REYIG answers
+        ``c8 41`` then ``c8``, the F50L2G41KA ``c8 41`` then ``7f``."""
+
+        def agrees(r: Record) -> bool:
+            return r.ext_id is not None and r.ext_id[: len(ext)] == ext[: len(r.ext_id)]
+
+        parts = {n for r in self.records if agrees(r) for n in r.part_names}
+        if parts:
+            keep = tuple(
+                r
+                for r in self.records
+                if agrees(r)
+                or (r.ext_id is None and any(same_part(n, p) for n in r.part_names for p in parts))
+            )
+        else:
+            keep = tuple(r for r in self.records if r.ext_id is None)
         return replace(self, records=keep or self.records)
 
     def to_json(self) -> dict[str, Any]:
@@ -624,6 +659,7 @@ class Flash:
         return {
             "id": self.id_hex,
             "jedec_id": self.jedec_id,
+            "ids": [i.hex() for i in self.ids],
             "id_family": self.family,
             "type": self.type,
             "manufacturer": self.manufacturer,
