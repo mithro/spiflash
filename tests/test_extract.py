@@ -332,7 +332,7 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
 
     s = r["S25FL128S_UL Uniform 128 kB Sectors"]
     assert s["id"] == "012018"
-    assert s["ext_id"] == "0080"
+    assert s["ext_id"] == "4d0080"  # the id length byte, 4d, the probe skips
     assert s["tested"] == "{ .probe = NA, .read = OK }"
     assert r["M25P05"]["id_method"] == "res1"
     assert r["M25P05"]["id"] == "05"

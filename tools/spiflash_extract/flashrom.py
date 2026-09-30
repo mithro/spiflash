@@ -135,8 +135,11 @@ def _id_bytes(method: str | None, mfr: int, model: int) -> tuple[str | None, str
         return _hex_bytes(mfr) + _hex_bytes(model), None
     if model > 0xFFFF:
         # PROBE_SPI_BIG_SPANSION: RDID bytes 1-2 are the device id, and
-        # bytes 4-5 (skipping 3, the id length) the extended id.
-        return _hex_bytes(mfr) + f"{model >> 16:04x}", f"{model & 0xFFFF:04x}"
+        # bytes 4-5 the rest the model id holds. Byte 3, which the probe
+        # skips, is the length of the id, 4Dh on these parts (the table in
+        # probe_spi_big_spansion(), s25f.c), and part of the extended id as
+        # the chip sends it and the other sources give it (4d 00 80).
+        return _hex_bytes(mfr) + f"{model >> 16:04x}", f"4d{model & 0xFFFF:04x}"
     return _hex_bytes(mfr) + f"{model:04x}", None
 
 
