@@ -54,6 +54,14 @@ commit = "676e53ec73d2261c974d610b7cf0693117c8d2ef"
 paths = ["src/spiFlashdb.hpp", "src/spiFlash.cpp"]
 license = "Apache-2.0"
 
+[imsprog]
+url = "https://github.com/bigbigmdm/IMSProg"
+branch = "main"
+commit = "9f7d14ec9e7f6b4e7d1508bd45bd4a946c292779"
+# A binary file: see tools/spiflash_extract/imsprog.py.
+paths = ["IMSProg_programmer/database/IMSProg.Dat"]
+license = "GPL-3.0-or-later"
+
 [qemu]
 url = "https://gitlab.com/qemu-project/qemu.git"
 # Where to link to a file in it: the official GitHub mirror.

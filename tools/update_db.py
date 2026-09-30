@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from spiflash_extract import (
     fetch,
     flashrom,
+    imsprog,
     linux,
     openfpgaloader,
     openocd,
@@ -54,6 +55,7 @@ EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
     "flashprog": lambda root: flashrom.extract(root, "flashprog"),
     "openocd": openocd.extract,
     "openfpgaloader": openfpgaloader.extract,
+    "imsprog": imsprog.extract,
     "qemu": qemu.extract,
     "zephyr": zephyr.extract,
 }
