@@ -25,7 +25,7 @@ Provides: spiflash
 Description: database of SPI flash chips: JEDEC ids, sizes, erase geometry
  spiflash answers "which chip answered this JEDEC id?" and "what does this
  part answer?" for SPI NOR and SPI NAND flash, from one database merged from
- the flash tables in Linux, U-Boot, flashrom, flashprog, OpenOCD,
+ the flash tables in Linux, U-Boot, Dediprog, flashrom, flashprog, OpenOCD,
  openFPGALoader and QEMU, with the JEP106 manufacturer list.
  .
  Each chip id carries the part names every source gives it, its size, page

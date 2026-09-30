@@ -49,11 +49,15 @@ SUMMARY = {
     ),
     Source.LINUX: (
         "The Linux kernel's SPI NOR and SPI NAND drivers, and the parts each recognises "
-        "by its id: the most recent parts, and the only SPI NAND."
+        "by its id: the most recent parts, and most of the SPI NAND."
     ),
     Source.UBOOT: (
         "The U-Boot boot loader's SPI flash driver, whose table keeps Linux's "
         "pre-6.8 format and parts Linux dropped."
+    ),
+    Source.DEDIPROG: (
+        "The chip database of Dediprog's SF100 and SF600 programmers: the largest "
+        "table here, SPI NOR and SPI NAND, kept by the programmer maker."
     ),
     Source.OPENOCD: (
         "The on-chip debugger's table of SPI flash for its flash drivers, with "
@@ -78,6 +82,7 @@ PARSERS = {
     Source.FLASHPROG: ("tools/spiflash_extract/flashrom.py",),
     Source.LINUX: ("tools/spiflash_extract/linux.py",),
     Source.UBOOT: ("tools/spiflash_extract/uboot.py",),
+    Source.DEDIPROG: ("tools/spiflash_extract/dediprog.py",),
     Source.OPENOCD: ("tools/spiflash_extract/openocd.py",),
     Source.OPENFPGALOADER: ("tools/spiflash_extract/openfpgaloader.py",),
     Source.QEMU: ("tools/spiflash_extract/qemu.py", "src/spiflash/sfdp.py"),

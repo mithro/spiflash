@@ -1,7 +1,7 @@
 # spiflash
 
 **A database of SPI flash chips**, merged from the flash tables of {sfsrc}`linux`,
-{sfsrc}`u-boot`, {sfsrc}`flashrom`, {sfsrc}`flashprog`, {sfsrc}`openocd`, {sfsrc}`openfpgaloader` and
+{sfsrc}`u-boot`, {sfsrc}`flashrom`, {sfsrc}`flashprog`, {sfsrc}`dediprog`, {sfsrc}`openocd`, {sfsrc}`openfpgaloader` and
 {sfsrc}`qemu`, and from the flash chips {sfsrc}`zephyr`'s boards describe. For each chip id:
 
 - its part names, size, page and sector sizes, erase layouts, supply voltage,
