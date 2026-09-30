@@ -29,10 +29,11 @@ lowest first (``struct ReadCommand`` and its siblings in
 chip, block and die erase; the fourth byte is reserved there, though the
 octal parts have an octal opcode in it. Only the single-line read and
 program are taken: the wider ones are often a template's defaults (the
-single-I/O SST25LF040A lists quad read, 0x6b, and quad program, 0x32). For
-the same reason a sector size is given only with the erase that erases it:
-``BlockSizeInByte``, 64 KiB in nearly every entry, for 0xd8 and 0xdc, 32 KiB
-for 0x52, and ``SectorSizeInByte`` for 0x20.
+single-I/O SST25LF040A lists quad read, 0x6b, and quad program, 0x32).
+``BlockSizeInByte`` is a template's too: 64 KiB in nearly every entry, where
+the other sources give 0xd8 and 0xdc 32, 128 or 256 KiB, or boot blocks. So
+those two erases have no layout, and a sector size is given only for 0x20
+(``SectorSizeInByte``) and 0x52 (see :func:`_erasers`).
 
 Entries of some classes are not what their attributes say. The DataFlash
 (``Class="AT45DB..."``) entries carry a SPI NOR template (0xd8 erase, 256-byte
@@ -199,7 +200,7 @@ def extract(root: Path) -> list[Record]:
         except LeftOutError:
             continue
         except (ValueError, KeyError) as e:
-            msg = f"{DB}:{n}: {chip.get('TypeName')}: {e!s}"
+            msg = f"{DB}:{n}: {chip.get('TypeName')}: {_why(e)}"
             raise ValueError(msg) from e
     return records
 
@@ -213,9 +214,14 @@ def skipped(root: Path) -> Counter[str]:
         except LeftOutError as e:
             reasons[str(e)] += 1
         except (ValueError, KeyError) as e:
-            msg = f"{DB}:{n}: {chip.get('TypeName')}: {e!s}"
+            msg = f"{DB}:{n}: {chip.get('TypeName')}: {_why(e)}"
             raise ValueError(msg) from e
     return reasons
+
+
+def _why(e: Exception) -> str:
+    """What went wrong, in words: a KeyError is a missing attribute."""
+    return f"missing attribute {e.args[0]}" if isinstance(e, KeyError) else str(e)
 
 
 def _digits(value: str) -> str:
@@ -408,23 +414,31 @@ def _erasers(
     chip: dict[str, str], ops: Opcodes, size: int
 ) -> tuple[list[dict[str, Any]], int | None]:
     """The erase layouts, and the sector size the block erase gives: chip
-    erase; the block erase, 0xd8 and 0xdc over ``BlockSizeInByte`` blocks,
-    0x52 over 32 KiB ones and 0x20 over the ``SectorSizeInByte`` sectors;
-    and die erase over ``DieSizeInKByte`` dies."""
+    erase; 0x20 over the ``SectorSizeInByte`` sectors; 0x52 over the SST
+    parts' 32 KiB blocks, or an AT25F's ``SectorSizeInByte`` where that is
+    not the template's 4096; and die erase over ``DieSizeInKByte`` dies.
+
+    0xd8 and 0xdc have no layout: ``BlockSizeInByte`` is 64 KiB in nearly
+    every entry, where other sources give 32 KiB (M25P05, EN25F10, ...),
+    128 KiB (the MT35XU parts), 256 KiB (M25P128, S25FL512S) or boot blocks
+    (the AMIC A25L..P parts)."""
     out: list[dict[str, Any]] = []
     sector = None
     for slot, byte, op in _opcodes(chip, "EraseCmd", chip["EraseCmd"]):
         ops.add(op, f"EraseCmd={chip['EraseCmd']}", value=byte)
+        sectors = int(chip.get("SectorSizeInByte", "0"))
         if slot == 0:
             unit = size
         elif slot == 2:
             unit = int(chip.get("DieSizeInKByte", "0")) * 1024
-        elif byte in (0xD8, 0xDC):
-            unit = int(chip["BlockSizeInByte"])
+        elif byte == 0x52 and int(chip["RDIDCommand"], 16) == 0x15:
+            unit = 0 if sectors == 4096 else sectors
         elif byte == 0x52:
             unit = 32 * 1024
+        elif byte == 0x20:
+            unit = sectors
         else:
-            unit = int(chip.get("SectorSizeInByte", "0"))
+            unit = 0
         # None given, or a block larger than the chip (64 KiB on a 32 KiB
         # part): no layout.
         if not unit or unit > size:

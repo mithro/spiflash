@@ -87,6 +87,11 @@ def test_part_case() -> None:
         "S25FL128S_UL Uniform 128 kB Sectors"
     )
     assert record.part_case("sst25vf512") == "SST25VF512"
+    # What is in parentheses keeps its case.
+    assert record.part_case("W25Q128JW(3MHz)") == "W25Q128JW(3MHz)"
+    assert record.part_case("EN25B10(Bottom Boot)") == "EN25B10(Bottom Boot)"
+    assert record.part_case("mt25tl256b ( for one die)") == "MT25TL256B ( for one die)"
+    assert record.part_case("S25FL032(A/P)") == "S25FL032(A/P)"
 
 
 def test_linux_nor(linux_tree: Path) -> None:
@@ -979,16 +984,15 @@ def test_dediprog(tmp_path: Path) -> None:
     recs = dediprog.extract(dediprog_tree(tmp_path))
     r = by_name(recs)
     w = r["W25Q128FV"]
-    assert (w["line"], w["vendor"], w["id"], w["id_method"]) == (36, "Winbond", "ef4018", "rdid")
-    assert (w["size"], w["page_size"], w["sector_size"]) == (16 << 20, 256, 64 << 10)
-    assert w["erasers"] == [
-        {"opcode": 0xC7, "blocks": [[16 << 20, 1]]},
-        {"opcode": 0xD8, "blocks": [[64 << 10, 256]]},
-    ]
+    assert (w["line"], w["vendor"], w["id"], w["id_method"]) == (37, "Winbond", "ef4018", "rdid")
+    # 0xd8 has no layout, and gives no sector size: BlockSizeInByte is a
+    # template's 64 KiB.
+    assert (w["size"], w["page_size"], w["sector_size"]) == (16 << 20, 256, None)
+    assert w["erasers"] == [{"opcode": 0xC7, "blocks": [[16 << 20, 1]]}]
     # Only the single-line read and program of the packed words.
     assert set(ops(w)) == {"RDID", "READ_1_1_1_FAST", "PP_1_1_1", "SE", "CHIP_ERASE"}
     assert ops(w)["READ_1_1_1_FAST"] == (0x0B, "ReadCmd=0x006B3B0B")
-    assert w["features"] == ["erase_64k", "fast_read", "lock", "qpi"]
+    assert w["features"] == ["fast_read", "lock", "qpi"]
     assert {"ProgramIOMethod=SPQD_RSWQW", "QPIEnable", "Voltage=3.3V"} <= set(w["flags"])
     assert w["notes"][0].startswith("128 Mbit")
     # Legacy ids: REMS, AT25F, and RES read with its dummy bytes (0xff), or
@@ -1029,7 +1033,7 @@ def test_dediprog(tmp_path: Path) -> None:
     assert (n["erasers"], n["features"]) == (None, [])
     assert (r["GD5F1GQ4UC"]["id"], r["GD5F1GQ4UC"]["id_method"]) == ("c8b148", "rdid_opcode")
     assert r["MK60N1GAL"]["id"] == "a791"  # 0xA791, read as three bytes
-    assert len(recs) == 28
+    assert len(recs) == 29
 
 
 def test_dediprog_classes(tmp_path: Path) -> None:
@@ -1050,6 +1054,17 @@ def test_dediprog_classes(tmp_path: Path) -> None:
     sst = r["25LF040A"]
     assert {"opcode": 0x52, "blocks": [[32 << 10, 16]]} in sst["erasers"]
     assert (sst["sector_size"], sst["features"]) == (32 << 10, ["erase_32k", "fast_read", "lock"])
+    # On an AT25F, 0x52 erases SectorSizeInByte, where that is not the
+    # template's 4096 (the AT25F2048's 0x52 erases 64 KiB).
+    at25f = r["AT25F1024A"]
+    assert {"opcode": 0x52, "blocks": [[32 << 10, 4]]} in at25f["erasers"]
+    assert at25f["sector_size"] == 32 << 10
+    at25f2048 = r["AT25F2048"]
+    assert (at25f2048["erasers"], at25f2048["sector_size"]) == (
+        [{"opcode": 0x62, "blocks": [[256 << 10, 1]]}],
+        None,
+    )
+    assert "BE_32K" in ops(at25f2048)
     # Swapped read and program words, read the right way round.
     bg = r["BG25Q80A"]
     assert ops(bg)["READ_1_1_1_FAST"] == (0x0B, "ReadCmd=0x00EBBB0B")
@@ -1116,15 +1131,15 @@ def test_dediprog_refuses_what_it_cannot_read(tmp_path: Path) -> None:
         dediprog_chip(tmp_path, ICType="SPI_EEPROM")
     with pytest.raises(ValueError, match="unknown opcode 0x6b in slot 0"):
         dediprog_chip(tmp_path, ReadCmd="0x0000006B")
-    with pytest.raises(ValueError, match="not a whole number of 65536-byte blocks"):
-        dediprog_chip(tmp_path, ChipSizeInKByte="96")
+    with pytest.raises(ValueError, match="not a whole number of 4096-byte blocks"):
+        dediprog_chip(tmp_path, ChipSizeInKByte="6", EraseCmd="0x000020C7")
     # What cannot be read at all names its line, in extract and in skipped.
     bad = dediprog_tree(tmp_path, f"<x>\n{dediprog_line(JedecDeviceID='0xZZ')}\n</x>\n")
     with pytest.raises(ValueError, match="dedicfg:2: W25Q128FV: invalid literal"):
         dediprog.extract(bad)
     with pytest.raises(ValueError, match="dedicfg:2: W25Q128FV: invalid literal"):
         dediprog.skipped(bad)
-    with pytest.raises(ValueError, match="dedicfg:2: W25Q128FV: 'RDIDCommand'"):
+    with pytest.raises(ValueError, match="dedicfg:2: W25Q128FV: missing attribute RDIDCommand"):
         dediprog_chip(tmp_path, RDIDCommand=None)
     with pytest.raises(ValueError, match="not one <Chip"):
         dediprog.extract(dediprog_tree(tmp_path, '<x>\n<Chip TypeName="a"\n/>\n</x>\n'))

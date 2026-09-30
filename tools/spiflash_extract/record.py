@@ -55,6 +55,7 @@ Fields (``None`` / empty when the upstream does not say):
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from spiflash.enums import Feature, FlashType, Source
@@ -97,11 +98,21 @@ def part_case(name: str) -> str:
     write them: ``"w25q128fv/jv"`` is ``"W25Q128FV/JV"``, ``"n25q256 1.8v"``
     is ``"N25Q256 1.8V"``. A word with a digit in it is part of a part number
     (or a voltage); the first word is the part; other words ("Uniform
-    128 kB Sectors") keep their case."""
-    words = name.split(" ")
-    return " ".join(
-        w.upper() if i == 0 or any(c.isdigit() for c in w) else w for i, w in enumerate(words)
-    )
+    128 kB Sectors"), and what is in parentheses ("W25Q128JW(3MHz)",
+    "EN25B10(Bottom Boot)"), keep their case."""
+    out = []
+    first = True
+    for piece in re.split(r"(\([^()]*\))", name):
+        if piece.startswith("("):
+            out.append(piece)
+            continue
+        words = piece.split(" ")
+        for i, w in enumerate(words):
+            if w and (first or any(c.isdigit() for c in w)):
+                words[i] = w.upper()
+            first = first and not w
+        out.append(" ".join(words))
+    return "".join(out)
 
 
 def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:

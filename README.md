@@ -19,7 +19,7 @@ merged from the flash tables of every project that keeps one:
 Together that is 1192 distinct chip ids (966 SPI NOR, 226 SPI NAND) from 62
 manufacturers, 651 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
-from, and where the sources disagree (104 ids do) both answers are kept.
+from, and where the sources disagree (86 ids do) both answers are kept.
 Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
 (JESD216) tables, decoded.
 
