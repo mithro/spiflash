@@ -53,7 +53,9 @@ _ISSUE_TITLES = {
         "Sources disagree on a value",
         (
             "Two sources give one chip id a different size, page size, sector size, "
-            "supply voltage, quad enable bit or requirement, or block-protection bit."
+            "supply voltage, quad enable bit or requirement, block-protection bit, "
+            "SPI NAND spare area, planes, bad blocks or ECC requirement, number of "
+            "dies, or die select bit."
         ),
     ),
     IssueKind.SAME_SOURCE: (
@@ -66,8 +68,9 @@ _ISSUE_TITLES = {
     IssueKind.SFDP: (
         "A source disagrees with its own SFDP tables",
         (
-            "A source gives a part a size, page size, erase layout or quad enable "
-            "requirement, and with it the part's own SFDP tables, which say otherwise."
+            "A source gives a part a size, page size, erase layout, quad enable "
+            "requirement or number of dies, and with it the part's own SFDP tables, "
+            "which say otherwise."
         ),
     ),
     IssueKind.SHARED_BIT: (

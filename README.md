@@ -233,14 +233,16 @@ part name (`W25Q128*`), and `/.../` is a regular expression on the part names
 chip.supports("READ_1_1_4")              # True
 op = chip.opcodes["READ_1_4_4"]
 op.opcode, op.operation.description      # (235, 'Quad I/O fast read'): 0xeb
-op.because                               # (('flashprog', 'FEATURE_FAST_READ_QIO', False, False), ('openocd', 'qread_cmd', False, False))
+op.because                               # (('flashprog', 'FEATURE_FAST_READ_QIO', False, False, None), ('openocd', 'qread_cmd', False, False, None))
 ```
 
-Each of `op.because` is a `(source, via, implied, assumed)` claim: `implied` where the
-source's entry does not list the operation, but it follows from what the
-entry does say (its erase layouts, the way it reads the id), and `assumed` where
-it is only the source's driver default, sent to every part whatever the entry says
-(Linux's fast read, U-Boot's quad page program for every quad-read part).
+Each of `op.because` is a `(source, via, implied, assumed, dummy_clocks)` claim:
+`implied` where the source's entry does not list the operation, but it follows
+from what the entry does say (its erase layouts, the way it reads the id),
+`assumed` where it is only the source's driver default, sent to every part
+whatever the entry says (Linux's fast read, U-Boot's quad page program for every
+quad-read part), and `dummy_clocks` the part's own dummy clocks for it, where
+the source gives them (`op.dummy_clocks` is what most sources giving them say).
 
 Operations are named as [LiteSPI](https://github.com/litex-hub/litespi)'s
 `SpiNorFlashOpCodes` names them, so a list can be used there directly:

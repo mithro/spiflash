@@ -92,7 +92,7 @@ KIND_NOTES = {
 _TABLE = "sf-table sf-filterable sf-issues"
 
 #: The values sources are compared on (:data:`spiflash.model.COMPARED`),
-#: as headings: a value compared role by role is one section.
+#: as headings: a value compared component by component is one section.
 VALUE_TITLES = {
     "size": "Size",
     "page_size": "Page size",
@@ -101,7 +101,16 @@ VALUE_TITLES = {
     "quad_enable": "Quad enable bit",
     "quad_enable_requirement": "Quad enable requirement",
     "protection": "Block protection bits",
+    "oob_size": "Spare area per page",
+    "planes": "Planes",
+    "dies": "Dies",
+    "die_select_bit": "Die select bit",
+    "max_bad_blocks": "Bad blocks per die",
+    "ecc": "ECC requirement",
 }
+
+#: The compared values that are counts, not sizes in bytes.
+COUNTS = frozenset({"planes", "dies", "max_bad_blocks", "ecc.strength_bits"})
 
 
 def value_of(attribute: str) -> str:
@@ -189,6 +198,10 @@ class _Render:
             return esc(f"{role}: {v}" if role else str(v))
         if issue.attribute == "voltage":
             return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if v else volt(None)
+        if issue.attribute == "ecc.strength_bits":
+            return esc(f"{v} bit{'s' if v != 1 else ''}")
+        if issue.attribute in COUNTS:
+            return esc(str(v))
         if issue.attribute:
             # One unit for all the answers, so their digits line up.
             return size_text(v, common_unit(a.value for a in issue.answers))
