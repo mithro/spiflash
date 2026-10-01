@@ -53,7 +53,7 @@ from spiflash.sfdp import BFPT_ID, FOUR_BYTE_ID, PROFILE1_ID
 
 from . import cparse, dts
 from .ops import Opcodes
-from .record import Record, make
+from .record import Record, make, member_via
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -181,6 +181,18 @@ QER_IGNORED_BY = frozenset({"jedec,spi-nor"})
 #: The SFDP parameter tables a node copies, by property: the table id each is.
 SFDP_TABLES = {"sfdp-bfp": BFPT_ID, "sfdp-ff05": PROFILE1_ID, "sfdp-ff84": FOUR_BYTE_ID}
 
+#: The ways into 4-byte mode by their bit of BFPT DW16, as
+#: ``enter-4byte-addr`` gives DW16[31:24] (bit 29, dedicated 4-byte
+#: opcodes, is ``4byte_opcodes``).
+ENTER_4B = {
+    24: "en4b",
+    25: "wren_en4b",
+    26: "wrear",
+    27: "brwr",
+    28: "nv_cr",
+    30: "always_4b",
+}
+
 #: Properties kept in a record's ``flags`` as ``name`` or ``name=value``:
 #: what the chip is or needs, not how the board wires or clocks it.
 FLAGS = (
@@ -282,6 +294,10 @@ class _Node:
         self.features: set[str] = set()
         self.ops = Opcodes()
         self.notes: list[str] = []
+        #: The ways into 4-byte mode, each with the property giving it.
+        self.four_byte: dict[str, str] = {}
+        #: The ``via`` of feature claims a property's value gives.
+        self.claim_via: dict[str, str] = {}
 
     def fail(self, why: str) -> NoReturn:
         msg = f"{self.rel}:{self.line}: {why}"
@@ -368,8 +384,9 @@ class _Node:
             page_size=page_size,
             features=self.features,
             flags=self.flags() + ([f"page-size={driver_page}"] if driver_page else []),
-            via=via,
+            via=via | self.claim_via | member_via("four_byte_modes", self.four_byte),
             quad_enable_requirement=qer,
+            four_byte_modes=list(self.four_byte),
             opcodes=self.ops.to_json() if binding.type == "nor" else [],
             sfdp_tables=tables,
             notes=self.notes,
@@ -435,19 +452,45 @@ class _Node:
             self.features.update({"4byte_addr", "4byte_opcodes"})
         if {"address-size-32", "use-4byte-addressing"} & set(self.props):
             self.features.add("4byte_addr")
-        # JESD216 DWORD 16 bits 31:24; bits 0 and 1 are "issue B7h".
-        enter_4b = self.cell("enter-4byte-addr")
-        if enter_4b:
-            self.features.add("4byte_addr")
-            if enter_4b & 3:
-                self.ops.add("EN4B", "enter-4byte-addr")
-        command = self.cell("enter-4byte-command")
-        if command:
-            self.features.add("4byte_addr")
-            self.ops.add("EN4B", "enter-4byte-command", value=command)
+        self.four_byte_modes()
         erase = self.cell("erase-block-size")
         if binding.type == "nor" and erase in ERASE_FEATURE:
             self.features.add(ERASE_FEATURE[erase].value)
+
+    def four_byte_modes(self) -> None:
+        """The ways into 4-byte mode: ``enter-4byte-addr``, BFPT DW16[31:24]
+        as a byte (jedec,jesd216.yaml; spi_nor.c's spi_nor_set_address_mode
+        and nrf_qspi_nor.c read it so), 0 and 0xff saying nothing; and the
+        Renesas OSPI binding's ``enter-4byte-command``, the opcode its
+        driver sends with no write enable (flash_renesas_ra_ospi_b.c,
+        flash_ospi_b_4byte_enable), of which 0xb7 is the one known. A byte
+        with the reserved bit 7 set is not DW16's (p2d.dts gives
+        GD25LE255E's ``<0xb7>``, EN4B's opcode): it is not read, and a note
+        says so. Bit 5 is dedicated 4-byte opcodes, a ``4byte_opcodes``
+        claim, not a way in."""
+        byte = self.cell("enter-4byte-addr")
+        if byte is not None and byte not in (0, 0xFF):
+            token = f"enter-4byte-addr={_flag_value(self.props['enter-4byte-addr'] or '')}"
+            if byte & 0x80 or byte > 0xFF:
+                what = "EN4B's opcode" if byte == 0xB7 else "not a byte"
+                self.notes.append(
+                    f"{token} not read: {what}, not a JESD216 DW16[31:24] byte, whose bit 7 "
+                    "is reserved"
+                )
+            else:
+                for bit, mode in ENTER_4B.items():
+                    if byte >> (bit - 24) & 1:
+                        self.four_byte[mode] = token
+                if byte & 0x20:
+                    self.features.add("4byte_opcodes")
+                    if not self.four_byte:
+                        self.claim_via["feature:4byte_opcodes"] = token
+        command = self.cell("enter-4byte-command")
+        if command is not None:
+            if command != 0xB7:
+                self.fail(f"enter-4byte-command 0x{command:02x}: only 0xb7 is known")
+            value = _flag_value(self.props["enter-4byte-command"] or "")
+            self.four_byte["en4b"] = f"enter-4byte-command={value}"
 
     def flags(self) -> list[str]:
         """The compatibles and the :data:`FLAGS` properties."""

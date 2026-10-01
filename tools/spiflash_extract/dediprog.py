@@ -79,6 +79,7 @@ from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
 
 from spiflash import derive
+from spiflash.model import strip_continuation
 
 from .ops import Opcodes
 from .record import Record, feature_via, make
@@ -164,9 +165,61 @@ _RAW = (
     "ReadCmd",
     "ProgramCmd",
     "EraseCmd",
-    "AlternativeID",
-    "Voltage",
 )
+
+#: ``Voltage``: the supply dpcmd powers the part at once it has found it
+#: (parse.c maps "3.3V", "2.5V" and "1.8V" to VoltageInMv, anything else to
+#: 3300; project.c, GetFirstDetectionMatch, sets g_Vcc from it): the
+#: record's ``supply_mv``, in millivolts. 1.2 V parts are in the table,
+#: which dpcmd would power at 3.3 V; the table's value is kept.
+VOLTAGES = {"1.2V": 1200, "1.8V": 1800, "2.5V": 2500, "3.3V": 3300}
+
+#: ``AlternativeID`` values that are not an id the part answers to a legacy
+#: command, by the id's manufacturer byte and the value: the same for parts
+#: of every density (a template), so no part's RES id.
+ALTERNATIVE_TEMPLATES = {
+    (0x89, "15"): "Intel's S33 parts of 16, 32 and 64 Mbit all give 0x15",
+    (0x8C, "8c"): "ESMT's F25L parts of every density give their maker's byte, 0x8c",
+}
+
+#: Makers whose RES (0xab) answers two bytes, the maker's and the part's
+#: (flashrom's PROBE_SPI_RES2 for Sanyo): a one-byte ``AlternativeID`` is
+#: not their answer.
+RES2_MAKERS = {0x62: "Sanyo"}
+
+
+def legacy_ids(chip: dict[str, str], id_hex: str, method: str) -> tuple[list[list[str]], list[str]]:
+    """The ids ``AlternativeID`` says the part also answers, and notes on
+    those left out. Dediprog does not say which command reads it (parse.c
+    and project.c compare it with what the probe read, as with
+    ``UniqueID``); its forms say: one byte is the RES (0xab) electronic
+    signature (M25P16's 0x14, as flashrom's res1 entries for the M25P05 to
+    M25P40-OLD give), two bytes the REMS (0x90) maker and part (W25Q40's
+    0xef12 and EN25QH128's 0x1c17, as their datasheets give). Left out:
+    none, a copy of the id (174 entries; of a legacy id, its tail), a
+    template (:data:`ALTERNATIVE_TEMPLATES`), a one-byte id of a maker
+    whose RES answers two (:data:`RES2_MAKERS`), and three bytes or more."""
+    raw = chip.get("AlternativeID", "").strip()
+    value = raw.lower().removeprefix("0x").lstrip("0") or ""
+    if not value:
+        return [], []
+    value = value.zfill(len(value) + len(value) % 2)
+    if int(value, 16) == int(id_hex, 16) or (method != "rdid" and id_hex.endswith(value)):
+        return [], []
+    maker = strip_continuation(bytes.fromhex(id_hex))[1][0]
+    token = f"AlternativeID={raw}"
+    if (maker, value) in ALTERNATIVE_TEMPLATES:
+        return [], [f"{token} left out: {ALTERNATIVE_TEMPLATES[(maker, value)]}"]
+    if len(value) == 2:
+        if maker in RES2_MAKERS:
+            why = f"{RES2_MAKERS[maker]}'s RES answers two bytes, not one"
+            return [], [f"{token} left out: {why}"]
+        return [["res1", value]], []
+    if len(value) == 4:
+        if id_hex.endswith(value):
+            return [], []  # the id's last two bytes
+        return [["rems", value]], []
+    return [], [f"{token} left out: {len(value) // 2} bytes, not a legacy id"]
 
 
 class LeftOutError(Exception):
@@ -367,6 +420,11 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         nand["dies"] = dies
         via["dies"] = f"DieSizeInKByte={chip['DieSizeInKByte']}"
     description = chip.get("Description", "").strip()
+    voltage = chip.get("Voltage", "")
+    if voltage not in VOLTAGES:
+        msg = f"Voltage={voltage!r}: not one of {sorted(VOLTAGES)}"
+        raise ValueError(msg)
+    legacy, legacy_notes = legacy_ids(chip, id_hex, method) if id_hex else ([], [])
     return make(
         "dediprog",
         DB,
@@ -384,8 +442,10 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         flags=flags,
         via=via,
         quad_enable=quad_enable,
+        supply_mv=VOLTAGES[voltage],
+        legacy_ids=legacy,
         opcodes=ops.to_json(),
-        notes=([description] if description else []) + qe_notes,
+        notes=([description] if description else []) + qe_notes + legacy_notes,
         **nand,
     )
 

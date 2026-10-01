@@ -89,7 +89,10 @@ class SourceInfo:
 #: ``max_bad_blocks`` and ``ecc``; the SPI NAND records gain their own
 #: operations, and a use its ``dummy_clocks``; a die erase layout is derived
 #: from ``dies``, not stored.
-FORMAT = 8
+#: 9: records gain ``four_byte_modes`` (the 4-byte mode operations they
+#: give dropped), ``supply_mv``, ``otp`` and ``legacy_ids`` (their flags,
+#: notes and ``otp`` claims dropped); new OTP operations.
+FORMAT = 9
 
 
 def _read(name: str) -> dict[str, Any]:

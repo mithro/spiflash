@@ -42,6 +42,7 @@ from .ops import Opcodes
 from .record import Record, feature_via, make
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 HEADER = "include/flashchips.h"
@@ -76,7 +77,101 @@ _FEATURES = [
     (re.compile(r"FEATURE_NO_ERASE"), "no_erase"),
 ]
 
+#: The FEATURE_4BA_* bits giving a way into 4-byte mode (include/flash.h;
+#: spi25.c's spi_enter_exit_4ba and spi_write_extended_address_register):
+#: 0xb7 without and with a write enable first, bit 7 of the extended
+#: address register, and 3-byte addresses with the top byte in the
+#: extended address register (0xc5/0xc8) or the bank register (0x17/0x16).
+#: FEATURE_4BA_READ, _FAST_READ and _WRITE are 4-byte operations.
+FOUR_BYTE_MODES = {
+    "FEATURE_4BA_ENTER": "en4b",
+    "FEATURE_4BA_ENTER_WREN": "wren_en4b",
+    "FEATURE_4BA_ENTER_EAR7": "ear_bit7",
+    "FEATURE_4BA_EAR_C5C8": "wrear",
+    "FEATURE_4BA_EAR_1716": "brwr",
+}
+
 _SUPPORTS_SFDP = re.compile(r"\s*[Ss]upports SFDP\.?\s*")
+
+_UNITS = {"B": 1, "bytes": 1, "K": 1024, "KB": 1024, "KiB": 1024}
+_SIZE = r"(\d+)\s*(B|bytes|KiB|KB|K)"
+# "1024B total", "3x 512B", "4 x 256 bytes", "3*256B total", then what is
+# reserved or pre-programmed, or how unequal regions split it.
+_OTP = re.compile(
+    rf"OTP: (?:(?P<n>\d+)\s*[xX*]\s*)?{_SIZE}(?: total)?"
+    r"(?:, (?P<kept>\d+)B (?:reserved|pre-programmed)| \((?:\d+x \d+B(?:, )?)+\))?"
+    r"(?:;(?P<ops>.*))?"
+)
+_OTP_REGIONS = re.compile(rf"(?P<n>\d+) x {_SIZE} Security Region \(OTP\)")
+
+#: The commands an OTP comment names, and the operation each is ("read
+#: 0x4b" only beside "write 0x42": :data:`OTP_READ`); ``None`` for one
+#: with no operation here, which the comment, the record's ``via``, keeps:
+#: ISSI's information row (0x68, 0x62, 0x64), Atmel's security register
+#: (0x77, 0x9b, 0x9a) and PMC's 0xb1 program.
+OTP_COMMANDS: dict[str, str | None] = {
+    "read 0x48": "RSECR",
+    "write 0x42": "PSECR",
+    "erase 0x44": "ESECR",
+    "read ID 0x4B": "RUID",
+    "enter 0xB1": "ENSO",
+    "exit 0xC1": "EXSO",
+    "enter 0x3A": "ENTER_OTP_3A",
+    "read 0x4B": None,
+    "read 0x68": None,
+    "write 0x62": None,
+    "erase 0x64": None,
+    "read 0x77": None,
+    "read 0x77 (4 dummy bytes)": None,
+    "write 0x9B": None,
+    "write 0x9A (via buffer)": None,
+    "write 0xB1": None,
+}
+
+#: Micron's, Spansion's, Intel's and AMIC's OTP read: 0x4b by address, with
+#: the area programmed with 0x42 (a part whose OTP is programmed otherwise,
+#: PMC's with 0xb1, reads it in a way not checked here).
+OTP_READ = "READ_OTP"
+
+
+def otp(note: str) -> tuple[dict[str, int], list[str]] | None:
+    """The OTP area and the operations an OTP comment gives, where it is
+    about the whole entry: ``"OTP: 1024B total; read 0x48; write 0x42,
+    erase 0x44"`` is 1 KiB with ``RSECR``, ``PSECR`` and ``ESECR``,
+    ``"OTP: 3x 512B"`` 1.5 KiB in three regions. The area is what the user
+    can program: ``"1024B total, 256B reserved"`` (Winbond's security
+    register 0) is 768 bytes, ``"128B total, 64B pre-programmed"`` (Atmel's
+    unique id half) 64, as Linux's ``SNOR_OTP`` counts the regions it
+    exposes. A comment qualified to
+    another model of the entry (``"(B version only)"``, ``"later 3x
+    1024B"``, ``"06E 64B total"``), or in any form not written here, is
+    ``None``, and stays a note."""
+    m = _OTP.fullmatch(note) or _OTP_REGIONS.fullmatch(note)
+    if m is None:
+        return None
+    each = int(m[2]) * _UNITS[m[3]]
+    regions = int(m["n"]) if m["n"] else None
+    kept = int(m.groupdict().get("kept") or 0)
+    area = {"size": each * (regions or 1) - kept}
+    if regions is not None:
+        area["regions"] = regions
+    commands = []
+    verb = ""
+    for given in re.split(r"[;,]", (m.groupdict().get("ops") or "").strip()):
+        item = re.sub(r"0x([0-9a-f]{2})", lambda h: "0x" + h[1].upper(), given.strip())
+        if re.fullmatch(r"0x[0-9A-F]{2}", item):
+            item = f"{verb} {item}"  # "read 0x4B, 0x48": the verb before
+        if not item:
+            continue
+        if item not in OTP_COMMANDS:
+            return None
+        verb = item.split()[0]
+        commands.append(item)
+    ops = [op for c in commands if (op := OTP_COMMANDS[c]) is not None]
+    if "read 0x4B" in commands and "write 0x42" in commands:
+        ops.append(OTP_READ)
+    return area, ops
+
 
 _SKIP_IDS = {"GENERIC_MANUF_ID", "PROGMANUF_ID", "GENERIC_DEVICE_ID", "SFDP_DEVICE_ID"}
 
@@ -241,6 +336,22 @@ def _record(
     # The RDSFDP operation's via holds the comment (and implies ``sfdp``).
     sfdp = [n for n in notes if _SUPPORTS_SFDP.fullmatch(n)]
     notes = [n for n in notes if n not in sfdp]
+    # An OTP comment about the whole entry is its OTP area (and the
+    # operations it names): the comment leaves the notes, into the area's
+    # via, with FEATURE_OTP, which the area implies.
+    parsed = {n: found for n in notes if (found := otp(n)) is not None}
+    if len(parsed) > 1:
+        msg = f"two OTP comments: {sorted(parsed)}"
+        raise ValueError(msg)
+    otp_area: dict[str, int] | None = None
+    otp_ops: list[tuple[str, str]] = []
+    otp_via: dict[str, str] = {}
+    for note, (area, ops) in parsed.items():
+        otp_area, otp_ops = area, [(op, note) for op in ops]
+        otp_via = {"otp": "; ".join([note, *(fl for fl in flags if fl == "FEATURE_OTP")])}
+        notes.remove(note)
+    modes = {fl: FOUR_BYTE_MODES[fl] for fl in flags if fl in FOUR_BYTE_MODES}
+    mode_via = {f"four_byte_modes:{mode}": fl for fl, mode in modes.items()}
     bits = _reg_bits(f.get("reg_bits", ""))
     quad_enable = bits.pop("qe", None)
     # FEATURE_WRSR_EXT3 is the EXT2 bit and one of its own, which has no
@@ -268,13 +379,17 @@ def _record(
         erasers=[e for e in erasers if e["opcode"] not in DIE_ERASE_OPCODES] or None,
         features=features,
         flags=flags,
-        via=feature_via(claims) | die_via,
+        via=feature_via(claims) | die_via | mode_via | otp_via,
         voltage=voltage,
         quad_enable=quad_enable,
         protection=bits or None,
         dies=dies,
+        four_byte_modes=list(modes.values()),
+        otp=otp_area,
         tested=tested,
-        opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp=bool(sfdp), source=source),
+        opcodes=_opcodes(
+            f, method, flags, erasers, symbols, sfdp=bool(sfdp), source=source, otp_ops=otp_ops
+        ),
         notes=notes,
     )
 
@@ -374,26 +489,12 @@ _FEATURE_OPS: dict[str, list[tuple[str, tuple[str, ...]]]] = {
         ("READ_1_1_1_FAST_4B", ("JEDEC_FAST_READ_4BA", "JEDEC_READ_4BA_FAST"))
     ],
     "FEATURE_4BA_WRITE": [("PP_1_1_1_4B", ("JEDEC_BYTE_PROGRAM_4BA",))],
-    "FEATURE_4BA_ENTER": [
-        ("EN4B", ("JEDEC_ENTER_4_BYTE_ADDR_MODE",)),
-        ("EX4B", ("JEDEC_EXIT_4_BYTE_ADDR_MODE",)),
-    ],
-    "FEATURE_4BA_ENTER_WREN": [
-        ("EN4B", ("JEDEC_ENTER_4_BYTE_ADDR_MODE",)),
-        ("EX4B", ("JEDEC_EXIT_4_BYTE_ADDR_MODE",)),
-    ],
-    "FEATURE_4BA_ENTER_EAR7": [
-        ("WREAR", ("JEDEC_WRITE_EXT_ADDR_REG",)),
-        ("RDEAR", ("JEDEC_READ_EXT_ADDR_REG",)),
-    ],
-    "FEATURE_4BA_EAR_C5C8": [
-        ("WREAR", ("JEDEC_WRITE_EXT_ADDR_REG",)),
-        ("RDEAR", ("JEDEC_READ_EXT_ADDR_REG",)),
-    ],
-    "FEATURE_4BA_EAR_1716": [
-        ("BRWR", ("ALT_WRITE_EXT_ADDR_REG_17",)),
-        ("BRRD", ("ALT_READ_EXT_ADDR_REG_16",)),
-    ],
+    # The ways into 4-byte mode are the record's four_byte_modes
+    # (:data:`FOUR_BYTE_MODES`), which give EN4B, the extended address
+    # register's 0xc5/0xc8 and the bank register's 0x17/0x16; the way out,
+    # 0xe9, is stated here (spi25.c, spi_enter_exit_4ba).
+    "FEATURE_4BA_ENTER": [("EX4B", ("JEDEC_EXIT_4_BYTE_ADDR_MODE",))],
+    "FEATURE_4BA_ENTER_WREN": [("EX4B", ("JEDEC_EXIT_4_BYTE_ADDR_MODE",))],
     "FEATURE_WRSR_WREN": [("WRSR", ("JEDEC_WRSR",))],
     "FEATURE_WRSR_EWSR": [("EWSR", ("JEDEC_EWSR",)), ("WRSR", ("JEDEC_WRSR",))],
     # How spi25_statusreg.c reads and writes STATUS2, STATUS3 and CONFIG:
@@ -427,10 +528,13 @@ def _opcodes(
     *,
     sfdp: bool,
     source: str = "flashrom",
+    otp_ops: Sequence[tuple[str, str]] = (),
 ) -> list[dict[str, object]]:
     """The operations a flashrom entry says the chip has: its probe, its
     read and write functions, each eraser (flashrom's spi_block_erase_<xx>
-    sends 0x<xx>), the feature bits, and SFDP where a comment says so."""
+    sends 0x<xx>), the feature bits, SFDP where a comment says so, and the
+    OTP commands its OTP comment names (``otp_ops``: each with the
+    comment)."""
     ops = Opcodes(symbols)
     if method in _PROBE_OPS:
         op, sym = _PROBE_OPS[method]
@@ -457,5 +561,7 @@ def _opcodes(
             ops.add(feature_op, flag, *feature_syms)
     if sfdp:
         ops.add("RDSFDP", "comment: supports SFDP", "JEDEC_SFDP")
+    for op, note in otp_ops:
+        ops.add(op, note)
     _register_reads(ops, source, f.get("reg_bits", ""))
     return ops.to_json()
