@@ -16,6 +16,7 @@ from . import derive
 from .enums import (
     ENTER_METHODS,
     AddressBytes,
+    Bound,
     Feature,
     FlashType,
     FourByteMethod,
@@ -23,6 +24,7 @@ from .enums import (
     IdMethod,
     Source,
     TestResult,
+    TimedEvent,
 )
 from .opcodes import OPERATIONS, OpcodeUse, Operation, sort_key
 from .registers import (
@@ -38,6 +40,7 @@ from .registers import (
 )
 from .sfdp import Sfdp, SfdpFacts, from_tables
 from .sfdp import parse as parse_sfdp
+from .timings import BOUNDS, TimingKey, Timings, component_name, parse_component
 from .units import human_size
 from .vendors import canonical
 
@@ -470,6 +473,7 @@ CLAIMS = {
     "quad_enable_requirement": "quad_enable_requirement_claim",
     "dies": "dies_claim",
     "four_byte_modes": "four_byte_mode_claims",
+    "timings": "timing_claims",
 }
 
 #: The single values a record gives from its SFDP tables where it states
@@ -523,15 +527,59 @@ COMPARED: dict[str, Compared] = {
     "max_bad_blocks": Compared.EQUAL,
     "ecc": Compared.PER_COMPONENT,
     "otp": Compared.PER_COMPONENT,
+    "timings": Compared.PER_COMPONENT,
+    "max_clock_hz": Compared.EQUAL,
+}
+
+#: The block erases a time can be given for: each 3-byte block erase
+#: opcode (:data:`spiflash.derive.ERASE_BY_OPCODE`, not a whole-chip erase
+#: nor a 4-byte form, whose time is its 3-byte form's), SPI NAND's 0xd8
+#: among them.
+TIMED_ERASES = tuple(
+    opcode
+    for opcode, name in derive.ERASE_BY_OPCODE.items()
+    if opcode not in derive.WHOLE_CHIP_ERASES and not name.endswith("_4B")
+)
+
+#: Each (key, bound) a time can be given for, as a component of
+#: ``timings`` (:func:`spiflash.timings.component_name`):
+#: ``"chip_erase.maximum"``, ``"block_erase:0x20.typical"``. A typical, a
+#: maximum, a minimum and an unspecified time are each their own
+#: component, and never compared with one another.
+TIMING_COMPONENTS = tuple(
+    component_name(key, bound)
+    for event in TimedEvent
+    for key in (
+        [TimingKey(event, op) for op in TIMED_ERASES]
+        if event is TimedEvent.BLOCK_ERASE
+        else [TimingKey(event)]
+    )
+    for bound in Bound
+    if bound in BOUNDS[event]
+)
+
+#: Where in the BFPT each event's time is (:func:`spiflash.derive.sfdp_timings`).
+_SFDP_DWORD = {
+    TimedEvent.BLOCK_ERASE: "BFPT DW10",
+    TimedEvent.CHIP_ERASE: f"BFPT DW11, with {derive.CHIP_ERASE_MULTIPLIER}'s multiplier",
+    TimedEvent.PAGE_PROGRAM: "BFPT DW11",
+    TimedEvent.BYTE_PROGRAM_FIRST: "BFPT DW11",
+    TimedEvent.BYTE_PROGRAM_ADDITIONAL: "BFPT DW11",
+    TimedEvent.ERASE_SUSPEND: "BFPT DW12",
+    TimedEvent.PROGRAM_SUSPEND: "BFPT DW12",
+    TimedEvent.ERASE_RESUME_TO_SUSPEND: "BFPT DW12",
+    TimedEvent.PROGRAM_RESUME_TO_SUSPEND: "BFPT DW12",
+    TimedEvent.DPD_EXIT: "BFPT DW14",
 }
 
 #: The components of each value compared per component: a protection
 #: layout's roles, an ECC requirement's strength and step, an OTP area's
-#: size and regions.
+#: size and regions, and each time's event and bound.
 COMPONENTS: dict[str, tuple[str, ...]] = {
     "protection": ROLES,
     "ecc": ("strength_bits", "step_bytes"),
     "otp": ("size", "regions"),
+    "timings": TIMING_COMPONENTS,
 }
 
 #: :data:`COMPARED`, each value as it is compared: a value compared per
@@ -628,6 +676,12 @@ class Record:
     otp: Otp | None = None
     #: The ids the part also answers to legacy commands (REMS, RES).
     legacy_ids: tuple[LegacyId, ...] = ()
+    #: The times the entry states (:class:`~spiflash.timings.Timings`), but
+    #: those its SFDP tables give the same.
+    timing_claims: Timings = field(default_factory=Timings)
+    #: The fastest SPI clock, in hertz, the entry gives the part (Dediprog's
+    #: ``Clock``).
+    max_clock_hz: int | None = None
     #: The size: :attr:`size_claim`, or failing that its SFDP tables' density.
     size: int | None = field(init=False, compare=False, repr=False)
     #: The page size: :attr:`page_size_claim`, or failing that its SFDP tables'.
@@ -660,6 +714,10 @@ class Record:
     #: The ways into 4-byte address mode: :attr:`four_byte_mode_claims`, and
     #: those its SFDP tables give (BFPT DW16).
     four_byte_modes: frozenset[FourByteMethod] = field(init=False, compare=False, repr=False)
+    #: The times: :attr:`timing_claims`, and those its SFDP tables give
+    #: (:func:`spiflash.derive.sfdp_timings`) for each (key, bound) the
+    #: entry states none.
+    timings: Timings = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "via", MappingProxyType(dict(self.via)))
@@ -676,9 +734,14 @@ class Record:
         if self.voltage is not None and self.supply_mv is not None:
             msg = f"{where}: a supply voltage range and a supply setting, not one"
             raise ValueError(msg)
+        if self.max_clock_hz is not None and self.max_clock_hz <= 0:
+            msg = f"{where}: a clock of {self.max_clock_hz} Hz"
+            raise ValueError(msg)
         facts = self.sfdp_facts
         modes = self.four_byte_mode_claims | (facts.four_byte_modes if facts else frozenset())
         object.__setattr__(self, "four_byte_modes", modes)
+        times = self.timing_claims.over(facts.timings) if facts else self.timing_claims
+        object.__setattr__(self, "timings", times)
         size, page = self.size_claim, self.page_size_claim
         qer = self.quad_enable_requirement_claim
         dies = self.dies_claim
@@ -769,6 +832,8 @@ class Record:
             legacy_ids=tuple(
                 LegacyId(IdMethod(m), bytes.fromhex(i)) for m, i in d.get("legacy_ids") or ()
             ),
+            timing_claims=Timings.from_json(d.get("timings")),
+            max_clock_hz=d.get("max_clock_hz"),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -805,6 +870,8 @@ class Record:
             "four_byte_modes": sorted(self.stored("four_byte_modes")),
             "otp": self.otp.to_json() if self.otp else None,
             "legacy_ids": [i.to_json() for i in self.legacy_ids],
+            "max_clock_hz": self.max_clock_hz,
+            "timings": self.stored("timings").to_json(),
             "opcodes": [
                 {
                     "op": u.op,
@@ -839,12 +906,15 @@ class Record:
         what it states or, where it states none, what its SFDP tables say.
         A component of a value compared per component (:data:`COMPONENTS`)
         is ``"<field>.<component>"``: ``"protection.tb"``,
-        ``"ecc.step_bytes"``."""
+        ``"ecc.step_bytes"``, ``"timings.chip_erase.maximum"`` (a time, stated
+        or from its SFDP tables: :attr:`timings`)."""
         field_name, _, part = name.partition(".")
         if part:
             if part not in COMPONENTS.get(field_name, ()):
                 msg = f"no such value: {name}"
                 raise KeyError(msg)
+            if field_name == "timings":
+                return self.timings.component(part)
             whole = self.given(field_name)
             return getattr(whole, part) if whole is not None else None
         if name in DERIVED or name in SFDP_VALUES:
@@ -854,8 +924,10 @@ class Record:
     def compared(self, name: str) -> Any:
         """:meth:`given`, as the sources are compared on it
         (:func:`compared_value`): a register bit by its place, without how
-        it is written, which most sources do not say."""
-        return compared_value(self.given(name))
+        it is written, which most sources do not say; a time at SFDP
+        resolution where a BFPT writes it directly
+        (:func:`spiflash.derive.compared_time`)."""
+        return compared_value(self.given(name), name)
 
     @property
     def address_bytes(self) -> AddressBytes | None:
@@ -941,6 +1013,13 @@ class Record:
             for f in self.sfdp_erasers
             if e.opcode is not None and f.opcode == e.opcode and f.blocks != e.blocks
         )
+        for (key, bound), stated in self.timing_claims.items():
+            said = facts.timings.values.get((key, bound))
+            if said is None:
+                continue
+            name = f"timings.{component_name(key, bound)}"
+            if compared_value(stated, name) != compared_value(said, name):
+                out.append(SfdpDisagreement(name, stated, said))
         return tuple(out)
 
     def shared_bits(self) -> dict[str, tuple[str, ...]]:
@@ -995,13 +1074,20 @@ def plain_value(value: Any) -> Any:
     return value
 
 
-def compared_value(value: Any) -> Any:
+def compared_value(value: Any, name: str | None = None) -> Any:
     """A value as the sources are compared on it: a register bit without
     its writability (:attr:`RegisterBit.unqualified
     <spiflash.registers.RegisterBit.unqualified>`), as one source not saying
-    how a bit is written does not disagree with one that does; anything
-    else as it is."""
-    return value.unqualified if isinstance(value, RegisterBit) else value
+    how a bit is written does not disagree with one that does; a time
+    (``name`` a ``"timings.<key>.<bound>"`` component) at SFDP resolution
+    where a BFPT writes it directly (:func:`spiflash.derive.compared_time`:
+    a stated 35 µs and a table's 40 µs agree); anything else as it is."""
+    if isinstance(value, RegisterBit):
+        return value.unqualified
+    if value is not None and name is not None and name.startswith("timings."):
+        key, bound = parse_component(name.removeprefix("timings."))
+        return derive.compared_time(key.event, bound, value)
+    return value
 
 
 def register_bits(
@@ -1541,12 +1627,79 @@ class Flash:
                     giving.append(r.source)
         return {k: tuple(v) for k, v in sorted(out.items())}
 
+    @cached_property
+    def max_clock_hz(self) -> int | None:
+        """The fastest SPI clock, in hertz, the sources give the part
+        (:attr:`Record.max_clock_hz`), as most say."""
+        return self._value(lambda r: r.max_clock_hz)
+
+    def timing(
+        self, event: TimedEvent | str, bound: Bound | str, opcode: int | None = None
+    ) -> int | None:
+        """The nanoseconds the sources give for ``event`` (and ``opcode``, a
+        block erase's) at ``bound``, as most of the most specific records
+        giving one say: each record's own, stated or from its SFDP tables
+        (:attr:`Record.timings`). Each bound is its own value: a typical
+        and a maximum are never compared."""
+        key = TimingKey(TimedEvent(event), opcode)
+        return self._value(lambda r: r.timings.values.get((key, Bound(bound))))
+
+    @cached_property
+    def timings(self) -> dict[tuple[TimingKey, Bound], dict[int, tuple[FeatureSource, ...]]]:
+        """Each (key, bound) any record gives a time for, each time given,
+        and the sources giving it, one each, in source priority order:
+        ``implied`` where the time is from the source's SFDP tables rather
+        than stated, and ``because`` the upstream token or ``"its SFDP
+        tables (BFPT DW10)"``. In :class:`~spiflash.enums.TimedEvent` and
+        :class:`~spiflash.enums.Bound` order."""
+        found: dict[tuple[TimingKey, Bound], dict[int, dict[Source, FeatureSource]]] = {}
+        for r in sorted(self.records, key=lambda r: r.source.priority):
+            for (key, bound), ns in r.timings.items():
+                stated = (key, bound) in r.timing_claims
+                because = (
+                    r.via.get(f"timings.{key}") or r.via.get("timings") or "stated"
+                    if stated
+                    else f"its SFDP tables ({_SFDP_DWORD[key.event]})"
+                )
+                given = FeatureSource(r.source, not stated, because)
+                by_source = found.setdefault((key, bound), {}).setdefault(ns, {})
+                if r.source not in by_source or (by_source[r.source].implied and stated):
+                    by_source[r.source] = given
+        order = sorted(found, key=lambda kb: (kb[0].order, list(Bound).index(kb[1])))
+        return {
+            kb: {ns: tuple(s.values()) for ns, s in sorted(found[kb].items())} for kb in order
+        }
+
+    def timing_order(self) -> list[tuple[TimingKey, Bound, int, Bound, int]]:
+        """Where the sources give a key's bounds out of order: a typical
+        time one source gives above a maximum another gives (or a minimum
+        above either), as ``(key, lower bound, its time, higher bound, its
+        time)``, each pair once, compared exactly. A time whose bound is not
+        given (Dediprog's ``ChipEraseTime``) is not ordered against them. A
+        record's own times are in order (``make()`` refuses others), so
+        each is two sources' disagreement, or two parts' sharing the id."""
+        order = (Bound.MINIMUM, Bound.TYPICAL, Bound.MAXIMUM)
+        out = []
+        for key in dict.fromkeys(k for k, _ in self.timings):
+            for i, low in enumerate(order):
+                lows = self.timings.get((key, low), {})
+                for high in order[i + 1 :]:
+                    highs = self.timings.get((key, high), {})
+                    out.extend(
+                        (key, low, a, high, b) for a in lows for b in highs if a > b
+                    )
+        return out
+
     def value(self, name: str) -> Any:
         """The chip's value of ``name``, one of :data:`COMPARED_VALUES`:
         ``flash.value("size")`` is :attr:`size`, ``flash.value("protection.tb")``
         the ``tb`` of :attr:`protection`, ``flash.value("ecc.step_bytes")``
-        the step of :attr:`ecc`."""
+        the step of :attr:`ecc`, ``flash.value("timings.chip_erase.maximum")``
+        :meth:`timing`'s."""
         field_name, _, part = name.partition(".")
+        if field_name == "timings":
+            key, bound = parse_component(part)
+            return self.timing(key.event, bound, key.opcode)
         whole = getattr(self, field_name)
         if part:
             return getattr(whole, part) if whole is not None else None
@@ -1662,7 +1815,10 @@ class Flash:
         for one part: records that extended ids tell apart
         (:attr:`variants`) are not compared."""
         out = {}
+        timed = any(r.timings for r in self.records)
         for attr in COMPARED_VALUES:
+            if attr.startswith("timings.") and not timed:
+                continue
             if any(len({r.compared(attr) for r in v} - {None}) > 1 for v in self.variants):
                 out[attr] = self.values(attr)
         return out
@@ -1678,7 +1834,7 @@ class Flash:
         :meth:`Database.narrow <spiflash.db.Database.narrow>`, which only adds
         the maker and the datasheets to these values.)"""
         values = {e: self.with_ext_id(e).value(attribute) for e in self._part_ext_ids}
-        compared = {compared_value(v) for v in values.values()}
+        compared = {compared_value(v, attribute) for v in values.values()}
         return values if len(compared - {None}) > 1 else {}
 
     @cached_property
@@ -1749,6 +1905,21 @@ class Flash:
         )
         return replace(self, records=keep, layers=tuple(la for la in layers if la))
 
+    def _timings_json(self) -> dict[str, dict[str, dict[str, Any]]]:
+        """:attr:`timings` as :meth:`to_json` gives them:
+        ``{"chip_erase": {"maximum": {"value": n, "given": [{"ns": n,
+        "sources": [...]}]}}}``, ``value`` being :meth:`timing`'s."""
+        out: dict[str, dict[str, dict[str, Any]]] = {}
+        for (key, bound), given in self.timings.items():
+            out.setdefault(str(key), {})[str(bound)] = {
+                "value": self.timing(key.event, bound, key.opcode),
+                "given": [
+                    {"ns": ns, "sources": [s._asdict() for s in sources]}
+                    for ns, sources in given.items()
+                ],
+            }
+        return out
+
     def to_json(self) -> dict[str, Any]:
         """A plain-JSON summary, as the ``spiflash`` command prints it."""
         return {
@@ -1775,6 +1946,8 @@ class Flash:
             "ecc": self.ecc.to_json() if self.ecc else None,
             "supply_mv": self.supply_mv,
             "otp": self.otp.to_json() if self.otp else None,
+            "max_clock_hz": self.max_clock_hz,
+            "timings": self._timings_json(),
             "address_bytes": _str_or_none(self.address_bytes),
             "four_byte_modes": {
                 str(m): [s._asdict() for s in self.four_byte_mode_sources(m)]

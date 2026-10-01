@@ -1144,6 +1144,24 @@ _ALL = [
         1,
         shape_source=(ShapeSource.PART,),
     ),
+    # Deep power-down, and the release from it that is the command alone.
+    # RES (0xab with three dummy bytes and a signature byte) is the id read
+    # the same opcode is on many parts; a part that wakes by 0xab need not
+    # answer it with a signature (the M25PX parts do not).
+    Operation(
+        "DP",
+        0xB9,
+        OperationKind.MODE,
+        "Enter deep power-down",
+        shape_source=(ShapeSource.PART,),
+    ),
+    Operation(
+        "RDPD",
+        0xAB,
+        OperationKind.MODE,
+        "Release from deep power-down",
+        shape_source=(ShapeSource.PART,),
+    ),
     *_NAND_OPERATIONS,
 ]
 

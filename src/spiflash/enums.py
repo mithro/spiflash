@@ -309,3 +309,58 @@ class ShapeSource(StrEnum):
     JESD216 = "jesd216"
     LINUX_SPINAND = "linux-spinand"
     PART = "part"
+
+
+class Bound(StrEnum):
+    """Which bound of a datasheet parameter a duration is: the bound of the
+    part's own parameter (tDP max, tCRDP min), not of the host's wait for
+    it. :data:`spiflash.timings.BOUNDS` says which each event may have."""
+
+    #: The part needs at least this: a pulse width, a dwell.
+    MINIMUM = "minimum"
+    TYPICAL = "typical"
+    #: The part takes at most this: an erase, a wake-up.
+    MAXIMUM = "maximum"
+    #: A source gives the value without saying which bound it is
+    #: (Dediprog's ``ChipEraseTime``): never compared with the others.
+    UNSPECIFIED = "unspecified"
+
+
+class TimedEvent(StrEnum):
+    """What a part's duration is the time of (:class:`spiflash.timings.Timings`)."""
+
+    #: Erasing one block, by one eraser (keyed by its 3-byte erase opcode:
+    #: an SFDP erase type).
+    BLOCK_ERASE = "block_erase"
+    #: Erasing the whole chip, tCE (per die, on a part of several: JESD216).
+    CHIP_ERASE = "chip_erase"
+    #: Programming a page, tPP.
+    PAGE_PROGRAM = "page_program"
+    #: Programming the first byte, tBP1.
+    BYTE_PROGRAM_FIRST = "byte_program_first"
+    #: Programming each further byte, tBPn.
+    BYTE_PROGRAM_ADDITIONAL = "byte_program_additional"
+    #: Reading a page from the array into the cache (SPI NAND), tRD.
+    PAGE_READ = "page_read"
+    #: From an erase suspend command to the part being suspended (BFPT DW12).
+    ERASE_SUSPEND = "erase_suspend"
+    #: From a program suspend command to the part being suspended (BFPT DW12).
+    PROGRAM_SUSPEND = "program_suspend"
+    #: From an erase resume to the next suspend (BFPT DW12).
+    ERASE_RESUME_TO_SUSPEND = "erase_resume_to_suspend"
+    #: From a program resume to the next suspend (BFPT DW12).
+    PROGRAM_RESUME_TO_SUSPEND = "program_resume_to_suspend"
+    #: From the end of the deep power-down command to deep power-down, tDP.
+    DPD_ENTER = "dpd_enter"
+    #: From the release (the command, or the chip select pulse) to the part
+    #: being ready, tRES1 or tRDP.
+    DPD_EXIT = "dpd_exit"
+    #: The least time in deep power-down before a release, tDPDD.
+    DPD_MIN_TIME = "dpd_min_time"
+    #: The chip select low pulse that wakes the part, tCRDP (Zephyr's
+    #: binding spells it tCDRP).
+    DPD_WAKE_PULSE = "dpd_wake_pulse"
+    #: The RESET# pulse width.
+    RESET_PULSE = "reset_pulse"
+    #: From a reset to the part being ready, tRST.
+    RESET_RECOVERY = "reset_recovery"

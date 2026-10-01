@@ -9,7 +9,7 @@ import pytest
 
 from spiflash import Database
 from spiflash.enums import Feature
-from spiflash.model import COMPARED_VALUES, Record
+from spiflash.model import COMPARED_VALUES, TIMING_COMPONENTS, Record
 from spiflash.registers import (
     QE_NONE,
     ROLES,
@@ -156,7 +156,14 @@ def test_compared_values() -> None:
         "ecc.step_bytes",
         "otp.size",
         "otp.regions",
+        *(f"timings.{c}" for c in TIMING_COMPONENTS),
+        "max_clock_hz",
     )
+    # Each time's bounds are their own components, never compared together.
+    assert "timings.chip_erase.unspecified" in COMPARED_VALUES
+    assert "timings.block_erase:0x20.typical" in COMPARED_VALUES
+    assert "timings.block_erase:0x21.typical" not in COMPARED_VALUES  # a 4-byte form
+    assert "timings.dpd_exit.typical" not in COMPARED_VALUES  # no source gives one
     # Every one is a value a record gives and a chip has.
     r = Record.from_json(rec().to_json())
     for name in COMPARED_VALUES:

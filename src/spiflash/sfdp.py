@@ -35,10 +35,20 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from . import derive
-from .enums import ENTER_METHODS, AddressBytes, Feature, FlashType, FourByteMethod, OperationKind
+from .enums import (
+    ENTER_METHODS,
+    AddressBytes,
+    Bound,
+    Feature,
+    FlashType,
+    FourByteMethod,
+    OperationKind,
+    TimedEvent,
+)
 from .opcodes import OPERATIONS, OpcodeUse
 from .registers import QUAD_ENABLE_REQUIREMENTS, NoQuadEnable, QuadEnableRequirement, RegisterBit
-from .units import human_size, human_time
+from .timings import Timings
+from .units import human_duration, human_size
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -154,9 +164,6 @@ _QPI_DISABLE = {
     3: "0x66 then 0x99",
 }
 
-# Erase and program time units, from the DW10 and DW11 unit codes.
-_ERASE_UNITS_US = (1_000, 16_000, 128_000, 1_000_000)
-_CHIP_ERASE_UNITS_US = (16_000, 256_000, 4_000_000, 64_000_000)
 
 # (protocol, dword, shift of the 16-bit settings half, support test)
 _READS: tuple[tuple[str, int, int, Callable[[Sequence[int]], bool]], ...] = (
@@ -338,8 +345,8 @@ class EraseType:
     index: int
     size: int
     opcode: int
-    #: Typical time in microseconds, when the table gives it (JESD216A on).
-    typical_us: int | None = None
+    #: Typical time in nanoseconds, when the table gives it (JESD216A on).
+    typical_ns: int | None = None
     #: The 4-byte-address opcode for the same erase, from the 4BAIT.
     opcode_4b: int | None = None
 
@@ -367,11 +374,35 @@ class Bfpt:
     reads: tuple[FastRead, ...]
     erase_types: tuple[EraseType, ...]
     page_size: int | None = None
-    page_program_us: int | None = None
-    chip_erase_us: int | None = None
+    #: DW10[3:0], as the factor it is: an erase's maximum time is this
+    #: times its typical time (2 x (N + 1): 2 to 32).
+    erase_max_multiplier: int | None = None
+    #: DW11[3:0], likewise for a page or byte program.
+    program_max_multiplier: int | None = None
+    #: The typical times, in nanoseconds, of a page program (DW11[13:8]),
+    #: the first byte programmed (DW11[18:14]), each further byte
+    #: (DW11[23:19]) and a chip erase (DW11[30:24]).
+    page_program_ns: int | None = None
+    byte_program_first_ns: int | None = None
+    byte_program_additional_ns: int | None = None
+    chip_erase_ns: int | None = None
     suspend_resume: bool | None = None
+    #: DW12, where the part can suspend (bit 31 clear): the most time an
+    #: erase suspend (DW12[30:24]) and a program suspend (DW12[19:13]) take,
+    #: and the typical least interval from an erase resume (DW12[23:20])
+    #: and a program resume (DW12[12:9]) to the next suspend, in
+    #: nanoseconds.
+    erase_suspend_ns: int | None = None
+    program_suspend_ns: int | None = None
+    erase_resume_to_suspend_ns: int | None = None
+    program_resume_to_suspend_ns: int | None = None
+    #: DW14's deep power-down opcodes, where the part has deep power-down
+    #: (bit 31 clear); an exit opcode of 0xff is "no command needed".
     enter_deep_power_down: int | None = None
     exit_deep_power_down: int | None = None
+    #: DW14[14:8]: the most time from the exit to the part being ready, in
+    #: nanoseconds.
+    exit_deep_power_down_delay_ns: int | None = None
     quad_enable: int | None = None
     qpi_enable: tuple[str, ...] = ()
     qpi_disable: tuple[str, ...] = ()
@@ -528,6 +559,8 @@ class SfdpFacts:
     #: The dies the SCCR multi-chip table describes (:attr:`Sfdp.dice`);
     #: ``None`` without one.
     dies: int | None = None
+    #: The times the BFPT gives (:func:`spiflash.derive.sfdp_timings`).
+    timings: Timings = field(default_factory=Timings)
 
     @property
     def quad_enable(self) -> RegisterBit | NoQuadEnable | None:
@@ -611,7 +644,7 @@ class Sfdp:
             return self.bfpt.erase_types
         return tuple(
             EraseType(
-                e.index, e.size, e.opcode, e.typical_us, self.four_byte.erase_opcodes[e.index - 1]
+                e.index, e.size, e.opcode, e.typical_ns, self.four_byte.erase_opcodes[e.index - 1]
             )
             for e in self.bfpt.erase_types
         )
@@ -727,6 +760,26 @@ class Sfdp:
                 0,
                 "BFPT DW16 " + "; ".join(dict.fromkeys(reasons)),
             )
+        if bfpt.enter_deep_power_down is not None:
+            # DW14: DP, and the release where it is a command (0xff: "Don't
+            # need command", Macronix's reproduced table says).
+            yield SfdpOperation(
+                _MODE_BY_OPCODE.get(bfpt.enter_deep_power_down),
+                bfpt.enter_deep_power_down,
+                "1-0-0",
+                0,
+                0,
+                "BFPT DW14: enter deep power-down",
+            )
+            if bfpt.exit_deep_power_down not in (None, 0xFF):
+                yield SfdpOperation(
+                    _MODE_BY_OPCODE.get(bfpt.exit_deep_power_down),
+                    bfpt.exit_deep_power_down,
+                    "1-0-0",
+                    0,
+                    0,
+                    "BFPT DW14: release from deep power-down",
+                )
         if self.four_byte is not None:
             for i in self.four_byte.instructions:
                 if not i.supported_by_bfpt:
@@ -819,6 +872,7 @@ class Sfdp:
                 bfpt.quad_enable if bfpt else None
             ),
             dies=self.dice,
+            timings=derive.sfdp_timings(self),
         )
 
     def _dw1_erase(self) -> int | None:
@@ -875,20 +929,43 @@ class Sfdp:
             if bfpt.dtr:
                 geometry.append("DTR")
             lines.append("    " + ", ".join(geometry))
+            times = self.facts().timings
+
+            def typ_max(event: TimedEvent, opcode: int | None = None) -> str:
+                typ = times.get(event, Bound.TYPICAL, opcode)
+                most = times.get(event, Bound.MAXIMUM, opcode)
+                text = f"{human_duration(typ)} typ" if typ is not None else ""
+                return text + (f", {human_duration(most)} max" if most is not None else "")
+
             if self.erase_types:
                 erases = []
                 for e in self.erase_types:
                     s = f"0x{e.opcode:02x} {human_size(e.size)}"
                     if e.opcode_4b is not None:
                         s += f" (4-byte 0x{e.opcode_4b:02x})"
-                    if e.typical_us is not None:
-                        s += f" {human_time(e.typical_us)}"
+                    if e.typical_ns is not None:
+                        s += f" {typ_max(TimedEvent.BLOCK_ERASE, e.opcode)}"
                     erases.append(s)
-                lines.append("    erase: " + ", ".join(erases))
-            if bfpt.chip_erase_us is not None:
-                lines.append(f"    chip erase {human_time(bfpt.chip_erase_us)}")
-            if bfpt.page_program_us is not None:
-                lines.append(f"    page program {human_time(bfpt.page_program_us)}")
+                lines.append("    erase: " + "; ".join(erases))
+            multipliers = []
+            if bfpt.erase_max_multiplier is not None:
+                multipliers.append(f"erase x{bfpt.erase_max_multiplier} (DW10)")
+            if bfpt.program_max_multiplier is not None:
+                multipliers.append(f"program x{bfpt.program_max_multiplier} (DW11)")
+            if multipliers:
+                lines.append("    typical to maximum time: " + ", ".join(multipliers))
+            if bfpt.chip_erase_ns is not None:
+                lines.append(
+                    f"    chip erase {typ_max(TimedEvent.CHIP_ERASE)}"
+                    f" ({derive.CHIP_ERASE_MULTIPLIER} multiplier)"
+                )
+            if bfpt.page_program_ns is not None:
+                lines.append(f"    page program {typ_max(TimedEvent.PAGE_PROGRAM)}")
+            if bfpt.byte_program_first_ns is not None:
+                lines.append(
+                    f"    byte program: first {typ_max(TimedEvent.BYTE_PROGRAM_FIRST)}; "
+                    f"each further {typ_max(TimedEvent.BYTE_PROGRAM_ADDITIONAL)}"
+                )
             if self.reads:
                 lines.append(
                     "    fast reads: "
@@ -917,12 +994,29 @@ class Sfdp:
             if bfpt.soft_reset:
                 lines.append(f"    soft reset: {'; '.join(bfpt.soft_reset)}")
             if bfpt.suspend_resume:
-                lines.append("    program/erase suspend and resume")
+                text = "    program/erase suspend and resume"
+                if bfpt.erase_suspend_ns is not None and bfpt.program_suspend_ns is not None:
+                    text += (
+                        f": suspended within {human_duration(bfpt.erase_suspend_ns)} (erase), "
+                        f"{human_duration(bfpt.program_suspend_ns)} (program)"
+                    )
+                if bfpt.erase_resume_to_suspend_ns and bfpt.program_resume_to_suspend_ns:
+                    text += (
+                        "; resume to suspend typically "
+                        f"{human_duration(bfpt.erase_resume_to_suspend_ns)} (erase), "
+                        f"{human_duration(bfpt.program_resume_to_suspend_ns)} (program)"
+                    )
+                lines.append(text)
             if bfpt.enter_deep_power_down is not None:
-                lines.append(
-                    f"    deep power-down 0x{bfpt.enter_deep_power_down:02x}, "
-                    f"exit 0x{bfpt.exit_deep_power_down:02x}"
+                text = f"    deep power-down 0x{bfpt.enter_deep_power_down:02x}, exit "
+                text += (
+                    "without a command"
+                    if bfpt.exit_deep_power_down == 0xFF
+                    else f"0x{bfpt.exit_deep_power_down:02x}"
                 )
+                if bfpt.exit_deep_power_down_delay_ns is not None:
+                    text += f", ready within {human_duration(bfpt.exit_deep_power_down_delay_ns)}"
+                lines.append(text)
             if bfpt.command_extension is not None:
                 lines.append(f"    octal DTR command extension: {bfpt.command_extension}")
         if self.dice is not None:
@@ -973,10 +1067,22 @@ class Sfdp:
                     "size": e.size,
                     "opcode": e.opcode,
                     "opcode_4b": e.opcode_4b,
-                    "typical_us": e.typical_us,
+                    "typical_ns": e.typical_ns,
                 }
                 for e in self.erase_types
             ],
+            "erase_max_multiplier": bfpt.erase_max_multiplier if bfpt else None,
+            "program_max_multiplier": bfpt.program_max_multiplier if bfpt else None,
+            "page_program_ns": bfpt.page_program_ns if bfpt else None,
+            "byte_program_first_ns": bfpt.byte_program_first_ns if bfpt else None,
+            "byte_program_additional_ns": bfpt.byte_program_additional_ns if bfpt else None,
+            "chip_erase_ns": bfpt.chip_erase_ns if bfpt else None,
+            "erase_suspend_ns": bfpt.erase_suspend_ns if bfpt else None,
+            "program_suspend_ns": bfpt.program_suspend_ns if bfpt else None,
+            "erase_resume_to_suspend_ns": bfpt.erase_resume_to_suspend_ns if bfpt else None,
+            "program_resume_to_suspend_ns": bfpt.program_resume_to_suspend_ns if bfpt else None,
+            "exit_deep_power_down_delay_ns": bfpt.exit_deep_power_down_delay_ns if bfpt else None,
+            "timings": self.facts().timings.to_json(),
             "reads": [
                 {
                     "protocol": r.protocol,
@@ -1011,6 +1117,15 @@ class Sfdp:
 def _read_settings(dword: int, shift: int, protocol: str) -> FastRead:
     half = _bits(dword, shift + 15, shift)
     return FastRead(protocol, _bits(half, 15, 8), _bits(half, 7, 5), _bits(half, 4, 0))
+
+
+def _time(
+    dword: int, count_hi: int, count_lo: int, unit_hi: int, unit_lo: int, units: tuple[int, ...]
+) -> int:
+    """A BFPT time: (count + 1) x its unit, in nanoseconds. A field of one
+    unit has no unit bits (``units`` holds one, and the unit bits read 0)."""
+    unit = units[_bits(dword, unit_hi, unit_lo)] if len(units) > 1 else units[0]
+    return (_bits(dword, count_hi, count_lo) + 1) * unit
 
 
 def _flags(dword: int, names: dict[int, str]) -> tuple[str, ...]:
@@ -1063,29 +1178,43 @@ def _bfpt(table: Table, warnings: list[str]) -> Bfpt:
         exponent, opcode = _bits(value, shift + 7, shift), _bits(value, shift + 15, shift + 8)
         if exponent:
             erase_types.append(EraseType(i, 1 << exponent, opcode))
+    extra: dict[str, Any] = {}
     if (dw10 := d(10)) is not None:
+        # (count high, count low, unit high, unit low) of each erase type.
         fields = ((8, 4, 10, 9), (15, 11, 17, 16), (22, 18, 24, 23), (29, 25, 31, 30))
         erase_types = [
             EraseType(
                 e.index,
                 e.size,
                 e.opcode,
-                (_bits(dw10, fields[e.index - 1][0], fields[e.index - 1][1]) + 1)
-                * _ERASE_UNITS_US[_bits(dw10, fields[e.index - 1][2], fields[e.index - 1][3])],
+                _time(dw10, *fields[e.index - 1], derive.ERASE_UNITS_NS),
             )
             for e in erase_types
         ]
-
-    extra: dict[str, Any] = {}
+        extra["erase_max_multiplier"] = 2 * (_bits(dw10, 3, 0) + 1)
     if (dw11 := d(11)) is not None:
         extra["page_size"] = 1 << _bits(dw11, 7, 4)
-        extra["page_program_us"] = (_bits(dw11, 12, 8) + 1) * (64 if _bit(dw11, 13) else 8)
-        extra["chip_erase_us"] = (_bits(dw11, 28, 24) + 1) * _CHIP_ERASE_UNITS_US[
-            _bits(dw11, 30, 29)
-        ]
+        extra["program_max_multiplier"] = 2 * (_bits(dw11, 3, 0) + 1)
+        extra["page_program_ns"] = _time(dw11, 12, 8, 13, 13, derive.PAGE_PROGRAM_UNITS_NS)
+        extra["byte_program_first_ns"] = _time(dw11, 17, 14, 18, 18, derive.BYTE_PROGRAM_UNITS_NS)
+        extra["byte_program_additional_ns"] = _time(
+            dw11, 22, 19, 23, 23, derive.BYTE_PROGRAM_UNITS_NS
+        )
+        extra["chip_erase_ns"] = _time(dw11, 28, 24, 30, 29, derive.CHIP_ERASE_UNITS_NS)
     if (dw12 := d(12)) is not None:
         extra["suspend_resume"] = not _bit(dw12, 31)
+        if extra["suspend_resume"]:
+            # JESD216B, as Macronix's MX25U25645G datasheet (Rev. 1.4,
+            # pp. 102-103) reproduces the table.
+            latency = derive.LATENCY_UNITS_NS
+            extra["program_resume_to_suspend_ns"] = _time(
+                dw12, 12, 9, 0, 0, derive.RESUME_UNITS_NS
+            )
+            extra["program_suspend_ns"] = _time(dw12, 17, 13, 19, 18, latency)
+            extra["erase_resume_to_suspend_ns"] = _time(dw12, 23, 20, 0, 0, derive.RESUME_UNITS_NS)
+            extra["erase_suspend_ns"] = _time(dw12, 28, 24, 30, 29, latency)
     if (dw14 := d(14)) is not None and not _bit(dw14, 31):
+        extra["exit_deep_power_down_delay_ns"] = _time(dw14, 12, 8, 14, 13, derive.LATENCY_UNITS_NS)
         extra["enter_deep_power_down"] = _bits(dw14, 30, 23)
         extra["exit_deep_power_down"] = _bits(dw14, 22, 15)
     if (dw15 := d(15)) is not None:
