@@ -365,6 +365,7 @@ def test_profile1_and_sccr() -> None:
     assert {"octal_dtr_read", "octal_dtr_pp"} <= s.features()
     assert s.sccr is not None
     assert s.dice == 3
+    assert s.facts().dies == 3  # a record carrying it has 3 dies
     assert s.sector_map is not None
     assert s.sector_map.dwords == (0xFF0C, 0)
     assert "3 dice" in s.describe()

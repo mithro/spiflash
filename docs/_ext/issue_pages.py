@@ -92,7 +92,7 @@ KIND_NOTES = {
 _TABLE = "sf-table sf-filterable sf-issues"
 
 #: The values sources are compared on (:data:`spiflash.model.COMPARED`),
-#: as headings: a value compared role by role is one section.
+#: as headings: a value compared component by component is one section.
 VALUE_TITLES = {
     "size": "Size",
     "page_size": "Page size",
@@ -101,7 +101,16 @@ VALUE_TITLES = {
     "quad_enable": "Quad enable bit",
     "quad_enable_requirement": "Quad enable requirement",
     "protection": "Block protection bits",
+    "oob_size": "Spare area per page",
+    "planes": "Planes",
+    "dies": "Dies",
+    "die_select_bit": "Die select bit",
+    "max_bad_blocks": "Bad blocks per die",
+    "ecc": "ECC requirement",
 }
+
+#: The compared values that are counts, not sizes in bytes.
+COUNTS = frozenset({"planes", "dies", "max_bad_blocks", "ecc.strength_bits"})
 
 
 def value_of(attribute: str) -> str:
@@ -189,6 +198,10 @@ class _Render:
             return esc(f"{role}: {v}" if role else str(v))
         if issue.attribute == "voltage":
             return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if v else volt(None)
+        if issue.attribute == "ecc.strength_bits":
+            return esc(f"{v} bit{'s' if v != 1 else ''}")
+        if issue.attribute in COUNTS:
+            return esc(str(v))
         if issue.attribute:
             # One unit for all the answers, so their digits line up.
             return size_text(v, common_unit(a.value for a in issue.answers))
@@ -239,7 +252,8 @@ class _Render:
             volts = issues[0].attribute == "voltage"
             header = ["Chip", "Parts", "Answers: V min, V max" if volts else "Answers"]
             rows = [
-                [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
+                [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i) + _note(i)]
+                for i in issues
             ]
         elif kind is IssueKind.SAME_SOURCE:
             volts = issues[0].attribute == "voltage"
@@ -249,7 +263,7 @@ class _Render:
                     self.chip(i.flashes[0]),
                     self.names(i.flashes[0]),
                     self.who(i.answers[0].records[:1]),
-                    self.answers(i, by_entry=True),
+                    self.answers(i, by_entry=True) + _note(i),
                 ]
                 for i in issues
             ]
@@ -307,6 +321,11 @@ class _Render:
             return " {bdg-success}`datasheet`" if gives else ""
 
         return mark
+
+
+def _note(issue: Issue) -> str:
+    """Why the sources disagree, where it is known, after the answers."""
+    return f"\n\n*{esc(issue.note)}*" if issue.note else ""
 
 
 def _attr(issue: Issue) -> str:
@@ -450,7 +469,9 @@ def chip_issues(db: Database, slugs: dict[int, str], f: Flash, issues: list[Issu
         else:
             about = _attr(i)
             answer = r.answers(i)
-        rows.append([f"[{i.kind.heading}](../issues/{kind_page(i.kind)}.md)", about, answer])
+        rows.append(
+            [f"[{i.kind.heading}](../issues/{kind_page(i.kind)}.md)", about, answer + _note(i)]
+        )
     return [
         "### Conflicts and errors\n",
         (

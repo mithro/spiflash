@@ -85,7 +85,11 @@ class SourceInfo:
 #: 7: records gain ``quad_enable``, ``quad_enable_requirement`` and
 #: ``protection``; ``lock`` and ``quad_read`` claims they imply dropped; new
 #: register operations.
-FORMAT = 7
+#: 8: records gain ``oob_size``, ``planes``, ``dies``, ``die_select_bit``,
+#: ``max_bad_blocks`` and ``ecc``; the SPI NAND records gain their own
+#: operations, and a use its ``dummy_clocks``; a die erase layout is derived
+#: from ``dies``, not stored.
+FORMAT = 8
 
 
 def _read(name: str) -> dict[str, Any]:

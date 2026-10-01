@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from . import __version__
 from .db import Database, NameMatch, database
 from .enums import FlashType
-from .model import COMPARED_VALUES, Flash, SfdpDump, parse_id
+from .model import COMPARED_VALUES, Flash, SfdpDump, SupportedOperation, parse_id
 from .registers import NoQuadEnable, RegisterBit, Writability
 from .sfdp import SIGNATURE, Sfdp
 from .sfdp import parse as parse_sfdp
@@ -49,13 +49,24 @@ def opcode_table(f: Flash, *, verbose: bool = False) -> list[str]:
             lines.append(head)
             lines.extend(
                 f"          {c.source:15} {c.via}"
+                + (f", {c.dummy_clocks} dummy clocks" if c.dummy_clocks is not None else "")
                 + (" (implied)" if c.implied else "")
                 + (" (driver default)" if c.assumed else "")
                 for c in o.because
             )
         else:
-            lines.append(f"{head}  [{', '.join(o.sources)}]")
+            lines.append(f"{head}{_dummy(o)}  [{', '.join(o.sources)}]")
     return lines
+
+
+def _dummy(o: SupportedOperation) -> str:
+    """The part's own dummy clocks for an operation, where the sources give
+    a number other than the operation's usual one, or several:
+    ``" (4 dummy clocks)"``, ``" (2 or 4 dummy clocks)"``."""
+    given = o.dummy_clocks_given()
+    if not given or set(given) == {o.operation.dummy_clocks}:
+        return ""
+    return f" ({' or '.join(str(n) for n in sorted(given))} dummy clocks)"
 
 
 def header(f: Flash) -> str:
@@ -85,18 +96,39 @@ def shown(attribute: str, value: Any) -> str:
     ``SR2 bit 1``."""
     if attribute == "voltage":
         return volts(value)
-    if attribute in ("size", "page_size", "sector_size"):
+    if attribute in ("size", "page_size", "sector_size", "oob_size", "ecc.step_bytes"):
         return human_size(value)
     return str(value)
 
 
+def dies(f: Flash) -> str:
+    """The dies, and how one is selected where a source says: ``dies 2
+    (select 0xc2)``, ``dies 2 (select die select feature bit 6)``."""
+    select = [o for name, o in f.opcodes.items() if name in ("DIE_SELECT", "NAND_DIE_SELECT")]
+    how = ""
+    if select:
+        how = f" (select 0x{select[0].opcode:02x})"
+    elif f.die_select_bit is not None:
+        how = f" (select {f.die_select_bit})"
+    return f"dies {f.dies}{how}"
+
+
 def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     lines = [header(f)]
+    nand = f.type is FlashType.NAND
     detail = [f"size {human_size(f.size)}"]
     if f.page_size:
         detail.append(f"page {human_size(f.page_size)}")
+    if f.oob_size:
+        detail.append(f"spare {human_size(f.oob_size)}")
     if f.sector_size:
-        detail.append(f"sector {human_size(f.sector_size)}")
+        detail.append(f"{'block' if nand else 'sector'} {human_size(f.sector_size)}")
+    if f.planes:
+        detail.append(f"planes {f.planes}")
+    if f.dies:
+        detail.append(dies(f))
+    if f.ecc:
+        detail.append(f"ECC {f.ecc}")
     if f.voltage:
         detail.append(volts(f.voltage))
     if f.quad_enable is not None:

@@ -90,17 +90,54 @@ class Eraser:
         return out
 
 
+@dataclass(frozen=True, slots=True)
+class EccRequirement:
+    """The error correction a SPI NAND part needs: ``strength_bits`` bits
+    corrected in each ``step_bytes`` bytes (``None`` where the source does
+    not say over how many: Rockchip's ``max_ecc_bits``)."""
+
+    strength_bits: int
+    step_bytes: int | None = None
+
+    def compatible(self, other: EccRequirement) -> bool:
+        """Whether the two agree: the same strength, and the same step where
+        both give one."""
+        steps = {self.step_bytes, other.step_bytes} - {None}
+        return self.strength_bits == other.strength_bits and len(steps) < 2
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> EccRequirement:
+        return cls(d["strength_bits"], d.get("step_bytes"))
+
+    def to_json(self) -> dict[str, Any]:
+        """``{"strength_bits": 8, "step_bytes": 512}``; ``"step_bytes"`` only
+        where the source gives it."""
+        out: dict[str, Any] = {"strength_bits": self.strength_bits}
+        if self.step_bytes is not None:
+            out["step_bytes"] = self.step_bytes
+        return out
+
+    def __str__(self) -> str:
+        """``8 bits per 512 B``, or ``8 bits`` without a step."""
+        bits = f"{self.strength_bits} bit{'s' if self.strength_bits != 1 else ''}"
+        return bits if self.step_bytes is None else f"{bits} per {self.step_bytes} B"
+
+
 class Claim(NamedTuple):
     """A source's reason for saying a chip has an operation; ``implied``
     when the operation follows from the source's other fields
     (:func:`spiflash.derive.opcodes`) rather than being stated, and
     ``assumed`` when it is the source's driver default
-    (:attr:`OpcodeUse.assumed <spiflash.opcodes.OpcodeUse.assumed>`)."""
+    (:attr:`OpcodeUse.assumed <spiflash.opcodes.OpcodeUse.assumed>`);
+    ``dummy_clocks``, the part's dummy clocks for it, where the source
+    gives them (:attr:`OpcodeUse.dummy_clocks
+    <spiflash.opcodes.OpcodeUse.dummy_clocks>`)."""
 
     source: Source
     via: str
     implied: bool = False
     assumed: bool = False
+    dummy_clocks: int | None = None
 
 
 class SfdpDisagreement(NamedTuple):
@@ -257,6 +294,24 @@ class SupportedOperation:
         (:attr:`Claim.assumed`), not for this part."""
         return tuple(dict.fromkeys(c.source for c in self.because if c.assumed))
 
+    @property
+    def dummy_clocks(self) -> int | None:
+        """The part's dummy clocks for the operation, as most of the sources
+        giving them say (:attr:`Claim.dummy_clocks`); ``None`` where none
+        does, and :attr:`Operation.dummy_clocks
+        <spiflash.opcodes.Operation.dummy_clocks>` is the usual number."""
+        return _consensus((c.dummy_clocks, c.source) for c in self.because)
+
+    def dummy_clocks_given(self) -> dict[int, tuple[Source, ...]]:
+        """Each number of dummy clocks the sources give, and who gives it:
+        more than one is a disagreement (or parts sharing the id differ)."""
+        out: dict[int, list[Source]] = {}
+        for c in self.because:
+            given = out.setdefault(c.dummy_clocks, []) if c.dummy_clocks is not None else None
+            if given is not None and c.source not in given:
+                given.append(c.source)
+        return {k: tuple(v) for k, v in out.items()}
+
 
 #: The fields a record both stores and derives, and the attribute holding
 #: what it stores: ``features`` is ``feature_claims`` and what the other
@@ -274,6 +329,7 @@ CLAIMS = {
     "opcodes": "opcode_claims",
     "quad_enable": "quad_enable_claim",
     "quad_enable_requirement": "quad_enable_requirement_claim",
+    "dies": "dies_claim",
 }
 
 #: The single values a record gives from its SFDP tables where it states
@@ -282,8 +338,9 @@ CLAIMS = {
 #: tables'. The quad enable bit is the requirement's
 #: (:attr:`QuadEnableRequirement.bit
 #: <spiflash.registers.QuadEnableRequirement.bit>`), whether the entry
-#: states the requirement or its tables give it.
-SFDP_VALUES = ("size", "page_size", "quad_enable_requirement", "quad_enable")
+#: states the requirement or its tables give it. The dies are those the
+#: SCCR multi-chip table describes.
+SFDP_VALUES = ("size", "page_size", "quad_enable_requirement", "quad_enable", "dies")
 
 #: The fields a record only derives, never stores: ``sector_size`` is
 #: worked out from its erasers (:func:`spiflash.derive.sector_size`).
@@ -296,10 +353,12 @@ class Compared(StrEnum):
 
     #: The values must be equal.
     EQUAL = "equal"
-    #: Each role of the value is compared on its own, and a source that
-    #: does not give a role does not vote on it: a layout giving only TB
-    #: agrees with a fuller one that has the same TB.
-    PER_ROLE = "per-role"
+    #: Each component of the value (:data:`COMPONENTS`) is compared on its
+    #: own, and a source that does not give a component does not vote on
+    #: it: a protection layout giving only TB agrees with a fuller one with
+    #: the same TB, and an ECC requirement giving no step with one of the
+    #: same strength that gives one.
+    PER_COMPONENT = "per-component"
 
 
 #: The values the sources are compared on, and how: what
@@ -313,16 +372,30 @@ COMPARED: dict[str, Compared] = {
     "voltage": Compared.EQUAL,
     "quad_enable": Compared.EQUAL,
     "quad_enable_requirement": Compared.EQUAL,
-    "protection": Compared.PER_ROLE,
+    "protection": Compared.PER_COMPONENT,
+    "oob_size": Compared.EQUAL,
+    "planes": Compared.EQUAL,
+    "dies": Compared.EQUAL,
+    "die_select_bit": Compared.EQUAL,
+    "max_bad_blocks": Compared.EQUAL,
+    "ecc": Compared.PER_COMPONENT,
+}
+
+#: The components of each value compared per component: a protection
+#: layout's roles, an ECC requirement's strength and step.
+COMPONENTS: dict[str, tuple[str, ...]] = {
+    "protection": ROLES,
+    "ecc": ("strength_bits", "step_bytes"),
 }
 
 #: :data:`COMPARED`, each value as it is compared: a value compared per
-#: role is one name per role (``"protection.tb"``), which
-#: :meth:`Record.given` and :meth:`Flash.value` read.
+#: component is one name per component (``"protection.tb"``,
+#: ``"ecc.step_bytes"``), which :meth:`Record.given` and :meth:`Flash.value`
+#: read.
 COMPARED_VALUES: tuple[str, ...] = tuple(
     n
     for name, how in COMPARED.items()
-    for n in ((name,) if how is Compared.EQUAL else tuple(f"{name}.{r}" for r in ROLES))
+    for n in ((name,) if how is Compared.EQUAL else tuple(f"{name}.{c}" for c in COMPONENTS[name]))
 )
 
 
@@ -333,9 +406,10 @@ class Record:
     The fields made from arguments are what the entry states, as the data
     stores them; :attr:`size`, :attr:`page_size`, :attr:`erasers`,
     :attr:`features`, :attr:`opcodes`, :attr:`sector_size`,
-    :attr:`quad_enable_requirement` and :attr:`quad_enable` are worked
-    out from them and from its SFDP tables (:mod:`spiflash.derive`). See
-    :mod:`spiflash_extract.record` for what each field means."""
+    :attr:`quad_enable_requirement`, :attr:`quad_enable` and :attr:`dies`
+    are worked out from them and from its SFDP tables
+    (:mod:`spiflash.derive`). See :mod:`spiflash_extract.record` for what
+    each field means."""
 
     source: Source
     file: str
@@ -380,6 +454,21 @@ class Record:
     quad_enable_requirement_claim: QuadEnableRequirement | None = None
     #: Where the entry says the part's block-protection bits are.
     protection: Protection | None = None
+    #: The spare (out-of-band) bytes of each page (SPI NAND).
+    oob_size: int | None = None
+    #: The planes of each die (SPI NAND).
+    planes: int | None = None
+    #: The dies in the package the entry states, where it differs from its
+    #: SFDP tables' (or it has none).
+    dies_claim: int | None = None
+    #: The register bit selecting the die, where the part selects it with a
+    #: register rather than a command (``NAND_DIE_SELECT``, ``DIE_SELECT``):
+    #: Micron's SPI NAND feature 0xd0 bit 6.
+    die_select_bit: RegisterBit | None = None
+    #: The most blocks of each die that may be bad (SPI NAND).
+    max_bad_blocks: int | None = None
+    #: The error correction the part needs (SPI NAND).
+    ecc: EccRequirement | None = None
     #: The size: :attr:`size_claim`, or failing that its SFDP tables' density.
     size: int | None = field(init=False, compare=False, repr=False)
     #: The page size: :attr:`page_size_claim`, or failing that its SFDP tables'.
@@ -406,6 +495,9 @@ class Record:
     #: Where the quad enable bit is: :attr:`quad_enable_claim`, or failing
     #: that where :attr:`quad_enable_requirement` puts it.
     quad_enable: RegisterBit | NoQuadEnable | None = field(init=False, compare=False, repr=False)
+    #: The dies in the package: :attr:`dies_claim`, or failing that how
+    #: many its SFDP tables' SCCR multi-chip table describes.
+    dies: int | None = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "via", MappingProxyType(dict(self.via)))
@@ -416,17 +508,21 @@ class Record:
         facts = self.sfdp_facts
         size, page = self.size_claim, self.page_size_claim
         qer = self.quad_enable_requirement_claim
+        dies = self.dies_claim
         erasers = self.eraser_claims
         if facts is not None:
             size = facts.size if size is None else size
             page = facts.page_size if page is None else page
             qer = facts.quad_enable_requirement if qer is None else qer
+            dies = facts.dies if dies is None else dies
         object.__setattr__(self, "size", size)
         object.__setattr__(self, "page_size", page)
         object.__setattr__(self, "quad_enable_requirement", qer)
+        object.__setattr__(self, "dies", dies)
         qe = self.quad_enable_claim
         object.__setattr__(self, "quad_enable", qer.bit if qe is None and qer else qe)
         erasers += tuple(e for e in self.sfdp_erasers if e not in erasers)
+        erasers += tuple(e for e in derive.die_erasers(self) if e not in erasers)
         object.__setattr__(self, "erasers", erasers)
         features = self.feature_claims | derive.features(self)
         object.__setattr__(self, "features", features)
@@ -484,6 +580,14 @@ class Record:
             if d.get("quad_enable_requirement")
             else None,
             protection=Protection.from_json(d["protection"]) if d.get("protection") else None,
+            oob_size=d.get("oob_size"),
+            planes=d.get("planes"),
+            dies_claim=d.get("dies"),
+            die_select_bit=(
+                RegisterBit.from_json(d["die_select_bit"]) if d.get("die_select_bit") else None
+            ),
+            max_bad_blocks=d.get("max_bad_blocks"),
+            ecc=EccRequirement.from_json(d["ecc"]) if d.get("ecc") else None,
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -510,6 +614,12 @@ class Record:
             "quad_enable": quad_enable_to_json(self.stored("quad_enable")),
             "quad_enable_requirement": _str_or_none(self.stored("quad_enable_requirement")),
             "protection": self.protection.to_json() if self.protection else None,
+            "oob_size": self.oob_size,
+            "planes": self.planes,
+            "dies": self.stored("dies"),
+            "die_select_bit": self.die_select_bit.to_json() if self.die_select_bit else None,
+            "max_bad_blocks": self.max_bad_blocks,
+            "ecc": self.ecc.to_json() if self.ecc else None,
             "opcodes": [
                 {
                     "op": u.op,
@@ -540,16 +650,18 @@ class Record:
         compared on it: what it stores (:meth:`stored`); for a field it
         only derives (:data:`DERIVED`: ``sector_size``), what its stored
         fields give; for those of :data:`SFDP_VALUES` (``size``,
-        ``page_size``, and the quad enable bit and requirement), what it
-        states or, where it states none, what its SFDP tables say. A role
-        of its block protection is ``"protection.<role>"``
-        (``"protection.tb"``)."""
-        field_name, _, role = name.partition(".")
-        if role:
-            if field_name != "protection" or role not in ROLES:
+        ``page_size``, the quad enable bit and requirement, and the dies),
+        what it states or, where it states none, what its SFDP tables say.
+        A component of a value compared per component (:data:`COMPONENTS`)
+        is ``"<field>.<component>"``: ``"protection.tb"``,
+        ``"ecc.step_bytes"``."""
+        field_name, _, part = name.partition(".")
+        if part:
+            if part not in COMPONENTS.get(field_name, ()):
                 msg = f"no such value: {name}"
                 raise KeyError(msg)
-            return getattr(self.protection, role) if self.protection else None
+            whole = self.given(field_name)
+            return getattr(whole, part) if whole is not None else None
         if name in DERIVED or name in SFDP_VALUES:
             return getattr(self, name)
         return self.stored(name)
@@ -1075,14 +1187,57 @@ class Flash:
         layout, so one source is wrong."""
         return shared_bits(register_bits(self.quad_enable, None) | self._protection_roles)
 
+    @cached_property
+    def oob_size(self) -> int | None:
+        """The spare (out-of-band) bytes of each page (SPI NAND)."""
+        return self._value(lambda r: r.oob_size)
+
+    @cached_property
+    def planes(self) -> int | None:
+        """The planes of each die (SPI NAND)."""
+        return self._value(lambda r: r.planes)
+
+    @cached_property
+    def dies(self) -> int | None:
+        """The dies in the package: each record's own, stated or from its
+        SFDP tables (:attr:`Record.dies`)."""
+        return self._value(lambda r: r.dies)
+
+    @cached_property
+    def die_select_bit(self) -> RegisterBit | None:
+        """The register bit selecting the die, where the part selects it
+        with a register (Micron's feature 0xd0 bit 6), as most sources say."""
+        found: RegisterBit | None = self._bit(lambda r: r.die_select_bit)
+        return found
+
+    @cached_property
+    def max_bad_blocks(self) -> int | None:
+        """The most blocks of each die that may be bad (SPI NAND)."""
+        return self._value(lambda r: r.max_bad_blocks)
+
+    @cached_property
+    def ecc(self) -> EccRequirement | None:
+        """The error correction the part needs (SPI NAND): the strength
+        most sources give, and the step most of those giving that strength
+        and a step give (one giving no step does not vote on it)."""
+        strength = self._value(lambda r: r.ecc.strength_bits if r.ecc else None)
+        if strength is None:
+            return None
+        step = self._value(
+            lambda r: r.ecc.step_bytes if r.ecc and r.ecc.strength_bits == strength else None
+        )
+        return EccRequirement(strength, step)
+
     def value(self, name: str) -> Any:
         """The chip's value of ``name``, one of :data:`COMPARED_VALUES`:
         ``flash.value("size")`` is :attr:`size`, ``flash.value("protection.tb")``
-        the ``tb`` of :attr:`protection`."""
-        field_name, _, role = name.partition(".")
-        if role:
-            return getattr(self.protection, role) if self.protection else None
-        return getattr(self, field_name)
+        the ``tb`` of :attr:`protection`, ``flash.value("ecc.step_bytes")``
+        the step of :attr:`ecc`."""
+        field_name, _, part = name.partition(".")
+        whole = getattr(self, field_name)
+        if part:
+            return getattr(whole, part) if whole is not None else None
+        return whole
 
     @cached_property
     def features(self) -> frozenset[Feature]:
@@ -1105,7 +1260,7 @@ class Flash:
         because: dict[str, list[Claim]] = {}
         for r in sorted(self.records, key=lambda r: r.source.priority):
             for use in r.opcodes:
-                claim = Claim(r.source, use.via, use.implied, use.assumed)
+                claim = Claim(r.source, use.via, use.implied, use.assumed, use.dummy_clocks)
                 if claim not in because.setdefault(use.op, []):
                     because[use.op].append(claim)
         out = {}
@@ -1299,6 +1454,12 @@ class Flash:
             "quad_enable": quad_enable_to_json(self.quad_enable),
             "quad_enable_requirement": _str_or_none(self.quad_enable_requirement),
             "protection": self.protection.to_json() if self.protection else None,
+            "oob_size": self.oob_size,
+            "planes": self.planes,
+            "dies": self.dies,
+            "die_select_bit": self.die_select_bit.to_json() if self.die_select_bit else None,
+            "max_bad_blocks": self.max_bad_blocks,
+            "ecc": self.ecc.to_json() if self.ecc else None,
             "features": sorted(self.features),
             "feature_sources": {
                 f: [s._asdict() for s in self.feature_sources(f)] for f in sorted(self.features)
@@ -1312,6 +1473,7 @@ class Flash:
                     "sources": list(o.sources),
                     "implied_by": list(o.implied_by),
                     "assumed_by": list(o.assumed_by),
+                    "dummy_clocks": o.dummy_clocks,
                 }
                 for o in self.opcodes.values()
             ],

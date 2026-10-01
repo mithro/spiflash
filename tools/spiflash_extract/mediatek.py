@@ -13,12 +13,23 @@ for a part of two dies, how to select a die::
 
 ``SNAND_MEMORG`` (:upstream:`mediatek:drivers/mtd/mtk-snand/mtk-snand-def.h`)
 is the page size, the spare (OOB) size, pages per block, blocks per die,
-planes per die and dies. What each means is what ``mtk_snand_setup()`` in
+planes per die and dies: the record's ``oob_size``, ``planes`` and ``dies``.
+What each means is what ``mtk_snand_setup()`` in
 :upstream:`mediatek:drivers/mtd/mtk-snand/mtk-snand.c` does with it: the size
 is page x pages per block x blocks per die x dies, the main area only. The
 driver never reads the planes: a two-plane part's blocks per die are all
 its blocks, and ``mtk_snand_get_plane_address()`` takes the plane bit from
 the page address.
+
+Each read-from-cache and program-load ``SNAND_IO_CAP`` lists the I/O modes
+the part takes, each an ``SNAND_OP`` of its opcode and dummy clocks
+(``mtk_snand_read_cache()`` writes them to the controller as "dummy
+cycles"): the record's operations, each with its dummy clocks. The page
+read, program execute and feature commands the driver sends every part
+are its defaults. A part of two dies selects one with Winbond's command
+(0xc2 and the die) or Micron's feature 0xd0 bit 6; the Micron one writes
+``SNAND_MICRON_DIE_SEL_1`` (bit 6 set) whatever the die asked for, so it
+always selects die 1, an upstream bug the record notes.
 
 ``mtk_snand_id_probe()`` sends 0x9f and a zero byte, then 0x9f alone, and
 matches both answers against the entries, first to last.
@@ -40,8 +51,11 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from spiflash import derive
+from spiflash.enums import DataPhase, FlashType
+from spiflash.opcodes import OPERATIONS
 
 from . import cparse
+from .ops import Opcodes
 from .record import Record, make
 
 if TYPE_CHECKING:
@@ -53,9 +67,28 @@ DEF_H = "drivers/mtd/mtk-snand/mtk-snand-def.h"
 
 ID_METHODS = {"SNAND_ID_DYMMY": "rdid_opcode_dummy", "SNAND_ID_ADDR": "rdid_opcode_addr"}
 
-# The die-select functions the table uses: each sends the die index its own
-# way (Winbond's 0xc2 command, Micron's die-select feature bit).
-SELECT_DIE = {"mtk_snand_winbond_select_die", "mtk_snand_micron_select_die"}
+# The die-select functions the table uses, and what each selects a die
+# with: Winbond's 0xc2 command and the die index (mtk-snand-ids.c:462-475),
+# Micron's die-select feature bit, 0xd0 bit 6 (:477-494).
+SELECT_DIE: dict[str, tuple[str, Any]] = {
+    "mtk_snand_winbond_select_die": ("op", "NAND_DIE_SELECT"),
+    "mtk_snand_micron_select_die": ("bit", {"register": "nand-d0", "bit": 6}),
+}
+
+#: What the Micron die select does wrong, noted on its records.
+MICRON_SELECT_BUG = (
+    "mtk_snand_micron_select_die() writes SNAND_MICRON_DIE_SEL_1 (bit 6) whatever "
+    "the die asked for, so it always selects die 1 (an upstream bug)"
+)
+
+#: The commands the driver sends every part, whatever its entry says: its
+#: defaults. The block erase is the eraser's.
+DEFAULTS = {
+    "NAND_PAGE_READ": "SNAND_CMD_READ_TO_CACHE",
+    "NAND_PROGRAM_EXECUTE": "SNAND_CMD_PROGRAM_EXECUTE",
+    "NAND_GET_FEATURE": "SNAND_CMD_GET_FEATURE",
+    "NAND_SET_FEATURE": "SNAND_CMD_SET_FEATURE",
+}
 
 _ID = "wrong id: the table gives the part again, with another id"
 _SIZE = "size contradicts its part number's density"
@@ -80,9 +113,10 @@ def _symbols(root: Path, text: str) -> dict[str, str | int]:
     }
 
 
-def _io_caps(text: str, symbols: Mapping[str, str | int]) -> dict[str, dict[str, int]]:
-    """Each ``SNAND_IO_CAP`` table: its I/O modes (``1_1_4``) and the opcode
-    of each. The modes it allows must be the ones it gives an opcode for."""
+def _io_caps(text: str, symbols: Mapping[str, str | int]) -> dict[str, dict[str, tuple[int, int]]]:
+    """Each ``SNAND_IO_CAP`` table: its I/O modes (``1_1_4``), and the
+    opcode and dummy clocks of each. The modes it allows must be the ones it
+    gives an opcode for."""
     caps = {}
     for m in re.finditer(r"\bSNAND_IO_CAP\s*\(", text):
         start = m.end() - 1
@@ -93,7 +127,8 @@ def _io_caps(text: str, symbols: Mapping[str, str | int]) -> dict[str, dict[str,
             if args is None or not args[0].startswith("SNAND_IO_"):
                 msg = f"{IDS}:{cparse.line_of(text, start)}: {name}: cannot read {op!r}"
                 raise ValueError(msg)
-            modes[args[0].removeprefix("SNAND_IO_")] = cparse.evaluate(args[1], symbols)
+            opcode, dummy = (cparse.evaluate(a, symbols) for a in args[1:3])
+            modes[args[0].removeprefix("SNAND_IO_")] = (opcode, dummy)
         given = sorted(cparse.flag_names(allowed))
         if given != sorted(f"SPI_IO_{mode}" for mode in modes):
             msg = f"{IDS}:{cparse.line_of(text, start)}: {name}: allows {given}, gives {modes}"
@@ -126,8 +161,42 @@ def _entries(root: Path) -> Iterator[tuple[int, str, dict[str, Any]]]:
         raise ValueError(msg)
 
 
+#: The two kinds of ``SNAND_IO_CAP`` table, by their names' start.
+READ_CAPS = "snand_cap_read_from_cache"
+LOAD_CAPS = "snand_cap_program_load"
+
+
+def _common(
+    caps: Mapping[str, dict[str, tuple[int, int]]], kind: str
+) -> set[tuple[str, tuple[int, int]]]:
+    """The I/O modes (with their opcode and dummy clocks) every table of
+    ``kind`` has: the read from cache on one line (0x0b, 8 dummy clocks)
+    and the program load on one line (0x02), which the driver can fall back
+    to on every part, so its defaults, not the part's."""
+    tables = [set(modes.items()) for name, modes in caps.items() if name.startswith(kind)]
+    return set.intersection(*tables) if tables else set()
+
+
+def _operation(opcode: int, mode: str, phase: DataPhase) -> str:
+    """The SPI NAND operation of an opcode sent in an I/O mode (``1_1_4``):
+    a read from cache or a program load, with its 2-byte column address."""
+    protocol = mode.replace("_", "-")
+    for op in OPERATIONS.values():
+        if op.flash_type is FlashType.NAND and (
+            op.opcode,
+            op.protocol,
+            op.data,
+            op.address_bytes,
+        ) == (opcode, protocol, phase, 2):
+            return op.name
+    msg = f"no SPI NAND operation 0x{opcode:02x} {protocol}"
+    raise ValueError(msg)
+
+
 def _fields(
-    args: list[str], symbols: Mapping[str, str | int], caps: Mapping[str, dict[str, int]]
+    args: list[str],
+    symbols: Mapping[str, str | int],
+    caps: Mapping[str, dict[str, tuple[int, int]]],
 ) -> dict[str, Any]:
     """The record fields of one ``SNAND_INFO``."""
     if len(args) not in (5, 6):
@@ -153,39 +222,60 @@ def _fields(
     if rd not in caps or pl not in caps:
         msg = f"unknown I/O capabilities {rd!r} or {pl!r}"
         raise ValueError(msg)
-    select_die = args[5] if len(args) == 6 else None
+    select_die = args[5].strip() if len(args) == 6 else None
     if (select_die is not None) != (dies > 1) or select_die not in (None, *SELECT_DIE):
         msg = f"{dies} dies, die select {select_die}"
         raise ValueError(msg)
-    features = set()
-    if {"1_1_2", "1_2_2"} & set(caps[rd]):
-        features.add("dual_read")
-    if {"1_1_4", "1_4_4"} & set(caps[rd]):
-        features.add("quad_read")
-    if "1_1_4" in caps[pl]:
-        features.add("quad_pp")
-    return {
+    # Each I/O mode's operation, with the dummy clocks its SNAND_OP gives;
+    # the one-line mode, which every table of its kind has, is a default.
+    opcodes = []
+    for via, table, phase, kind in (
+        (f"cap_rd={rd}", rd, DataPhase.READ, READ_CAPS),
+        (f"cap_pl={pl}", pl, DataPhase.WRITE, LOAD_CAPS),
+    ):
+        common = _common(caps, kind)
+        for mode, (opcode, dummy) in caps[table].items():
+            # The one-line mode only: every read table also has the quad
+            # output read, but which table a part has is its entry's choice.
+            default = mode == "1_1_1" and (mode, (opcode, dummy)) in common
+            opcodes.append(
+                {
+                    "op": _operation(opcode, mode, phase),
+                    "via": f"every {kind}* table" if default else via,
+                    "dummy_clocks": dummy,
+                    **({"assumed": True} if default else {}),
+                }
+            )
+    defaults = Opcodes(symbols)
+    for op, symbol in DEFAULTS.items():
+        defaults.add(op, f"every part ({symbol})", symbol, assumed=True)
+    out: dict[str, Any] = {
         "type": "nand",
         "id": ident.hex(),
         "id_method": ID_METHODS[id_args[0]],
         "size": page * ppb * blocks * dies,
         "page_size": page,
         "erasers": [derive.block_eraser(0xD8, page * ppb, page * ppb * blocks * dies).to_json()],
-        "features": features,
-        "flags": [
-            f"sparesize={oob}",
-            f"planes_per_die={planes}",
-            f"ndies={dies}",
-            f"cap_rd={rd}",
-            f"cap_pl={pl}",
-            f"read_from_cache={','.join(caps[rd])}",
-            f"program_load={','.join(caps[pl])}",
-            *([f"select_die={select_die}"] if select_die else []),
-        ],
-        # The flags hold the geometry (sparesize, planes_per_die, ndies) and
-        # the size the blocks, so no note restates it.
+        "oob_size": oob,
+        "planes": planes,
+        "dies": dies,
+        "flags": [f"cap_rd={rd}", f"cap_pl={pl}"],
+        "via": {},
+        "opcodes": opcodes + defaults.to_json(),
         "notes": [],
     }
+    if select_die is not None:
+        how, what = SELECT_DIE[select_die]
+        token = f"select_die={select_die}"
+        if how == "op":
+            select = Opcodes(symbols)
+            select.add(what, token, "SNAND_CMD_WINBOND_SELECT_DIE")
+            out["opcodes"] += select.to_json()
+        else:
+            out["die_select_bit"] = what
+            out["via"]["die_select_bit"] = token
+            out["notes"].append(MICRON_SELECT_BUG)
+    return out
 
 
 def _sorted(

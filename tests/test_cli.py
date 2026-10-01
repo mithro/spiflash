@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from spiflash import cli, units
+from spiflash.enums import FlashType
+from spiflash.model import Flash
 from spiflash.sfdp import parse
 from test_sfdp import MX25L25635E, W25Q512JV
 
@@ -248,9 +250,23 @@ def test_id_with_opcodes_flag(capsys: pytest.CaptureFixture[str]) -> None:
     assert "0x9f  RDID" in out
 
 
-def test_opcodes_none_known(capsys: pytest.CaptureFixture[str]) -> None:
-    _, out = run(capsys, "opcodes", "--", "c220")  # a SPI NAND: no NOR opcodes
-    assert "no opcodes known" in out
+def test_opcodes_none_known() -> None:
+    # Every chip the data holds has some, if only its derived read-id.
+    lonely = Flash(b"\xc2\x20", FlashType.NAND, ())
+    assert cli.opcode_table(lonely) == [
+        "    no opcodes known (the sources describe none for this part)"
+    ]
+
+
+def test_spi_nand_opcodes(capsys: pytest.CaptureFixture[str]) -> None:
+    # SPI NAND's own command set, with the part's dummy clocks where a
+    # source gives them.
+    _, out = run(capsys, "opcodes", "-v", "--", "efab21")
+    assert "0x9f  NAND_RDID_DUMMY" in out
+    assert "0xeb  NAND_READ_CACHE_1_4_4" in out
+    assert "0xc2  NAND_DIE_SELECT" in out
+    assert "READ_1_1_4 " not in out  # no SPI NOR operation
+    assert "linux           read_cache_variants, 4 dummy clocks" in out
 
 
 def test_sfdp_from_hex_and_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:

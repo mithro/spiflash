@@ -214,4 +214,5 @@ class TimingSource(StrEnum):
     FLASHPROG_FEATURES = "flashprog-features"
     FLASHROM_SIZES = "flashrom-sizes"
     JESD216 = "jesd216"
+    LINUX_SPINAND = "linux-spinand"
     PART = "part"

@@ -30,7 +30,7 @@ license = "GPL-2.0-or-later"
 url = "https://github.com/torvalds/linux"
 branch = "master"
 commit = "fd179f8a05be3ccae366b9b96e176b51fbe54aab"
-paths = ["drivers/mtd/spi-nor/", "drivers/mtd/nand/spi/", "include/linux/mtd/spi-nor.h"]
+paths = ["drivers/mtd/spi-nor/", "drivers/mtd/nand/spi/", "include/linux/mtd/spi-nor.h", "include/linux/mtd/spinand.h"]
 license = "GPL-2.0-only"
 
 [u-boot]

@@ -69,10 +69,10 @@ from source_pages import commit_link, page_name
 from source_pages import generate_all as source_pages
 from source_pages import sources_table as sources_list
 from spiflash import derive
-from spiflash.derive import ERASE_BY_OPCODE
+from spiflash.derive import ERASE_BY_OPCODE, NAND_ERASE_BY_OPCODE
 from spiflash.enums import Feature, FlashType, OperationKind, Source
 from spiflash.model import compared_value, strip_continuation
-from spiflash.opcodes import OPERATIONS
+from spiflash.opcodes import OPERATIONS, sort_key
 from spiflash.registers import ROLES, RegisterBit
 from spiflash.sfdp_tools import diff as sfdp_diff
 from spiflash.units import human_size, human_time
@@ -86,6 +86,7 @@ if TYPE_CHECKING:
 
     from spiflash import Database, Flash, Record, SfdpDump
     from spiflash.model import SupportedOperation
+    from spiflash.opcodes import Operation
 
 
 def chip_page(
@@ -115,6 +116,7 @@ def chip_page(
     out += _extended_ids(db, f)
     out += _capabilities(f)
     out += _registers(f)
+    out += _geometry(f)
     out += _sfdp(f)
     out += _opcodes(f)
     out += _erase_layouts(f)
@@ -125,11 +127,12 @@ def chip_page(
 
 
 def _summary_cards(f: Flash) -> list[str]:
-    cards = [
-        ("Capacity", "size"),
-        ("Page", "page_size"),
-        ("Sector", "sector_size"),
-    ]
+    cards = [("Capacity", "size"), ("Page", "page_size")]
+    if f.type is FlashType.NAND:
+        # A SPI NAND part's erase block, and the spare area each page has.
+        cards += [("Spare/page", "oob_size"), ("Block", "sector_size")]
+    else:
+        cards.append(("Sector", "sector_size"))
     out = ["::::{grid} 2 2 4 4\n:gutter: 2\n:class-container: sf-cards\n"]
     for label, attr in [*cards, ("Supply", "voltage")]:
         value = volts(f.voltage) if attr == "voltage" else size_text(getattr(f, attr))
@@ -393,6 +396,72 @@ def _registers(f: Flash) -> list[str]:
     return out
 
 
+#: The geometry values a chip page lists, and their labels.
+GEOMETRY = {
+    "oob_size": "Spare area per page",
+    "planes": "Planes per die",
+    "dies": "Dies",
+    "die_select_bit": "Die select bit",
+    "max_bad_blocks": "Bad blocks per die (at most)",
+    "ecc.strength_bits": "ECC: bits corrected",
+    "ecc.step_bytes": "ECC: per step of",
+}
+
+
+def _geometry(f: Flash) -> list[str]:
+    """A SPI NAND part's geometry, and a SPI NOR part's dies: each value
+    with the sources giving it, then what follows from them (derived)."""
+    nand = f.type is FlashType.NAND
+    given = {attr: f.values(attr) for attr in GEOMETRY}
+    if not any(given.values()):
+        return []
+    rows = []
+    for attr, label in GEOMETRY.items():
+        chip = f.value(attr)
+        for value, who in given[attr].items():
+            mine = " {bdg-primary}`chip`" if value == compared_value(chip) else ""
+            if attr in ("oob_size", "ecc.step_bytes"):
+                text = size_text(value)
+            elif isinstance(value, RegisterBit):
+                text = esc(f"{value} (written with SET FEATURE, 0x1f)")
+            else:
+                text = esc(str(value))
+            rows.append([esc(label), text + mine, _who(who)])
+    select = [o for o in f.opcodes.values() if o.name in ("DIE_SELECT", "NAND_DIE_SELECT")]
+    for o in select:
+        op = f"[`{o.name}`](../opcodes/{o.name}.md), {{sfop}}`0x{o.opcode:02x}` and the die"
+        rows.append(["Die select operation", op, _who(o.sources)])
+    out = [
+        "## NAND geometry\n" if nand else "## Dies\n",
+        list_table(["Field", "Value", "Sources"], rows, "sf-table sf-registers"),
+        "",
+        "{bdg-primary}`chip` marks the value the chip is given: the one most sources give.\n",
+    ]
+    derived = _derived_geometry(f) if nand else []
+    if derived:
+        out.append("Worked out from those, not stated by any source:\n")
+        out.append(list_table(["Field", "Value"], derived, "sf-table sf-kv"))
+        out.append("")
+    return out
+
+
+def _derived_geometry(f: Flash) -> list[list[str]]:
+    """What a SPI NAND chip's size, page, block, dies and spare area give."""
+    rows = []
+    page, block, size, dies = f.page_size, f.sector_size, f.size, f.dies
+    if page and block:
+        rows.append(["Pages per block", num(f"{block // page:,}")])
+    if block and size:
+        rows.append(["Blocks", num(f"{size // block:,}")])
+        if dies:
+            rows.append(["Blocks per die", num(f"{size // block // dies:,}")])
+    if size and dies:
+        rows.append(["Die size", size_text(size // dies)])
+    if page and size and f.oob_size:
+        rows.append(["Spare area in all", size_text(f.oob_size * (size // page))])
+    return rows
+
+
 def _sfdp(f: Flash) -> list[str]:
     if not f.sfdp_dumps:
         return []
@@ -508,6 +577,8 @@ def _opcodes(f: Flash) -> list[str]:
         "Each opcode some source says this part has, and which sources say so: "
         "{sfyes}`✓` for the part, {sfgrey}`◌` only as the source's driver default "
         "(sent to every part, whatever the entry says), which implies no capability. "
+        "*Dummy* is the part's own dummy clocks for it, where a source gives them "
+        "(the operation's page has its usual number). "
         "A missing opcode may still be supported: see [](../opcodes.md).\n"
     )
 
@@ -523,15 +594,17 @@ def _opcodes(f: Flash) -> list[str]:
         [
             f"{{sfop}}`0x{o.opcode:02x}`",
             f"[`{o.name}`](../opcodes/{o.name}.md)",
-            kind_link(o.operation.kind, "../opcodes.html"),
+            kind_link(o.operation.kind, "../opcodes.html", o.operation.flash_type),
             esc(o.operation.description),
+            _dummy(o),
         ]
         + [cell(o, s) for s in srcs]
         for o in f.opcodes.values()
     ]
+    head = ["Opcode", "Operation", "Type", "Description", "Dummy"]
     out.append(
         list_table(
-            ["Opcode", "Operation", "Type", "Description", *[_source_header(s) for s in srcs]],
+            [*head, *[_source_header(s) for s in srcs]],
             rows,
             "sf-table sf-matrix sf-opcodes",
         )
@@ -547,6 +620,7 @@ def _opcodes(f: Flash) -> list[str]:
     for o in f.opcodes.values():
         reasons = "; ".join(
             f"{source_badge(c.source)} {esc(c.via)}"
+            + (f", {c.dummy_clocks} dummy clocks" if c.dummy_clocks is not None else "")
             + (" *(implied)*" if c.implied else "")
             + (" *(driver default)*" if c.assumed else "")
             for c in o.because
@@ -556,22 +630,32 @@ def _opcodes(f: Flash) -> list[str]:
     return out
 
 
+def _dummy(o: SupportedOperation) -> str:
+    """The part's dummy clocks for an operation, where a source gives them;
+    each number and who gives it, where they differ."""
+    given = o.dummy_clocks_given()
+    if len(given) < 2:
+        return num(str(next(iter(given)))) if given else " "
+    return "; ".join(f"{num(str(n))} ({_who(who)})" for n, who in sorted(given.items()))
+
+
 def _erase_layouts(f: Flash) -> list[str]:
     rows = []
     for r in f.records:
+        dies = derive.die_erasers(r)
         for e in r.erasers:
             blocks = ", ".join(num(f"{b.count:,} {TIMES} {human_size(b.size)}") for b in e.blocks)
             op = e.opcode
-            opname = ERASE_BY_OPCODE.get(op) if op is not None else None
-            if r.type is FlashType.NAND:
-                # A SPI NAND block erase is not the SPI NOR operation of
-                # the same opcode.
-                operation = "block erase"
-            else:
-                operation = f"[`{opname}`](../opcodes/{opname}.md)" if opname else EM_DASH
+            # A SPI NAND block erase is not the SPI NOR operation of the
+            # same opcode.
+            by_opcode = ERASE_BY_OPCODE if r.type is FlashType.NOR else NAND_ERASE_BY_OPCODE
+            opname = by_opcode.get(op) if op is not None else None
+            operation = f"[`{opname}`](../opcodes/{opname}.md)" if opname else EM_DASH
             if e.assumed:
                 operation += " *(driver default)*"
-            if e not in r.eraser_claims:
+            if e in dies and e not in r.eraser_claims:
+                operation += f" *(from its {r.dies} dies)*"
+            elif e not in r.eraser_claims:
                 operation += " *(SFDP)*"
             # The upstream token stating it, where one does (QEMU's ER_4K).
             token = r.via.get(f"erasers:0x{op:02x}") if op is not None else None
@@ -813,33 +897,62 @@ def chips_index(flashes: list[Flash], slugs: dict[int, str]) -> str:
 
 
 def opcodes_table(flashes: list[Flash]) -> str:
+    """The operations, a table per kind of SPI NOR operation, then one of
+    SPI NAND's (its own command set), each with how many chips have it."""
     uses = Counter(name for f in flashes for name in f.opcodes)
     out = []
-    for kind in OperationKind:
-        rows = [
-            [
-                f"{{sfop}}`0x{op.opcode:02x}`",
-                f"[`{op.name}`](opcodes/{op.name}.md)",
-                esc(op.description),
-                count(uses.get(op.name, 0)),
-            ]
-            for op in OPERATIONS.values()
-            if op.kind == kind
+
+    def row(op: Operation, *more: str) -> list[str]:
+        return [
+            f"{{sfop}}`0x{op.opcode:02x}`",
+            f"[`{op.name}`](opcodes/{op.name}.md)",
+            *more,
+            esc(op.description),
+            count(uses.get(op.name, 0)),
         ]
+
+    nor = [op for op in OPERATIONS.values() if op.flash_type is FlashType.NOR]
+    for kind in OperationKind:
+        rows = [row(op) for op in nor if op.kind == kind]
         out.append(f"({KIND_TARGET}{kind})=\n### {KIND_TITLE[kind]}\n")
         out.append(list_table(["Opcode", "Operation", "Description", "Chips"], rows, "sf-table"))
         out.append("")
+    nand = [op for op in OPERATIONS.values() if op.flash_type is FlashType.NAND]
+    rows = [
+        row(op, f"{{sfkind}}`{op.kind}`") for op in sorted(nand, key=lambda op: sort_key(op.name))
+    ]
+    out.append(f"({KIND_TARGET}{FlashType.NAND})=\n### SPI NAND\n")
+    out.append(NAND_OPERATIONS_TEXT)
+    out.append(
+        list_table(["Opcode", "Operation", "Type", "Description", "Chips"], rows, "sf-table")
+    )
+    out.append("")
     return "\n".join(out)
+
+
+NAND_OPERATIONS_TEXT = (
+    "SPI NAND has its own command set: the host reads a page into the part's "
+    "cache ([`NAND_PAGE_READ`](opcodes/NAND_PAGE_READ.md)), then reads from the "
+    "cache at a column address; it loads data into the cache, then programs the "
+    "cache into a page ([`NAND_PROGRAM_EXECUTE`](opcodes/NAND_PROGRAM_EXECUTE.md)); "
+    "and its registers are features, read and written by address. Some of its "
+    "opcodes are SPI NOR ones too (0x13, 0x03, 0xd8), so each is an operation "
+    "of its own, named `NAND_...`. Only the single transfer rate forms are "
+    "here: the double transfer rate ones some Winbond parts take have no "
+    "operation yet.\n"
+)
 
 
 #: The opcodes page's target for each kind of operation's table.
 KIND_TARGET = "opcodes-"
 
 
-def kind_link(kind: str, page: str) -> str:
+def kind_link(kind: str, page: str, flash_type: FlashType = FlashType.NOR) -> str:
     """The kind of an operation, linked to its table on the opcodes page
-    (``page``, relative to the linking page's HTML)."""
-    return f"{{sfkind}}`{kind} <{page}#{KIND_TARGET}{kind}>`"
+    (``page``, relative to the linking page's HTML): a SPI NAND
+    operation's is the SPI NAND table."""
+    target = kind if flash_type is FlashType.NOR else flash_type
+    return f"{{sfkind}}`{kind} <{page}#{KIND_TARGET}{target}>`"
 
 
 def sources_table(db: Database) -> str:

@@ -309,8 +309,11 @@ def _record(line: int, chip: dict[str, str]) -> Record:
     ops = Opcodes()
     command = int(chip["RDIDCommand"], 16)
     # The command the entry names (0xaf alone is no operation spiflash has),
-    # but read-id for a JEDEC id under 0x90.
-    if method == "rdid" and command == 0x90:
+    # but read-id for a JEDEC id under 0x90. A SPI NAND part's read-id is
+    # its id method's (spiflash.derive.NAND_ID_OPERATION).
+    if typ == "nand":
+        pass
+    elif method == "rdid" and command == 0x90:
         ops.add("RDID", f"a JEDEC id under RDIDCommand={chip['RDIDCommand']}", value=0x9F)
     elif command in _ID_COMMANDS:
         op, value = _ID_COMMANDS[command]
@@ -318,11 +321,18 @@ def _record(line: int, chip: dict[str, str]) -> Record:
     features: set[str] = set()
     claims: list[tuple[str, str]] = []
     erasers: list[dict[str, Any]] = []
+    nand: dict[str, Any] = {}
     dataflash = chip.get("Class", "").startswith("AT45DB")
     if typ == "nand":
         block = int(chip["BlockSizeInByte"])
         size = _nand_size(chip, size, page, block)
         erasers = [derive.block_eraser(0xD8, block, size).to_json()]
+        # The high half of SpareSizeInByte: the whole spare area of a page.
+        nand["oob_size"] = (int(chip["SpareSizeInByte"], 16) >> 16) or None
+        if "true" in chip.get("SupportLUT", ""):
+            # The bad block lookup table: swap a block, read the table.
+            ops.add("NAND_BBM_SWAP", "SupportLUT=true", value=0xA1)
+            ops.add("NAND_READ_BBM_LUT", "SupportLUT=true", value=0xA5)
     elif not dataflash:
         words = _words(chip)
         for word in ("ReadCmd", "ProgramCmd"):
@@ -352,6 +362,10 @@ def _record(line: int, chip: dict[str, str]) -> Record:
     if command != 0x9F:
         # The command the id is read with, which id_method says.
         via["id_method"] = f"RDIDCommand={chip['RDIDCommand']}"
+    dies = _dies(chip, size)
+    if dies is not None:
+        nand["dies"] = dies
+        via["dies"] = f"DieSizeInKByte={chip['DieSizeInKByte']}"
     description = chip.get("Description", "").strip()
     return make(
         "dediprog",
@@ -372,7 +386,23 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         quad_enable=quad_enable,
         opcodes=ops.to_json(),
         notes=([description] if description else []) + qe_notes,
+        **nand,
     )
+
+
+def _dies(chip: dict[str, str], size: int) -> int | None:
+    """The dies ``DieSizeInKByte`` gives: the size over the die's, where
+    the die is smaller than the chip. A die the size of the chip is the
+    template's (252 of the 260 entries giving a die size give one), and one
+    larger than the chip (the S79FL01GS and S79FS01GS "one die" entries)
+    says nothing of it."""
+    die = int(chip.get("DieSizeInKByte") or "0") * 1024
+    if not die or die >= size:
+        return None
+    if size % die:
+        msg = f"size {size} is not a whole number of {die}-byte dies"
+        raise ValueError(msg)
+    return size // die
 
 
 #: ``QEbitAddr`` values that say nothing of the part: the template's 0x200
@@ -456,7 +486,8 @@ def _opcodes(chip: dict[str, str], word: str, text: str) -> Iterator[tuple[int, 
 def _erasers(chip: dict[str, str], ops: Opcodes, size: int) -> list[dict[str, Any]]:
     """The erase layouts: chip erase; 0x20 over the ``SectorSizeInByte`` sectors; 0x52 over the SST
     parts' 32 KiB blocks, or an AT25F's ``SectorSizeInByte`` where that is
-    not the template's 4096; and die erase over ``DieSizeInKByte`` dies.
+    not the template's 4096. Die erase has none: its layout is the dies'
+    (:func:`_dies`, :func:`spiflash.derive.die_erasers`).
 
     0xd8 and 0xdc have no layout: ``BlockSizeInByte`` is 64 KiB in nearly
     every entry, where other sources give 32 KiB (M25P05, EN25F10, ...),
@@ -469,7 +500,7 @@ def _erasers(chip: dict[str, str], ops: Opcodes, size: int) -> list[dict[str, An
         if slot == 0:
             unit = size
         elif slot == 2:
-            unit = int(chip.get("DieSizeInKByte", "0")) * 1024
+            unit = 0
         elif byte == 0x52 and int(chip["RDIDCommand"], 16) == 0x15:
             unit = 0 if sectors == 4096 else sectors
         elif byte == 0x52:

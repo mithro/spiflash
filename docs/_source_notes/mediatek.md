@@ -50,19 +50,34 @@ the GD5F4GQ4UCxIG ({sfid}`c8 b4`) is labelled with a dummy byte, but its
 datasheet and {sfsrc}`linux` read it with none; the driver's second read
 finds it.
 
-Each entry's I/O modes are one of a few `SNAND_IO_CAP` tables: read from
-cache on one, two or four lines (x1, x2, x4), with the address on two or
-four lines too (dual and quad I/O, with 4, 2 or 8 dummy clocks), and program
-load on one line or four. The driver takes the widest the controller has.
-They give the record's `dual_read`, `quad_read` and `quad_pp`. The opcodes
-are SPI NAND's own (read from cache, program load), and have no place among
-the [SPI NOR operations](../opcodes.md), so a record lists none.
+The memory organisation's spare size, planes per die and dies are the
+record's `oob_size`, `planes` and `dies`, a die count of 1 too.
 
-What a record has no field for is kept in its `flags`, under the driver's
-names: `sparesize` (bytes per page), `planes_per_die`, `ndies`, `cap_rd` and
-`cap_pl` (the I/O tables) with the modes each allows (`read_from_cache`,
-`program_load`), and `select_die`, which of the two ways a two-die part is
-switched (Winbond's 0xc2 command, or Micron's die-select feature bit).
+Each entry's I/O modes are one of a few `SNAND_IO_CAP` tables (`cap_rd` and
+`cap_pl`): read from cache on one, two or four lines (x1, x2, x4), with the
+address on two or four lines too (dual and quad I/O), and program load on
+one line or four. Each mode is an `SNAND_OP` of its opcode and its dummy
+clocks, which `mtk_snand_read_cache()` writes to the controller as its
+"dummy cycles", and the driver takes the widest the controller has. Each is
+one of the record's {ref}`SPI NAND operations <opcodes-nand>`, with
+those dummy clocks (the `quad_q2d` table's quad I/O read takes 2, the
+`quad_a8d` table's every read 8), and its table is the operation's `via`.
+Every table has the one-line mode, the fast read 0x0b and the load 0x02
+(mtk-snand-ids.c:32-77), so those two are the driver's defaults, which
+imply no `fast_read`; the others imply the record's `dual_read`,
+`quad_read` and `quad_pp`. (Every read table has the quad output read too,
+but which table a part has is its entry's choice.) The page read, program
+execute and feature commands it sends every part are driver defaults too.
+
+A part of two dies selects one with `select_die`: Winbond's
+(`mtk_snand_winbond_select_die`) sends 0xc2 and the die
+([`NAND_DIE_SELECT`](../opcodes/NAND_DIE_SELECT.md)), for the W25M02GV and
+ESMT's F50L2G41LB; Micron's (`mtk_snand_micron_select_die`) sets bit 6 of
+feature 0xd0, the record's `die_select_bit`, for the MT29F4G01ADAGD and
+MT29F8G01ADAFD. Micron's writes `SNAND_MICRON_DIE_SEL_1`, bit 6 set,
+whatever the die it is asked for, so it always selects die 1: an upstream
+bug its records note. The bit, and the register, are Micron's, as
+{sfsrc}`linux` has them.
 
 The table repeats two ids. The IS37SML01G1 is listed after the ESMT
 F50L1G41A under the same {sfid}`c8 21` (ISSI's part answers ESMT's id), so

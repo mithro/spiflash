@@ -21,6 +21,8 @@ import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from spiflash import derive
+from spiflash.enums import DataPhase, FlashType
+from spiflash.opcodes import OPERATIONS, sort_key
 
 from . import cparse
 from .ops import Opcodes, add_4b_variants, add_spinor
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
 NOR_DIR = "drivers/mtd/spi-nor"
 NAND_DIR = "drivers/mtd/nand/spi"
 SPINOR_H = "include/linux/mtd/spi-nor.h"  # the SPINOR_OP_* opcodes
+SPINAND_H = "include/linux/mtd/spinand.h"  # the SPINAND_*_OP operations
 
 # Files in NOR_DIR that hold no part tables.
 _NOT_TABLES = {"core.c", "sfdp.c", "swp.c", "otp.c", "sysfs.c", "debugfs.c"}
@@ -120,6 +123,30 @@ _QE_NOT_A_BIT = {
 #: status register block protection (``locking_ops``): the operation.
 _LOCKING_OPS = {"sst26vf_nor_fixups": ("ULBPR", "SPINOR_OP_GBULK")}
 
+#: The dies of the parts whose fixups set ``params->n_dice`` from the size,
+#: which for these entries the part's SFDP tables give at run time, by
+#: (fixups, part): Winbond's ``size / SZ_64M`` (winbond.c:159), and
+#: Spansion's 2 for the 2 Gbit S25H and S28H parts only ("The 2 Gb parts
+#: duplicate info and advertise 4 dice instead of 2", spansion.c:644-646
+#: and 715-717); its 512 Mbit and 1 Gbit parts' come from their SFDP tables
+#: alone, which Linux does not carry.
+_SIZED_DIES = {
+    ("winbond_nor_multi_die_fixups", "W25Q01JV"): 2,  # 1 Gbit
+    ("winbond_nor_multi_die_fixups", "W25Q02JV"): 4,  # 2 Gbit
+    ("s25hx_t_fixups", "S25HL02GT"): 2,
+    ("s25hx_t_fixups", "S25HS02GT"): 2,
+    ("s28hx_t_fixups", "S28HL02GT"): 2,
+    ("s28hx_t_fixups", "S28HS02GT"): 2,
+}
+
+#: The fixups whose ``n_dice`` depends on the size, and so is in
+#: :data:`_SIZED_DIES` for the parts it is known for.
+_SIZED_DIES_FIXUPS = frozenset(f for f, _ in _SIZED_DIES)
+
+#: The ``params->ready`` functions that select each die in turn to poll
+#: it, and the operation selecting one (winbond.c:109-145).
+_DIE_SELECT_READY = {"winbond_nor_multi_die_ready": ("DIE_SELECT", "WINBOND_NOR_OP_SELDIE")}
+
 
 def _fixups(text: str, member: str) -> dict[str, list[str]]:
     """Each ``struct spi_nor_fixups`` in ``text`` whose functions set
@@ -155,7 +182,13 @@ def extract_nor(root: Path) -> list[Record]:
         local = {**symbols, **cparse.defines(stripped)}
         vendors = _manufacturers(text)
         rel = f"{NOR_DIR}/{path.name}"
-        fixups = _Fixups(_fixups(text, "quad_enable"), set(_fixups(text, "locking_ops")))
+        fixups = _Fixups(
+            _fixups(text, "quad_enable"),
+            set(_fixups(text, "locking_ops")),
+            _fixups(text, "n_dice"),
+            _fixups(text, "die_erase_opcode"),
+            _fixups(text, "ready"),
+        )
         for name, values in fixups.quad_enable.items():
             known = _QE_FIXUPS.get(name, (None,))[0]
             mapped = name in _QE_NOT_A_BIT or name in _QE_DEFAULTS or values == [known]
@@ -178,6 +211,43 @@ class _Fixups(NamedTuple):
     quad_enable: dict[str, list[str]]
     #: The fixups replacing the status register block protection.
     locking: set[str]
+    #: The dies (``n_dice``), the die erase opcode and the ready function
+    #: they set, by fixups name.
+    dies: dict[str, list[str]]
+    die_erase: dict[str, list[str]]
+    ready: dict[str, list[str]]
+
+
+def _dies(
+    fixup: str, name: str, fixups: _Fixups, symbols: dict[str, str | int]
+) -> tuple[int | None, list[dict[str, object]], dict[str, str]]:
+    """The dies an entry's fixups set (``params->n_dice``), its die erase
+    (``params->die_erase_opcode``, where it has more than one die) and die
+    select, and the ``via`` of the dies. ``n_dice`` is a number
+    (micron-st.c's 4 and 2, spansion.c's 1 for the S25FS256T), or one the
+    size gives (:data:`_SIZED_DIES`); any other value raises."""
+    ops = Opcodes(symbols)
+    for ready in fixups.ready.get(fixup, ()):
+        if ready in _DIE_SELECT_READY:
+            op, symbol = _DIE_SELECT_READY[ready]
+            ops.add(op, f"{fixup}: ready = {ready}", symbol)
+    values = fixups.dies.get(fixup)
+    if not values:
+        return None, ops.to_json(), {}
+    if fixup in _SIZED_DIES_FIXUPS:
+        dies = _SIZED_DIES.get((fixup, name.upper()))
+    elif len(values) == 1 and values[0].isdigit():
+        dies = int(values[0])
+    else:
+        msg = f"{fixup} sets n_dice to {values}, which no table here maps"
+        raise ValueError(msg)
+    if dies is None:
+        return None, ops.to_json(), {}
+    if dies > 1:
+        for symbol in fixups.die_erase.get(fixup, ()):
+            op = derive.ERASE_BY_OPCODE[cparse.evaluate(symbol, symbols)]
+            ops.add(op, f"{fixup}: die_erase_opcode = {symbol}", symbol)
+    return dies, ops.to_json(), {"dies": f"{fixup}: n_dice = {' or '.join(values)}"}
 
 
 def protection(flags: list[str], symbols: dict[str, str | int]) -> tuple[Any, dict[str, str]]:
@@ -273,7 +343,9 @@ def _nor_record(
         ops = Opcodes(symbols)
         ops.add(op, f"{fixup} (spi_nor_global_block_unlock)", symbol)
         opcodes += ops.to_json()
-    via = feature_via(claims)
+    dies, die_ops, dies_via = _dies(fixup, name, fixups, symbols)
+    opcodes += die_ops
+    via = feature_via(claims) | dies_via
     layout = None
     if fixup in fixups.locking:
         notes.append(f"no block protection bits: its {fixup} replace the status register locking")
@@ -311,6 +383,7 @@ def _nor_record(
         via=via,
         quad_enable=quad_enable,
         protection=layout,
+        dies=dies,
         opcodes=opcodes,
         notes=notes,
     )
@@ -439,11 +512,240 @@ def _nand_manufacturers(
     return at
 
 
+#: The entries whose ``NAND_MEMORG`` oobsize is not the record's
+#: ``oob_size``, the spare bytes per page the part's parameter page gives:
+#: their oobsize is another view of the spare area, and is noted instead.
+#: Each is keyed by the part, with the oobsize it gives (a changed one
+#: raises, to be looked at again).
+_OOB_OTHER_VIEW = {
+    # Datasheet Rev. 1.6, Table 8: 2048+64 with ECC enabled, 2048+128 with
+    # it disabled; the parameter page's spare bytes per page: 128.
+    "MX35LF2GE4AD": (
+        64,
+        (
+            "oobsize 64 B is the spare left with the on-die ECC enabled; "
+            "its parameter page gives 128 B (datasheet Table 8)"
+        ),
+    ),
+    "MX35LF4GE4AD": (
+        128,
+        (
+            "oobsize 128 B is the spare left with the on-die ECC enabled; "
+            "its parameter page gives 256 B (datasheet Table 8)"
+        ),
+    ),
+    # Datasheet Rev. H: 64 B of spare (0x800-0x83f), then 32 B of ECC
+    # parity (0x840-0x85f); the parameter page's spare bytes per page: 0x40.
+    "W25N01KV": (
+        96,
+        (
+            "oobsize 96 B is the spare area and the ECC parity area; "
+            "its parameter page gives 64 B of spare"
+        ),
+    ),
+}
+
+
+class _Shape(NamedTuple):
+    """What one ``SPI_MEM_OP`` macro puts on the bus, single transfer rate:
+    the opcode (an expression of the macro's parameters, ``reset ? 0x02 :
+    0x84``), the address bytes (an expression) and lines, the dummy bytes
+    (an expression) and lines, and the data's direction and lines."""
+
+    params: tuple[str, ...]
+    opcode: str
+    address_bytes: str
+    address_lines: int
+    dummy: str | None
+    dummy_lines: int
+    data: str | None  # "in", "out"
+    data_lines: int
+
+
+# One phase of a SPI_MEM_OP: SPI_MEM_OP_CMD(0x0b, 1), SPI_MEM_OP_ADDR(2, addr, 1), ...
+_PHASE = re.compile(r"SPI_MEM_OP_(CMD|ADDR|DUMMY|DATA_IN|DATA_OUT|NO_\w+|MAX_FREQ)\b(?:\((.*)\))?")
+
+# A function-like macro that is one SPI_MEM_OP.
+_OP_MACRO = re.compile(r"^\s*#\s*define\s+(\w+)\(([^)]*)\)\s*SPI_MEM_OP\((.*)$", re.MULTILINE)
+
+
+def op_shapes(text: str) -> dict[str, _Shape | None]:
+    """Each function-like ``#define NAME(params) SPI_MEM_OP(...)`` in
+    ``text`` (comments already stripped): its shape, or ``None`` for one
+    with a double transfer rate phase (``SPI_MEM_DTR_OP_*``), which
+    spiflash has no operation for."""
+    out: dict[str, _Shape | None] = {}
+    joined = re.sub(r"\\\n", " ", text)
+    for m in _OP_MACRO.finditer(joined):
+        name, params, rest = m.group(1), m.group(2), m.group(3)
+        body = rest[: cparse.matching("(" + rest, 0) - 1]
+        if "SPI_MEM_DTR_" in body:
+            out[name] = None
+            continue
+        phases: dict[str, list[str]] = {}
+        for part in cparse.split_top(body):
+            p = _PHASE.fullmatch(part.strip())
+            if p is None:
+                msg = f"{name}: cannot read {part.strip()!r}"
+                raise ValueError(msg)
+            phases[p.group(1)] = cparse.split_top(p.group(2)) if p.group(2) else []
+        opcode, _lines = phases["CMD"]
+        addr = phases.get("ADDR")
+        dummy = phases.get("DUMMY")
+        data = phases.get("DATA_IN") or phases.get("DATA_OUT")
+        out[name] = _Shape(
+            params=tuple(p.strip() for p in params.split(",") if p.strip()),
+            opcode=opcode.strip(),
+            address_bytes=addr[0].strip() if addr else "0",
+            address_lines=cparse.evaluate(addr[2]) if addr else 0,
+            dummy=dummy[0].strip() if dummy else None,
+            dummy_lines=cparse.evaluate(dummy[1]) if dummy else 0,
+            data=("in" if "DATA_IN" in phases else "out") if data else None,
+            data_lines=cparse.evaluate(data[2]) if data else 0,
+        )
+    return out
+
+
+def _nand_operation(opcode: int, shape: _Shape, args: dict[str, int] | None = None) -> str:
+    """The SPI NAND operation of an opcode sent in ``shape``, with the
+    macro's arguments ``args``; raises for one spiflash has none of, so a
+    new kind of operation is noticed."""
+    address_bytes = cparse.evaluate(shape.address_bytes, args or {})
+    protocol = f"1-{shape.address_lines}-{shape.data_lines}"
+    phase = {"in": DataPhase.READ, "out": DataPhase.WRITE, None: None}[shape.data]
+    for op in OPERATIONS.values():
+        if (
+            op.flash_type is FlashType.NAND
+            and op.opcode == opcode
+            and op.protocol == protocol
+            and op.address_bytes == address_bytes
+            and op.data is phase
+        ):
+            return op.name
+    msg = f"no SPI NAND operation 0x{opcode:02x} {protocol}, {address_bytes} address bytes"
+    raise ValueError(msg)
+
+
+class _NandOp(NamedTuple):
+    """One operation an op variant gives: its name, and the dummy clocks it
+    passes (``None`` for a macro with no dummy phase to give)."""
+
+    op: str
+    dummy_clocks: int | None
+
+
+def _variant(call: str, shapes: dict[str, _Shape | None]) -> _NandOp | None:
+    """The operation of one op variant (``SPINAND_PAGE_READ_FROM_CACHE_1S_1S_4S_OP(0,
+    1, NULL, 0, 0)``), with the dummy clocks its arguments give: dummy bytes
+    x 8 over the dummy phase's lines. ``None`` for a double transfer rate
+    one (:func:`op_shapes`)."""
+    m = re.fullmatch(r"\s*(\w+)\s*\((.*)\)\s*", call, re.DOTALL)
+    if m is None or m.group(1) not in shapes:
+        msg = f"unknown op variant {call.strip()!r}"
+        raise ValueError(msg)
+    shape = shapes[m.group(1)]
+    if shape is None:
+        return None
+    args = dict(zip(shape.params, (a.strip() for a in cparse.split_top(m.group(2))), strict=True))
+    choice = re.fullmatch(r"\(?\s*(\w+)\s*\?\s*(\w+)\s*:\s*(\w+)\s*\)?", shape.opcode)
+    if choice:  # reset ? 0x02 : 0x84: a program load, or a random one
+        flag, yes, no = choice.groups()
+        opcode = cparse.evaluate(yes if args[flag] in ("true", "1") else no)
+    else:
+        opcode = cparse.evaluate(shape.opcode)
+    numbers = {k: int(v) for k, v in args.items() if v.isdigit()}
+    clocks = None
+    if shape.dummy is not None and re.search(r"[A-Za-z_]", shape.dummy):
+        dummy_bytes = cparse.evaluate(shape.dummy, numbers)
+        clocks, rest = divmod(dummy_bytes * 8, shape.dummy_lines)
+        if rest:
+            msg = f"{call.strip()}: {dummy_bytes} dummy bytes on {shape.dummy_lines} lines"
+            raise ValueError(msg)
+    return _NandOp(_nand_operation(opcode, shape, numbers), clocks)
+
+
+def _variant_tables(text: str) -> dict[str, list[str]]:
+    """Each ``SPINAND_OP_VARIANTS(name, ...)`` table in ``text``: its
+    variants, each a macro call, in order."""
+    out: dict[str, list[str]] = {}
+    for m in re.finditer(r"\bSPINAND_OP_VARIANTS\s*\(", text):
+        start = m.end() - 1
+        name, *calls = cparse.split_top(text[start + 1 : cparse.matching(text, start)])
+        out[name.strip()] = calls
+    return out
+
+
+#: The operations Linux's SPI NAND core (core.c) sends every part, whatever
+#: its entry says: driver defaults. The block erase is the eraser's.
+_NAND_CORE_OPS = (
+    "SPINAND_PAGE_READ_1S_1S_0_OP",
+    "SPINAND_PROG_EXEC_1S_1S_0_OP",
+    "SPINAND_GET_FEATURE_1S_1S_1S_OP",
+    "SPINAND_SET_FEATURE_1S_1S_1S_OP",
+)
+
+#: How each ``SPINAND_SELECT_TARGET`` function selects a die:
+#: ``w25m02gv_select_target`` sends 0xc2 and the die (winbond.c:292-300),
+#: ``micron_select_target`` sets bit 6 of feature 0xd0 (micron.c:24-31,
+#: 137-149; ``MICRON_SELECT_DIE(x) ((x) << 6)``).
+_SELECT_TARGET: dict[str, tuple[str, dict[str, object] | str]] = {
+    "w25m02gv_select_target": ("op", "SPINAND_WINBOND_SELECT_TARGET_1S_0_1S"),
+    "micron_select_target": ("bit", {"register": "nand-d0", "bit": 6}),
+}
+
+
+def _nand_ops(
+    args: list[str],
+    tables: dict[str, list[str]],
+    shapes: dict[str, _Shape | None],
+) -> list[dict[str, object]]:
+    """An entry's operations: those of its read from cache, write to cache
+    and update cache op variants (``SPINAND_INFO_OP_VARIANTS``; the
+    continuous read ones ``_WITH_CONT`` adds are the same opcodes, read
+    another way, and not taken), each with the most dummy clocks its
+    variants give it (the variant without a clock limit; a part may take
+    fewer below a lower clock), and the core's defaults."""
+    found = [cparse.macro_call(a, "SPINAND_INFO_OP_VARIANTS") for a in args] + [
+        cparse.macro_call(a, "SPINAND_INFO_OP_VARIANTS_WITH_CONT") for a in args
+    ]
+    names = next((f for f in found if f is not None), None)
+    if names is None:
+        msg = "no SPINAND_INFO_OP_VARIANTS"
+        raise ValueError(msg)
+    out: list[dict[str, object]] = []
+    for table in (n.strip().lstrip("&") for n in names[:3]):
+        clocks: dict[str, int | None] = {}
+        for v in (v for c in tables[table] if (v := _variant(c, shapes)) is not None):
+            given = clocks.get(v.op)
+            clocks[v.op] = v.dummy_clocks if given is None else max(given, v.dummy_clocks or 0)
+        for op, n in clocks.items():
+            if any(o["op"] == op for o in out):
+                continue
+            out.append({"op": op, "via": table, **({"dummy_clocks": n} if n is not None else {})})
+    for macro in _NAND_CORE_OPS:
+        shape = shapes[macro]
+        if shape is None:
+            msg = f"{macro} is not a single transfer rate operation"
+            raise ValueError(msg)
+        op = _nand_operation(cparse.evaluate(shape.opcode), shape)
+        out.append({"op": op, "via": f"every part ({macro})", "assumed": True})
+    return out
+
+
 def extract_nand(root: Path) -> list[Record]:
     """SPI NAND: ``SPINAND_INFO("name", SPINAND_ID(method, bytes...),
     NAND_MEMORG(bits_per_cell, pagesize, oobsize, pages_per_eraseblock,
     eraseblocks_per_lun, max_bad_eraseblocks_per_lun, planes_per_lun,
-    luns_per_target, ntargets), ...)``."""
+    luns_per_target, ntargets), NAND_ECCREQ(strength, step),
+    SPINAND_INFO_OP_VARIANTS(&read, &write, &update), flags, ...)``.
+
+    The op variant tables are each file's ``SPINAND_OP_VARIANTS``, of the
+    ``SPINAND_*_OP`` macros in :upstream:`linux:include/linux/mtd/spinand.h`
+    and the file's own. The dies are ``luns_per_target`` x ``ntargets``;
+    only a part of more than one target (``ntargets``) selects a die
+    (``SPINAND_SELECT_TARGET``): the others' dies (LUNs) are row address
+    bits."""
+    spinand_h = cparse.strip_comments((root / SPINAND_H).read_text())
     records = []
     for path in sorted((root / NAND_DIR).glob("*.c")):
         if path.name in ("core.c", "otp.c"):
@@ -452,6 +754,8 @@ def extract_nand(root: Path) -> list[Record]:
         stripped = cparse.strip_comments(raw)
         symbols: dict[str, str | int] = dict(cparse.defines(stripped))
         text = cparse.drop_preprocessor(stripped)
+        shapes = op_shapes(spinand_h) | op_shapes(stripped)
+        tables = _variant_tables(text)
         rel = f"{NAND_DIR}/{path.name}"
         makers = _nand_manufacturers(text, symbols)
         for m in re.finditer(r"\bSPINAND_INFO\s*\(", text):
@@ -459,46 +763,117 @@ def extract_nand(root: Path) -> list[Record]:
             end = cparse.matching(text, start)
             args = cparse.split_top(text[start + 1 : end])
             name = cparse.c_string(args[0])
-            id_args = cparse.macro_call(args[1], "SPINAND_ID")
-            org = cparse.macro_call(args[2], "NAND_MEMORG")
+            try:
+                fields = _nand_fields(args, symbols, tables, shapes)
+            except (ValueError, KeyError) as e:
+                msg = f"{rel}:{cparse.line_of(raw, m.start())}: {name}: {e}"
+                raise ValueError(msg) from e
             vendor, mfr_id = makers(m.start())
-            if id_args is None or org is None or mfr_id is None:
-                msg = f"{rel}: cannot read SPINAND_INFO for {name}"
+            if mfr_id is None:
+                msg = f"{rel}: no manufacturer for {name}"
                 raise ValueError(msg)
-            method = id_args[0].replace("SPINAND_READID_METHOD_", "").lower()
-            dev = [cparse.evaluate(a, symbols) for a in id_args[1:]]
-            bpc, page, oob, ppb, bpl, _bad, _planes, luns, targets = (
-                cparse.evaluate(a, symbols) for a in org
-            )
-            # The flags are SPINAND_INFO's sixth argument, after the model, id,
-            # memory organisation, ECC requirement and op variants.
-            flags = cparse.flag_names(args[5]) if len(args) > 5 else []
-            # spinand_init_quad_enable() (core.c) sets CFG_QUAD_ENABLE, bit 0
-            # of the configuration register (REG_CFG, feature 0xb0), for
-            # SPINAND_HAS_QE_BIT; without it, the entry says nothing of one.
-            qe = "SPINAND_HAS_QE_BIT" in flags
-            notes = cparse.comments(raw[start:end])
-            size = page * ppb * bpl * luns * targets
             records.append(
                 make(
                     "linux",
                     rel,
                     cparse.line_of(raw, m.start()),
                     name,
-                    type="nand",
                     vendor=vendor,
-                    id=bytes([mfr_id, *dev]).hex(),
-                    id_method=f"rdid_{method}",
-                    size=size,
-                    page_size=page,
-                    erasers=[derive.block_eraser(0xD8, page * ppb, size).to_json()],
-                    flags=flags,
-                    quad_enable={"register": "nand-b0", "bit": 0} if qe else None,
-                    via={"quad_enable": "SPINAND_HAS_QE_BIT"} if qe else {},
-                    notes=[*notes, f"{bpc} bit(s) per cell, {oob} B OOB per page"],
+                    id=bytes([mfr_id, *fields.pop("device")]).hex(),
+                    **{**fields, "notes": [*cparse.comments(raw[start:end]), *fields["notes"]]},
                 )
             )
     return records
+
+
+def _nand_fields(
+    args: list[str],
+    symbols: dict[str, str | int],
+    tables: dict[str, list[str]],
+    shapes: dict[str, _Shape | None],
+) -> dict[str, Any]:
+    """The record fields of one ``SPINAND_INFO``, and its device id bytes
+    (``"device"``)."""
+    id_args = cparse.macro_call(args[1], "SPINAND_ID")
+    org = cparse.macro_call(args[2], "NAND_MEMORG")
+    ecc = cparse.macro_call(args[3], "NAND_ECCREQ")
+    if id_args is None or org is None or ecc is None:
+        msg = "cannot read its SPINAND_ID, NAND_MEMORG or NAND_ECCREQ"
+        raise ValueError(msg)
+    method = id_args[0].replace("SPINAND_READID_METHOD_", "").lower()
+    bpc, page, oob, ppb, bpl, bad, planes, luns, targets = (
+        cparse.evaluate(a, symbols) for a in org
+    )
+    if bpc != 1:  # every entry's: no field holds it
+        msg = f"{bpc} bits per cell"
+        raise ValueError(msg)
+    strength, step = (cparse.evaluate(a, symbols) for a in ecc)
+    # The flags are SPINAND_INFO's sixth argument, after the model, id,
+    # memory organisation, ECC requirement and op variants.
+    flags = cparse.flag_names(args[5]) if len(args) > 5 else []
+    opcodes = _nand_ops(args, tables, shapes)
+    via: dict[str, str] = {}
+    # spinand_init_quad_enable() (core.c:1794-1802) sets CFG_QUAD_ENABLE,
+    # bit 0 of the configuration register (REG_CFG, feature 0xb0), for
+    # SPINAND_HAS_QE_BIT where an op variant moves data on four lines. It
+    # clears the bit on every other part: the core's default, not the
+    # part's (the XT26G01D has the flag absent and a QE bit quad reads
+    # need), so without the flag the entry says nothing of one.
+    quad_enable: dict[str, object] | None = None
+    if "SPINAND_HAS_QE_BIT" in flags:
+        quad_enable = {"register": "nand-b0", "bit": 0}
+        via["quad_enable"] = "SPINAND_HAS_QE_BIT"
+    notes: list[str] = []
+    oob_size: int | None = oob
+    other = _OOB_OTHER_VIEW.get(cparse.c_string(args[0]))
+    if other is not None:
+        if other[0] != oob:
+            msg = f"NAND_MEMORG oobsize {oob}, not {other[0]}: remove it from _OOB_OTHER_VIEW"
+            raise ValueError(msg)
+        notes.append(other[1])
+        oob_size = None
+    die_select_bit = None
+    for a in args[6:]:
+        target = cparse.macro_call(a, "SPINAND_SELECT_TARGET")
+        if target is None:
+            continue
+        how, what = _SELECT_TARGET[target[0].strip()]
+        token = f"SPINAND_SELECT_TARGET({target[0].strip()})"
+        if how == "bit":
+            die_select_bit = what
+            via["die_select_bit"] = token
+        else:
+            shape = shapes[str(what)]
+            if shape is None:
+                msg = f"{what} is not a single transfer rate operation"
+                raise ValueError(msg)
+            op = _nand_operation(cparse.evaluate(shape.opcode), shape)
+            opcodes.append({"op": op, "via": token})
+    if (die_select_bit is not None or any(o["op"] == "NAND_DIE_SELECT" for o in opcodes)) != (
+        targets > 1
+    ):
+        msg = f"{targets} targets, and a die select only where there are several"
+        raise ValueError(msg)
+    size = page * ppb * bpl * luns * targets
+    return {
+        "device": [cparse.evaluate(a, symbols) for a in id_args[1:]],
+        "type": "nand",
+        "id_method": f"rdid_{method}",
+        "size": size,
+        "page_size": page,
+        "erasers": [derive.block_eraser(0xD8, page * ppb, size).to_json()],
+        "oob_size": oob_size,
+        "planes": planes,
+        "dies": luns * targets,
+        "die_select_bit": die_select_bit,
+        "max_bad_blocks": bad,
+        "ecc": {"strength_bits": strength, "step_bytes": step},
+        "flags": flags,
+        "via": via,
+        "quad_enable": quad_enable,
+        "opcodes": sorted(opcodes, key=lambda o: sort_key(str(o["op"]))),
+        "notes": notes,
+    }
 
 
 def extract(root: Path) -> list[Record]:

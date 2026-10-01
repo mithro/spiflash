@@ -34,6 +34,9 @@ class Register(StrEnum):
     #: A SPI NAND part's configuration feature (address 0xb0), read with
     #: GET FEATURE (0x0f).
     NAND_CONFIG = "nand-b0"
+    #: Micron's SPI NAND die select feature (address 0xd0), read with GET
+    #: FEATURE (0x0f).
+    NAND_DIE = "nand-d0"
 
     @property
     def read_opcode(self) -> int:
@@ -48,8 +51,8 @@ class Register(StrEnum):
     @property
     def read_with(self) -> str:
         """How it is read: ``0x35``, ``GET FEATURE (0x0f) at 0xb0``."""
-        if self is Register.NAND_CONFIG:
-            return "GET FEATURE (0x0f) at 0xb0"
+        if self in _FEATURE:
+            return f"GET FEATURE (0x0f) at 0x{_FEATURE[self]:02x}"
         return f"0x{self.read_opcode:02x}"
 
     @property
@@ -65,7 +68,11 @@ _READ = {
     Register.FUNCTION: (0x48, "function register"),
     Register.SECURITY: (0x2B, "security register"),
     Register.NAND_CONFIG: (0x0F, "configuration feature"),
+    Register.NAND_DIE: (0x0F, "die select feature"),
 }
+
+#: The feature address of each SPI NAND feature register.
+_FEATURE = {Register.NAND_CONFIG: 0xB0, Register.NAND_DIE: 0xD0}
 
 
 class Writability(StrEnum):

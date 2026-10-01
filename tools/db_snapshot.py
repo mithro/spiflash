@@ -38,6 +38,12 @@ VALUES = (
     "quad_enable",
     "quad_enable_requirement",
     "protection",
+    "oob_size",
+    "planes",
+    "dies",
+    "die_select_bit",
+    "max_bad_blocks",
+    "ecc",
 )
 
 #: The values sources are compared on, where a commit has no

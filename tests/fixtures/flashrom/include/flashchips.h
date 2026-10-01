@@ -9,3 +9,4 @@
 #define ST_M25P05_RES		0x05
 #define AMD_ID			0x01
 #define AMD_AM29F010		0x20
+#define ST_N25Q00A__3G		0xBA21	/* N25Q00A/MT25QL01G, 3.0V, (uniform sectors expected) */

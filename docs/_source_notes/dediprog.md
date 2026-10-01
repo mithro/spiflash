@@ -101,11 +101,27 @@ than 6, which is a status, block-protect or SRWD bit (the MX25U51271G's
 has no QE bit), and a note says so. `ProtectBlockMask` is
 the bits its software clears to unprotect the part, not where each role is
 (0x9C on the W25Q128FV, 0xFC on the W25Q128JV, whose bits are the same), so
-it gives only the `lock` claim. The entry has much that the
-database has no field for yet: the maximum clock, the status and
-configuration register commands, erase and program
-timeouts, the 4 KiB sector size where no opcode goes with it, the die size,
-and for SPI NAND the spare area, the ECC layout and the bad block marker.
+it gives only the `lock` claim. `DieSizeInKByte` gives the record's `dies`
+where the die is smaller than the chip (six entries, the MT25Q and N25Q00
+parts): 252 of the 260 entries giving one give the chip's size, a
+template's value, and two (the S79FL01GS and S79FS01GS "one die" entries) a
+die larger than the chip. Its die erase layout is the dies', never stored.
+A SPI NAND entry's `SpareSizeInByte` holds two spare sizes, one in each
+half: the high half, the whole spare area of a page, is the record's
+`oob_size`; the low half (the spare left free beside the part's own ECC) is
+not taken (the XT26Q01D's high half, 64 bytes, is wrong: its datasheet
+gives 128). Its `ReadCmd` and `ProgramCmd` words (`0x006B000B`,
+`0x00320002` on nearly every SPI NAND entry) are a template, and are not
+taken. Its `SupportLUT` is the bad block lookup table's swap and read
+([NAND_BBM_SWAP](../opcodes/NAND_BBM_SWAP.md),
+[NAND_READ_BBM_LUT](../opcodes/NAND_READ_BBM_LUT.md)), and its read-id is
+SPI NAND's, from the id method. The entry has much that the database has no
+field for yet: the maximum clock, the status and configuration register
+commands, erase and program timeouts, the 4 KiB sector size where no opcode
+goes with it, the classes' die counts (`N25Qxxx_Large_2Die`, which are its
+programming algorithms'), and for SPI NAND the ECC layout
+(`DefaultErrorBits`, `DefaultDataUnitSize`), the read dummy length and the
+bad block marker.
 
 Its entries are not reviewed in the open, and some are wrong: an entry's
 read and program words swapped, a block size larger than the chip, several

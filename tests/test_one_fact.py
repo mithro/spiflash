@@ -17,9 +17,10 @@ import pytest
 import spiflash
 from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE, ID_OPERATION
-from spiflash.enums import Feature, IdMethod
-from spiflash.model import Record
-from spiflash.registers import RegisterBit
+from spiflash.enums import Feature, IdMethod, OperationKind
+from spiflash.model import EraseBlock, Record
+from spiflash.opcodes import OPERATIONS
+from spiflash.registers import Register, RegisterBit
 from spiflash_extract import record
 
 
@@ -184,6 +185,24 @@ DEFAULTS = {
     ("imsprog", "READ_1_1_1", "every read"),
     ("imsprog", "PP_1_1_1", "every write, in 256-byte pages"),
     ("imsprog", "SE", "every erase, at every 64 KiB"),
+    # The SPI NAND core commands each driver sends every part.
+    ("linux", "NAND_PAGE_READ", "every part (SPINAND_PAGE_READ_1S_1S_0_OP)"),
+    ("linux", "NAND_PROGRAM_EXECUTE", "every part (SPINAND_PROG_EXEC_1S_1S_0_OP)"),
+    ("linux", "NAND_GET_FEATURE", "every part (SPINAND_GET_FEATURE_1S_1S_1S_OP)"),
+    ("linux", "NAND_SET_FEATURE", "every part (SPINAND_SET_FEATURE_1S_1S_1S_OP)"),
+    ("mediatek", "NAND_PAGE_READ", "every part (SNAND_CMD_READ_TO_CACHE)"),
+    ("mediatek", "NAND_PROGRAM_EXECUTE", "every part (SNAND_CMD_PROGRAM_EXECUTE)"),
+    ("mediatek", "NAND_GET_FEATURE", "every part (SNAND_CMD_GET_FEATURE)"),
+    ("mediatek", "NAND_SET_FEATURE", "every part (SNAND_CMD_SET_FEATURE)"),
+    # The one-line read and load every SNAND_IO_CAP table has.
+    ("mediatek", "NAND_READ_CACHE_1_1_1_FAST", "every snand_cap_read_from_cache* table"),
+    ("mediatek", "NAND_PROGRAM_LOAD_1_1_1", "every snand_cap_program_load* table"),
+    ("rockchip", "NAND_READ_CACHE_1_1_1", "every part: page_read_cmd = 0x03"),
+    ("rockchip", "NAND_PROGRAM_LOAD_1_1_1", "every part: page_prog_cmd = 0x02"),
+    ("rockchip", "NAND_PAGE_READ", "every part (sfc_nand_read)"),
+    ("rockchip", "NAND_PROGRAM_EXECUTE", "every part (sfc_nand_prog_page_raw)"),
+    ("rockchip", "NAND_GET_FEATURE", "every part (sfc_nand_read_feature)"),
+    ("rockchip", "NAND_SET_FEATURE", "every part (sfc_nand_write_feature)"),
 }
 
 
@@ -403,3 +422,180 @@ def test_no_tb_from_a_drivers_constant() -> None:
     (chip,) = spiflash.lookup("ef4020")
     assert chip.protection is not None
     assert chip.protection.tb is None or chip.protection.tb.bit != 5
+
+
+# --- SPI NAND geometry, dies, die select, dummy clocks ------------------------
+
+
+def test_no_spi_nand_geometry_on_spi_nor() -> None:
+    def given(r: dict[str, Any]) -> list[str]:
+        return [f for f in record.NAND_ONLY if r[f] is not None]
+
+    assert not [(_where(r), given(r)) for r in _nor() if given(r)]
+
+
+def test_each_operation_is_of_the_records_kind_of_flash() -> None:
+    def other(r: dict[str, Any]) -> list[str]:
+        return [o["op"] for o in r["opcodes"] if OPERATIONS[o["op"]].flash_type != r["type"]]
+
+    assert not [(_where(r), other(r)) for r in RECORDS if other(r)]
+    # And as each loads, derived ones too: no SPI NOR id read or erase on
+    # a SPI NAND part.
+    for d in RECORDS:
+        loaded = Record.from_json(d)
+        assert {OPERATIONS[u.op].flash_type for u in loaded.opcodes} <= {loaded.type}, _where(d)
+
+
+def test_no_die_erase_layout_is_stored() -> None:
+    die_erases = {OPERATIONS[op].opcode for op in derive.DIE_ERASES}
+
+    def stored(r: dict[str, Any]) -> bool:
+        return any(e["opcode"] in die_erases for e in r["erasers"] or ())
+
+    assert not [_where(r) for r in RECORDS if stored(r)]
+    # Every record with dies, a size and a die erase has the layout, derived.
+    found = 0
+    for d in RECORDS:
+        r = Record.from_json(d)
+        ops = {u.op for u in r.opcode_claims} & derive.DIE_ERASES
+        if r.dies and r.dies > 1 and r.size and ops:
+            layouts = {(e.opcode, e.blocks) for e in r.erasers if e.opcode in die_erases}
+            want = {(OPERATIONS[op].opcode, (EraseBlock(r.size // r.dies, r.dies),)) for op in ops}
+            assert layouts == want, _where(d)
+            found += 1
+    assert found
+
+
+def test_a_die_is_selected_one_way() -> None:
+    def both(r: dict[str, Any]) -> bool:
+        ops = {o["op"] for o in r["opcodes"]}
+        return r["die_select_bit"] is not None and bool(ops & record.DIE_SELECTS)
+
+    assert not [_where(r) for r in RECORDS if both(r)]
+    # Only a part of more than one die selects one.
+    selects = [
+        r
+        for r in RECORDS
+        if r["die_select_bit"] or record.DIE_SELECTS & {o["op"] for o in r["opcodes"]}
+    ]
+    assert selects
+    assert all((Record.from_json(r).dies or 0) > 1 for r in selects)
+
+
+#: Where each source's dies come from, as (source, the start of their via):
+#: ``None`` for a source filling them from the same place in every entry
+#: (Linux's NAND_MEMORG, MediaTek's SNAND_MEMORG).
+DIES_FROM = {
+    ("flashrom", "spi_block_erase_c4"),
+    ("flashprog", "spi_block_erase_c4"),
+    ("dediprog", "DieSizeInKByte="),
+    ("qemu", "die_cnt="),
+    ("linux", None),
+    ("linux", "mt25q01_fixups:"),
+    ("linux", "mt25q02_fixups:"),
+    ("linux", "n25q00_fixups:"),
+    ("linux", "mt35_two_die_fixups:"),
+    ("linux", "s25fs256t_fixups:"),
+    ("linux", "s25hx_t_fixups:"),
+    ("linux", "s28hx_t_fixups:"),
+    ("linux", "winbond_nor_multi_die_fixups:"),
+    ("mediatek", None),
+}
+
+
+def test_only_the_known_sources_give_dies() -> None:
+    def source(d: dict[str, Any]) -> tuple[str, str | None]:
+        via = d["via"].get("dies")
+        starts = [s for src, s in DIES_FROM if src == d["source"] and s]
+        return d["source"], next((s for s in starts if via and via.startswith(s)), via)
+
+    found = {source(d) for d in RECORDS if d["dies"] is not None}
+    assert found == DIES_FROM
+    # A NAND_MEMORG or SNAND_MEMORG states the dies of every part; a SPI
+    # NOR source only of those with more than one, but Linux's S25FS256T,
+    # which its fixups give one.
+    one = [d for d in RECORDS if d["dies"] == 1 and d["type"] == "nor"]
+    assert [d["name"] for d in one] == ["S25FS256T"]
+
+
+def test_dummy_clocks_only_where_a_source_states_them() -> None:
+    # Linux's SPI NAND op variants (dummy bytes) and MediaTek's SNAND_OPs
+    # (dummy clocks) state them; no other source's entry does, and an SFDP
+    # read's are derived from its tables.
+    given = {(d["source"], d["type"]) for d in RECORDS for o in d["opcodes"] if "dummy_clocks" in o}
+    assert given == {("linux", "nand"), ("mediatek", "nand")}
+    reads = {
+        OPERATIONS[o["op"]].kind
+        for d in RECORDS
+        for o in d["opcodes"]
+        if "dummy_clocks" in o and d["source"] == "linux"
+    }
+    assert reads == {OperationKind.READ}  # Linux's loads have no dummy phase
+
+
+@pytest.mark.parametrize(
+    ("source", "pattern"),
+    [
+        # Each a field now, or the operations' via.
+        ("mediatek", r"(sparesize|planes_per_die|ndies|select_die|read_from_cache|program_load)="),
+        ("rockchip", r"max_ecc_bits=.*"),
+        ("rockchip", r"FEA_4BIT_(READ|PROG)"),
+        ("qemu", r"die_cnt=.*"),
+    ],
+)
+def test_no_flag_a_field_holds(source: str, pattern: str) -> None:
+    rx = re.compile(pattern)
+    found = [f for r in RECORDS if r["source"] == source for f in r["flags"] if rx.match(f)]
+    assert not found
+
+
+def test_no_geometry_note() -> None:
+    notes = [n for r in RECORDS if r["type"] == "nand" for n in r["notes"]]
+    assert not [n for n in notes if re.search(r"plane\(s\) of|bit\(s\) per cell|B OOB", n)]
+
+
+def test_no_quad_enable_from_the_spi_nand_cores_default() -> None:
+    # Linux's SPI NAND core clears the QE bit on every part without
+    # SPINAND_HAS_QE_BIT: the core's default, which says nothing of the
+    # part (the XT26G01D has a QE bit quad reads need, and no flag).
+    linux = [d for d in RECORDS if d["source"] == "linux" and d["type"] == "nand"]
+    assert not [_where(d) for d in linux if d["quad_enable"] == "none"]
+    (xtx,) = spiflash.lookup("0b31")
+    assert xtx.quad_enable == RegisterBit(Register.NAND_CONFIG, 0)
+
+
+def test_oob_size_is_the_parameter_pages() -> None:
+    # Linux's oobsize for these is another view of the spare area (with the
+    # on-die ECC on, or with the parity area): a note, not the field.
+    for part, chip, spare in (
+        ("MX35LF2GE4AD", "c22603", 128),
+        ("MX35LF4GE4AD", "c23703", 256),
+        ("W25N01KV", "efae21", 64),
+    ):
+        (d,) = [d for d in RECORDS if d["source"] == "linux" and d["name"] == part]
+        assert d["oob_size"] is None
+        assert any("parameter page" in n for n in d["notes"])
+        (f,) = spiflash.lookup(chip, flash_type="nand")
+        assert f.oob_size == spare
+        assert "oob_size" not in f.conflicts
+
+
+def test_operations_are_told_apart_by_their_shape() -> None:
+    # 0xc2 is NAND_DIE_SELECT and NAND_PROGRAM_LOAD_1_8_8, 0x13 a SPI NOR
+    # read and SPI NAND's page read, 0x9f three SPI NAND read-ids: an
+    # operation is its opcode and its shape.
+    def shape(op: str) -> tuple[object, ...]:
+        o = OPERATIONS[op]
+        return (
+            o.flash_type,
+            o.opcode,
+            o.protocol,
+            o.address_bytes,
+            o.dummy_clocks,
+            o.data,
+            o.data_bytes,
+        )
+
+    shapes = [shape(op) for op in OPERATIONS]
+    assert len(set(shapes)) == len(shapes)
+    assert shape("NAND_DIE_SELECT") != shape("NAND_PROGRAM_LOAD_1_8_8")

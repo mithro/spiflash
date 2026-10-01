@@ -21,9 +21,11 @@ the same size on every part (flashrom's MX25L1605 erases 64 KiB with 0x20,
 its AT25F2048 64 KiB with 0x52, its LE25FW106 2 KiB with 0xd7). So only an
 erase layout gives `erase_4k`, `erase_32k` or `erase_64k`: one opcode over
 blocks of one size, and not a chip erase (0xc7, 0x60, 0x62) or die erase
-(0xc4), whose single block is no block erase however small the chip. A
+(0xc4, 0x61), whose single block is no block erase however small the chip. A
 SPI NAND part's block erase implies none of them, as its operations are
-not the SPI NOR ones.
+not the SPI NOR ones. Its own read from cache and program load operations
+imply its `fast_read`, `dual_read`, `quad_read`, `octal_read` and `quad_pp`,
+as the SPI NOR ones do.
 
 ## SFDP tables
 
@@ -36,7 +38,8 @@ its record stores them as they are: {sfsrc}`qemu`'s whole dumps (a record's
 loaded ({py:meth}`Sfdp.facts <spiflash.sfdp.Sfdp.facts>`), and not stored
 again:
 
-- the size (the density) and the page size, where the entry gives none;
+- the size (the density) and the page size, where the entry gives none, and
+  the dies its SCCR multi-chip table describes;
 - an eraser for each erase type over the whole part, one for each 4-byte
   erase opcode of the 4-byte instruction table, and the 4 KiB erase of
   BFPT DWORD 1 where no erase type has it;
@@ -121,6 +124,11 @@ capability:
 - {sfsrc}`openfpgaloader`: every read and page program, and the 4-byte form
   of every erase (for any address above 16 MiB);
 - {sfsrc}`imsprog`: every read, page program and 0xd8 erase;
+- for SPI NAND, {sfsrc}`linux`, {sfsrc}`mediatek` and {sfsrc}`rockchip`: the
+  page read, program execute and feature commands their drivers send every
+  part, Rockchip's 0x03 read from cache and 0x02 program load, and
+  MediaTek's one-line read from cache (0x0b) and program load (0x02), which
+  every one of its I/O tables has;
 
 and the 4-byte-address form of each. So an AT45DB DataFlash part, which
 has a fast read, does not show one: the only sources listing it for those
@@ -145,6 +153,7 @@ it, so one name is one register however the makers name it:
 | function register | 0x48 | ISSI's function register |
 | security register | [RDSCUR](opcodes/RDSCUR.md), 0x2b | Macronix's security register |
 | configuration feature | GET FEATURE (0x0f) at 0xb0 | a SPI NAND part's configuration register |
+| die select feature | GET FEATURE (0x0f) at 0xd0 | Micron's SPI NAND die select register |
 
 A bit is read and write, or volatile (lost at power off), one-time
 programmable, or read only ({py:class}`~spiflash.registers.Writability`),
@@ -177,6 +186,13 @@ bit. That the driver sets nothing is not always that the part has no bit:
 {sfsrc}`linux` sets bit 0 of their configuration register, a HOLD_D bit its
 {upstream}`toshiba.c <linux:drivers/mtd/nand/spi/toshiba.c>` calls the
 equivalent of the QE bit; the two are a [data issue](issues/value.md).
+Rockchip's `has_qe_bits=0` is a field each entry sets. {sfsrc}`linux`'s
+SPI NAND core, on the other hand, clears the bit on every part without
+`SPINAND_HAS_QE_BIT` (`spinand_init_quad_enable()`), and reads on four
+lines anyway: the core's default, not a statement about the part, so such
+an entry gives no bit. It is wrong on some: XTX's XT26G0xD and XT26Q0xD
+have no `SPINAND_HAS_QE_BIT`, though their datasheets' feature 0xb0 bit 0
+is a QE bit that "must be set" for quad reads, as {sfsrc}`rockchip` says.
 
 JESD216's quad enable requirement (QER, BFPT DWORD 15: a record's
 `quad_enable_requirement`) says where the bit is and how it is written.
@@ -241,6 +257,73 @@ one bit (flashrom's TB is the bit openFPGALoader calls BP3, on the
 GD25Q32, XT25F32B and P25Q32H), the chip is given the best source's own
 layout, from the most specific records giving one, and it is a
 [data issue](issues/shared-bit.md).
+
+## SPI NAND geometry
+
+A SPI NAND part's sources state its page, its erase block (its block
+erase's layout), its spare (out-of-band) area per page (`oob_size`), its
+planes and most bad blocks per die (`planes`, `max_bad_blocks`), and the
+error correction it needs (`ecc`: bits corrected per step of so many bytes,
+or bits alone where {sfsrc}`rockchip` gives no step). What follows from
+them is worked out, not stored: the blocks (the size over the block), the
+pages per block, the blocks per die, a die's size, and the spare area in all.
+A chip page lists them as worked out. The sources are compared on the ECC
+requirement's strength and step each on its own, and a source giving no step
+does not vote on it, so Rockchip's 8 bits agrees with Linux's 8 bits per
+512 bytes.
+
+`oob_size` is one thing: the spare bytes per page the part's ONFI
+parameter page gives (bytes 84 and 85), its spare area with the on-die ECC
+disabled, without any ECC parity area of its own. The sources do not all
+give that. {sfsrc}`linux`'s `NAND_MEMORG` mixes views: its MX35LF2GE4AD
+and MX35LF4GE4AD give the spare left with the ECC on (64 and 128 bytes,
+where the parameter page gives 128 and 256), its W25N01KV the spare and
+the parity area together (96, where the parameter page gives 64). Those are
+noted on the record, not stored as its `oob_size`
+(`_OOB_OTHER_VIEW` in {repo}`tools/spiflash_extract/linux.py`). {sfsrc}`imsprog`'s
+`ECCsize` is not a spare size at all: it is how much spare its raw mode
+reads, set in 64-byte steps, and stays a flag.
+
+## Dies
+
+A part's `dies` are how many it has in its package, SPI NOR or SPI NAND, as
+a source states them or its SFDP tables' SCCR multi-chip table describes.
+A die erase is a whole-die erase, so its layout is the dies': the stated die
+erase ([DIE_ERASE](opcodes/DIE_ERASE.md), Micron's 0xc4, or
+[DIE_ERASE_61](opcodes/DIE_ERASE_61.md), Infineon's 0x61) over the part's
+size in that many dies ({py:func}`~spiflash.derive.die_erasers`). It is never
+stored: {sfsrc}`flashrom`'s `spi_block_erase_c4` layout, {sfsrc}`dediprog`'s
+`DieSizeInKByte` (where it is smaller than the chip) and {sfsrc}`qemu`'s
+`die_cnt` are each stored as the dies, and the operation, where the source
+has it. Some parts have dies and no die erase (Winbond's W25Q01JV and
+W25Q02JV).
+
+A part of several dies may select one, by a command or a register bit, never
+both: Winbond's [DIE_SELECT](opcodes/DIE_SELECT.md) and
+[NAND_DIE_SELECT](opcodes/NAND_DIE_SELECT.md) (0xc2 and the die), or
+Micron's SPI NAND die select bit (feature 0xd0 bit 6, a record's
+`die_select_bit`). A SPI NAND part of several LUNs and one target has dies
+but no select: they are row address bits.
+
+## Dummy clocks
+
+An operation's page gives its usual dummy clocks
+({py:attr}`Operation.dummy_clocks <spiflash.opcodes.Operation.dummy_clocks>`);
+a part's own are its sources', stored with the operation wherever an entry
+states them, even where they are the usual number
+({py:attr}`OpcodeUse.dummy_clocks <spiflash.opcodes.OpcodeUse.dummy_clocks>`):
+{sfsrc}`linux`'s SPI NAND op variants (dummy bytes, times 8, over the dummy
+phase's lines) and {sfsrc}`mediatek`'s `SNAND_OP`s. They are not compared
+for data issues: a part takes fewer dummy clocks at a lower clock (Linux
+lists a variant per clock limit, and keeps the most), and which clock a
+source's numbers are for is not said, so two numbers need not disagree. The
+chip pages show each source's, where they differ (the Paragon PN26G01A's
+quad I/O read: Linux 4, MediaTek 2); comparing them waits for the timing
+model. Those a part's SFDP
+tables give are derived from them, and a stored use giving the same as its
+tables is not stored. {sfsrc}`rockchip`'s 8 for every SPI NAND read is its
+driver's, no part's. {sfsrc}`flashprog`'s `.dc` bits are not dummy clocks:
+they are where the register bits that set them are, which has no field yet.
 
 ## Sector size
 
