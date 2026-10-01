@@ -471,6 +471,9 @@ def test_entry_to_sfdp_to_entry_gives_back_what_encode_wrote() -> None:
         back = Record.from_json(to_entry(out.sfdp) | IDENTITY)
         assert back.size == f.size
         assert back.page_size == (encodable_page(f) if out.revision == (1, 6) else None)
+        # The address bytes too: a 16 MiB part with only 4-byte erases
+        # (c28138) keeps "3 or 4".
+        assert back.address_bytes == f.address_bytes, f.key
         # Its erasers are the sources', a 4-byte one where they give the op.
         given = {(e.opcode, e.blocks[0].size) for r in f.records for e in r.erasers}
         four_byte = {e.opcode: e for e in back.erasers if e.opcode in (0x21, 0x5C, 0xDC)}

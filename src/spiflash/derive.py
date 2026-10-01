@@ -568,7 +568,11 @@ def sfdp_claims(sfdp: Sfdp) -> dict[Feature, str]:
     (:func:`spiflash.sfdp_tools.to_entry`, which stores their quad enable
     requirement, so ``quad_read`` from it is not among them)."""
     alone = _alone(sfdp)
-    bare = alone._replace(facts=None)
+    # An entry holds the erasers, not the erases they give (to_entry), so
+    # what those erases imply (a 4-byte erase: 4byte_addr) must be claimed
+    # too: the MX25UW12845G's tables, 16 MiB with only 4-byte erases.
+    erases = {ERASE_BY_OPCODE.get(e.opcode) for e in alone.erasers if e.opcode is not None}
+    bare = alone._replace(facts=None, ops=tuple(u for u in alone.ops if u.op not in erases))
     without = _implied(bare)
     return {f: why for f, why in _implied(alone).items() if f not in without}
 
