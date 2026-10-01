@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from . import cparse
 from .ops import Opcodes, add_4b_variants, add_spinor
-from .record import Record, make
+from .record import Record, feature_via, make
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -130,9 +130,10 @@ def _nor_record(
     for key in ("flags", "no_sfdp_flags", "fixup_flags", "mfr_flags"):
         if key in fields:
             flags += cparse.flag_names(fields[key])
-    features = {_NOR_FEATURES[f] for f in flags if f in _NOR_FEATURES}
+    claims = [(_NOR_FEATURES[f], f) for f in flags if f in _NOR_FEATURES]
     if "otp" in fields:
-        features.add("otp")
+        claims.append(("otp", ".otp"))
+    features = {feat for feat, _ in claims}
     if "4byte_opcodes" in features:
         features.add("4byte_addr")
 
@@ -166,6 +167,7 @@ def _nor_record(
         sector_size=sector,
         features=features,
         flags=flags,
+        via=feature_via(claims),
         opcodes=opcodes,
         notes=notes,
     )
@@ -286,7 +288,7 @@ def extract_nand(root: Path) -> list[Record]:
             # The flags are SPINAND_INFO's sixth argument, after the model, id,
             # memory organisation, ECC requirement and op variants.
             flags = cparse.flag_names(args[5]) if len(args) > 5 else []
-            features = ["quad_read"] if "SPINAND_HAS_QE_BIT" in flags else []
+            claims = [("quad_read", f) for f in flags if f == "SPINAND_HAS_QE_BIT"]
             notes = cparse.comments(raw[start:end])
             records.append(
                 make(
@@ -301,8 +303,9 @@ def extract_nand(root: Path) -> list[Record]:
                     size=page * ppb * bpl * luns * targets,
                     page_size=page,
                     sector_size=page * ppb,
-                    features=features,
+                    features=[feat for feat, _ in claims],
                     flags=flags,
+                    via=feature_via(claims),
                     notes=[*notes, f"{bpc} bit(s) per cell, {oob} B OOB per page"],
                 )
             )

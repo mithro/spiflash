@@ -41,7 +41,7 @@ def opcode_table(f: Flash, *, verbose: bool = False) -> list[str]:
         head = f"    0x{o.opcode:02x}  {o.name:<{width}}  {o.operation.description}"
         if verbose:
             lines.append(head)
-            lines.extend(f"          {src:15} {via}" for src, via in o.because)
+            lines.extend(f"          {c.source:15} {c.via}" for c in o.because)
         else:
             lines.append(f"{head}  [{', '.join(o.sources)}]")
     return lines

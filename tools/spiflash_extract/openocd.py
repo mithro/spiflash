@@ -14,8 +14,10 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from spiflash.derive import ERASE_BY_OPCODE
+
 from . import cparse
-from .ops import ERASE_BY_OPCODE, Opcodes
+from .ops import Opcodes
 from .record import ERASE_FEATURES, Record, make
 
 if TYPE_CHECKING:

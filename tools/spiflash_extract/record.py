@@ -4,6 +4,11 @@ One record is one entry of one upstream table, as that upstream describes it:
 nothing is merged or corrected here. ``spiflash`` groups the records by the
 id a chip answers, at load time.
 
+A fact is stored once. What follows from a record's stored fields is not
+stored: :mod:`spiflash.derive` works it out at load (the id operation from
+``id_method``, an erase operation from each eraser), and :func:`make` drops
+a stored value that duplicates it.
+
 Fields (``None`` / empty when the upstream does not say):
 
 ``source``
@@ -33,17 +38,28 @@ Fields (``None`` / empty when the upstream does not say):
 ``erasers``
     ``[{"opcode": 0x20, "blocks": [[4096, 4096]]}, ...]``.
 ``features``
-    Normalised capability names: :class:`spiflash.enums.Feature` values.
+    Normalised capability names: :class:`spiflash.enums.Feature` values,
+    the ones the entry states (a record's ``feature_claims``).
 ``flags``
-    The upstream's raw flag and feature names, for anything
-    :class:`~spiflash.enums.Feature` does not capture.
+    The upstream's raw flag and feature names that no field holds: a token
+    a ``via`` holds (the record's, or an operation's) is left out.
+``via``
+    Which upstream token gave a stored value that has no other provenance,
+    by key: ``feature:<feature>`` for a feature claim
+    (``{"feature:qpi": "QPIEnable"}``), ``<field>`` for a field set from one
+    token, ``<field>.<component>`` for one part of a composite field, and
+    ``<field>:<member>`` for one member of a set-valued field; several
+    tokens are joined with ``"; "``. Fields every record of a source fills
+    from the same place (``size``, ``name``, ...) have none, and nor do
+    operations, whose own ``via`` says.
 ``voltage``
     ``[min_mV, max_mV]``.
 ``opcodes``
-    The operations the entry implies:
-    ``[{"op": "READ_1_1_4", "opcode": 0x6b, "via": "SPI_NOR_QUAD_READ"}, ...]``,
-    ``op`` a name in ``spiflash.opcodes.OPERATIONS`` and ``via`` the upstream
-    flag, field or default behind it.
+    The operations the entry states (a record's ``opcode_claims``):
+    ``[{"op": "READ_1_1_4", "via": "SPI_NOR_QUAD_READ"}, ...]``, ``op`` a name
+    in ``spiflash.opcodes.OPERATIONS`` (which gives the opcode) and ``via``
+    the upstream flag, field or default behind it. Those
+    :func:`spiflash.derive.opcodes` gives are not stored.
 ``sfdp``
     Hex of the part's SFDP (JESD216) area, where the upstream carries a
     dump of it (QEMU's flash model does); :mod:`spiflash.sfdp` decodes it.
@@ -56,9 +72,15 @@ Fields (``None`` / empty when the upstream does not say):
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from spiflash import derive
 from spiflash.enums import Feature, FlashType, Source
+from spiflash.model import Record as Model
+from spiflash.opcodes import OPERATIONS
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # The feature a uniform erase block of each size gives.
 ERASE_FEATURES = {
@@ -85,6 +107,7 @@ KEYS = (
     "erasers",
     "features",
     "flags",
+    "via",
     "voltage",
     "opcodes",
     "sfdp",
@@ -123,12 +146,46 @@ def part_case(name: str) -> str:
     return "".join(out)
 
 
+# A via key: feature:<feature>, <field>, <field>.<component> or <field>:<member>.
+_VIA_KEY = re.compile(r"feature:([a-z0-9_]+)|([a-z_]+)(?:\.[a-z_]+)?(?::[a-z0-9_]+)?")
+
+
+def check_via(via: dict[str, str], features: Iterable[str]) -> None:
+    """Raise for a ``via`` key that names no field, nor one of the record's
+    ``features``."""
+    for key in via:
+        m = _VIA_KEY.fullmatch(key)
+        if m is None or (m[1] not in features if m[1] else m[2] not in KEYS):
+            msg = f"bad via key {key!r}"
+            raise ValueError(msg)
+
+
+def tokens(via: str) -> list[str]:
+    """The upstream tokens a ``via`` joins."""
+    return via.split("; ")
+
+
+def feature_via(pairs: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """The ``via`` of feature claims, from (feature, upstream token) pairs:
+    ``{"feature:qpi": "FEATURE_QPI"}``."""
+    out: dict[str, list[str]] = {}
+    for feature, token in pairs:
+        given = out.setdefault(f"feature:{feature}", [])
+        if token not in given:
+            given.append(token)
+    return {key: "; ".join(given) for key, given in out.items()}
+
+
 def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     """A record with every key present, in the canonical order.
 
     ``features`` and ``flags`` may come in any order and with repeats; they
-    are stored sorted and unique. The name's part numbers are upper case
-    (:func:`part_case`)."""
+    are stored sorted and unique, without the flags a ``via`` holds. A
+    feature claim's ``via`` keeps only the tokens no operation's ``via``
+    holds: the operation is the claim's provenance. The name's part
+    numbers are upper case (:func:`part_case`). The operations
+    :func:`spiflash.derive.opcodes` gives are dropped, as the record
+    derives them at load."""
     unknown = set(fields) - set(KEYS)
     if unknown:
         msg = f"unknown record fields: {sorted(unknown)}"
@@ -151,8 +208,42 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         flags=[],
         notes=[],
         opcodes=[],
+        via={},
     )
     rec.update(fields)
     rec["features"] = sorted(set(rec["features"]))
-    rec["flags"] = sorted(set(rec["flags"]))
+    check_via(rec["via"], rec["features"])
+    flags = set(rec["flags"])
+    by_ops = {t for o in rec["opcodes"] for t in tokens(o["via"])}
+    via: dict[str, list[str]] = {}
+    for key, value in rec["via"].items():
+        kept = [t for t in tokens(value) if not (key.startswith("feature:") and t in by_ops)]
+        if kept:
+            via[key] = kept
+    rec["flags"] = sorted(flags - by_ops - {t for v in via.values() for t in v})
+    _drop_derived(rec, flags, via)
+    rec["via"] = {key: "; ".join(via[key]) for key in sorted(via)}
     return rec
+
+
+def _drop_derived(rec: Record, flags: set[str], via: dict[str, list[str]]) -> None:
+    """Drop the operations ``rec`` derives at load. An upstream flag that
+    only a dropped operation's via held moves to ``via``, under the field
+    the operation derives from: ``id_method``, or ``erasers:0x<opcode>``."""
+    model = Model.from_json(rec)
+    derived = {u.op for u in derive.opcodes(model)}
+    kept = [o for o in rec["opcodes"] if o["op"] not in derived]
+    held = {t for o in kept for t in tokens(o["via"])} | {t for v in via.values() for t in v}
+    id_op = derive.ID_OPERATION.get(model.id_method) if model.id_method else None
+    for o in rec["opcodes"]:
+        if o["op"] in derived:
+            key = "id_method" if o["op"] == id_op else f"erasers:0x{OPERATIONS[o['op']].opcode:02x}"
+            for t in tokens(o["via"]):
+                if t in flags and t not in held and t not in via.get(key, []):
+                    via.setdefault(key, []).append(t)
+    stated = {o["op"] for o in rec["opcodes"]}
+    rec["opcodes"] = kept
+    lost = stated - {u.op for u in Model.from_json(rec).opcodes}
+    if lost:
+        msg = f"{rec['source']} {rec['name']}: dropping derived operations lost {sorted(lost)}"
+        raise AssertionError(msg)

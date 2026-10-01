@@ -44,8 +44,10 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from spiflash.derive import ERASE_BY_OPCODE
+
 from . import cparse, dts, sfdp
-from .ops import ERASE_BY_OPCODE, Opcodes
+from .ops import Opcodes
 from .record import ERASE_FEATURES, Record, make
 
 if TYPE_CHECKING:

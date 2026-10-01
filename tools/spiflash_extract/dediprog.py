@@ -78,7 +78,7 @@ from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
 
 from .ops import Opcodes
-from .record import ERASE_FEATURES, Record, make
+from .record import ERASE_FEATURES, Record, feature_via, make
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -313,6 +313,7 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         op, value = _ID_COMMANDS[command]
         ops.add(op, f"RDIDCommand={chip['RDIDCommand']}", value=value)
     features: set[str] = set()
+    claims: list[tuple[str, str]] = []
     erasers: list[dict[str, Any]] = []
     sector: int | None = None
     dataflash = chip.get("Class", "").startswith("AT45DB")
@@ -337,15 +338,19 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         # BP4 are bits 2 to 6.
         if int(chip.get("ProtectBlockMask", "0"), 16) & 0x7C:
             features.add("lock")
+            claims.append(("lock", f"ProtectBlockMask={chip['ProtectBlockMask']}"))
     if "true" in chip.get("QPIEnable", "") and not dataflash:
         features.add("qpi")
+        claims.append(("qpi", "QPIEnable"))
     flags = [f"{key}={chip[key]}" for key in _RAW if chip.get(key)]
     jedec = chip.get("JedecDeviceID")
     if chip.get("UniqueID") and jedec and int(chip["UniqueID"], 16) != int(jedec, 16):
         flags.append(f"UniqueID={chip['UniqueID']}")
-    if command != 0x9F:
-        flags.append(f"RDIDCommand={chip['RDIDCommand']}")
     flags += [key for key in _BOOLEANS if "true" in chip.get(key, "")]
+    via = feature_via(claims)
+    if command != 0x9F:
+        # The command the id is read with, which id_method says.
+        via["id_method"] = f"RDIDCommand={chip['RDIDCommand']}"
     description = chip.get("Description", "").strip()
     return make(
         "dediprog",
@@ -363,6 +368,7 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         erasers=erasers or None,
         features=features | _erase_features(erasers),
         flags=flags,
+        via=via,
         opcodes=ops.to_json(),
         notes=[description] if description else [],
     )

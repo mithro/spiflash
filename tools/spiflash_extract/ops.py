@@ -61,31 +61,10 @@ class Opcodes:
 
     def to_json(self) -> list[dict[str, Any]]:
         return [
-            {"op": op, "opcode": value, "via": "; ".join(vias)}
+            {"op": op, "via": "; ".join(vias)}
             for op, (value, vias) in sorted(self._ops.items(), key=lambda kv: sort_key(kv[0]))
         ]
 
-
-# Erase opcodes by value: flashrom's spi_block_erase_<xx> sends 0x<xx>, and
-# OpenOCD's erase_cmd/chip_erase_cmd hold the byte.
-ERASE_BY_OPCODE = {
-    0x20: "BE_4K",
-    0x21: "BE_4K_4B",
-    0x40: "BE_40",
-    0x50: "BE_ALT1",
-    0x52: "BE_32K",
-    0x53: "BE_53",
-    0x5C: "BE_32K_4B",
-    0x60: "CHIP_ERASE_ALT",
-    0x62: "CHIP_ERASE_ATMEL",
-    0x81: "BE_ALT2",
-    0xC4: "DIE_ERASE",
-    0xC7: "CHIP_ERASE",
-    0xD7: "BE_4K_PMC",
-    0xD8: "SE",
-    0xDB: "BE_256",
-    0xDC: "SE_4B",
-}
 
 # Linux's and U-Boot's conversion of an operation to its 4-byte-address form
 # (spi_nor_convert_3to4_read/_program/_erase in drivers/mtd/spi-nor/core.c).

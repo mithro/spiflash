@@ -34,7 +34,7 @@ from spiflash.model import part_names
 
 from . import cparse
 from .ops import Opcodes
-from .record import Record, make
+from .record import Record, feature_via, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -218,13 +218,16 @@ def _nor_record(values: list[int], symbols: dict[str, str | int]) -> dict[str, A
     features = {"erase_4k"}
     if block * SECTOR == 64 * 1024:
         features.add("erase_64k")
-    for bit, feat in (
-        ("FEA_4BIT_READ", "quad_read"),
-        ("FEA_4BIT_PROG", "quad_pp"),
-        ("FEA_4BYTE_ADDR", "4byte_addr"),
-    ):
-        if bit in bits:
-            features.add(feat)
+    claims = [
+        (feat, bit)
+        for bit, feat in (
+            ("FEA_4BIT_READ", "quad_read"),
+            ("FEA_4BIT_PROG", "quad_pp"),
+            ("FEA_4BYTE_ADDR", "4byte_addr"),
+        )
+        if bit in bits
+    ]
+    features.update(feat for feat, _ in claims)
     if any(op.endswith("_4B") for op in ops):
         features.add("4byte_opcodes")
     if any(op.startswith("READ_1_1_1_FAST") for op in ops):
@@ -240,6 +243,7 @@ def _nor_record(values: list[int], symbols: dict[str, str | int]) -> dict[str, A
         ],
         "features": features,
         "flags": [*bits, f"write_status={_WRITE_STATUS[feature & mask]}", f"QE_bits={qe_bits}"],
+        "via": feature_via(claims),
         "opcodes": ops.to_json(),
         "notes": notes,
     }
@@ -293,11 +297,11 @@ def _nand_record(
         raise ValueError(msg)
     allowed = cparse.evaluate("FEA_4BIT_READ | FEA_4BIT_PROG | FEA_SOFT_QOP_BIT", symbols)
     bits = _bits(feature, allowed, symbols)
-    features = set()
-    if "FEA_4BIT_READ" in bits:
-        features.add("quad_read")
-    if "FEA_4BIT_PROG" in bits:
-        features.add("quad_pp")
+    claims = [
+        (feat, bit)
+        for bit, feat in (("FEA_4BIT_READ", "quad_read"), ("FEA_4BIT_PROG", "quad_pp"))
+        if bit in bits
+    ]
     # sfc_nand_read_id() sends 0x9f and an address byte. An id2 of 0 is not
     # compared, so not part of the id. One that repeats the manufacturer byte
     # or is 0x7f is not a device byte either, but what follows one: the
@@ -312,7 +316,8 @@ def _nand_record(
         "size": size,
         "page_size": page,
         "sector_size": page * ppb,
-        "features": features,
+        "features": {feat for feat, _ in claims},
+        "via": feature_via(claims),
         "flags": [
             *bits,
             f"has_qe_bits={qe}",

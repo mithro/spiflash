@@ -8,16 +8,18 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from functools import cached_property
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 
+from . import derive
 from .enums import Feature, FlashType, IdFamily, IdMethod, Source
-from .opcodes import OPERATIONS, Operation, sort_key
+from .opcodes import OPERATIONS, OpcodeUse, Operation, sort_key
 from .sfdp import Sfdp
 from .sfdp import parse as parse_sfdp
 from .vendors import canonical
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
 T = TypeVar("T")
 
@@ -57,12 +59,25 @@ class Eraser:
         blocks = tuple(EraseBlock(size, count) for size, count in d["blocks"])
         return cls(d["opcode"], blocks, d.get("function"))
 
+    def to_json(self) -> dict[str, Any]:
+        """The eraser as the data stores it (:meth:`from_json` reads it back)."""
+        out: dict[str, Any] = {
+            "opcode": self.opcode,
+            "blocks": [[b.size, b.count] for b in self.blocks],
+        }
+        if self.function is not None:
+            out["function"] = self.function
+        return out
+
 
 class Claim(NamedTuple):
-    """A source's reason for saying a chip has an operation."""
+    """A source's reason for saying a chip has an operation; ``implied``
+    when the operation follows from the source's other fields
+    (:func:`spiflash.derive.opcodes`) rather than being stated."""
 
     source: Source
     via: str
+    implied: bool = False
 
 
 class SfdpDump(NamedTuple):
@@ -158,17 +173,6 @@ class Datasheet:
         return (not shown, not self.official, newest)
 
 
-@dataclass(frozen=True, slots=True)
-class OpcodeUse:
-    """One operation an upstream entry implies: its name in
-    :data:`spiflash.opcodes.OPERATIONS`, the opcode byte, and what in the
-    upstream implies it (a flag, a field, or the upstream's default)."""
-
-    op: str
-    opcode: int
-    via: str
-
-
 @dataclass(frozen=True)
 class SupportedOperation:
     """An operation a chip supports, and which upstreams say so, why."""
@@ -188,12 +192,30 @@ class SupportedOperation:
     def sources(self) -> tuple[Source, ...]:
         return tuple(dict.fromkeys(claim.source for claim in self.because))
 
+    @property
+    def implied_by(self) -> tuple[Source, ...]:
+        """The sources whose entries imply the operation without stating it
+        (:attr:`Claim.implied`)."""
+        return tuple(dict.fromkeys(c.source for c in self.because if c.implied))
+
+
+#: The fields a record both stores and derives, and the attribute holding
+#: what it stores: ``features`` is ``feature_claims`` and what the other
+#: fields imply. A field joins when a rule in :mod:`spiflash.derive` starts
+#: adding to it, its stored part taking a ``*_claims`` name; its JSON key
+#: stays the field's name. :meth:`Record.stored`, :meth:`Record.to_json`
+#: and the rules themselves read only the stored part.
+CLAIMS = {"features": "feature_claims", "opcodes": "opcode_claims"}
+
 
 @dataclass(frozen=True)
 class Record:
     """One entry of one upstream's flash table, as that upstream has it.
 
-    See :mod:`spiflash_extract.record` for what each field means."""
+    The fields made from arguments are what the entry states, as the data
+    stores them; :attr:`features` and :attr:`opcodes` are worked out from
+    them (:mod:`spiflash.derive`). See :mod:`spiflash_extract.record` for
+    what each field means."""
 
     source: Source
     file: str
@@ -208,14 +230,39 @@ class Record:
     page_size: int | None
     sector_size: int | None
     erasers: tuple[Eraser, ...]
-    features: frozenset[Feature]
+    #: The capabilities the entry states.
+    feature_claims: frozenset[Feature]
     flags: tuple[str, ...]
     voltage: Voltage | None
-    opcodes: tuple[OpcodeUse, ...]
+    #: The operations the entry states.
+    opcode_claims: tuple[OpcodeUse, ...]
     tested: str | None
     notes: tuple[str, ...]
     #: The part's SFDP area, where the upstream carries a dump of it.
     sfdp: bytes | None = field(default=None, repr=False)
+    #: Which upstream token gave a stored value that has no other
+    #: provenance: ``{"feature:qpi": "QPIEnable"}`` (see
+    #: :mod:`spiflash_extract.record` for the keys).
+    via: Mapping[str, str] = field(default_factory=dict, hash=False, repr=False)
+    #: Every capability: :attr:`feature_claims`, and what the other fields imply.
+    features: frozenset[Feature] = field(init=False, compare=False, repr=False)
+    #: Every operation: :attr:`opcode_claims`, and the ``implied`` ones the
+    #: other fields give (:func:`spiflash.derive.opcodes`), by kind; a claimed
+    #: use comes before an implied one of the same operation.
+    opcodes: tuple[OpcodeUse, ...] = field(init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "via", MappingProxyType(dict(self.via)))
+        object.__setattr__(self, "features", self.feature_claims)
+        uses = (*self.opcode_claims, *derive.opcodes(self))
+        object.__setattr__(self, "opcodes", tuple(sorted(uses, key=_use_order)))
+
+    def __getstate__(self) -> dict[str, Any]:
+        # A mapping proxy does not pickle; the dict it wraps does.
+        return {**self.__dict__, "via": dict(self.via)}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state, via=MappingProxyType(state["via"]))
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> Record:
@@ -233,14 +280,56 @@ class Record:
             page_size=d["page_size"],
             sector_size=d["sector_size"],
             erasers=tuple(Eraser.from_json(e) for e in d["erasers"] or ()),
-            features=frozenset(Feature(f) for f in d["features"]),
+            feature_claims=frozenset(Feature(f) for f in d["features"]),
             flags=tuple(d["flags"]),
             voltage=Voltage(*d["voltage"]) if d["voltage"] else None,
-            opcodes=tuple(OpcodeUse(o["op"], o["opcode"], o["via"]) for o in d["opcodes"]),
+            opcode_claims=tuple(OpcodeUse(o["op"], o["via"]) for o in d["opcodes"]),
             tested=d["tested"],
             notes=tuple(d["notes"]),
             sfdp=bytes.fromhex(d["sfdp"]) if d.get("sfdp") else None,
+            via=d.get("via") or {},
         )
+
+    def to_json(self) -> dict[str, Any]:
+        """The record as the data stores it: what it states
+        (:meth:`stored`), in :data:`spiflash_extract.record.KEYS` order;
+        :meth:`from_json` reads it back."""
+        return {
+            "source": str(self.source),
+            "file": self.file,
+            "line": self.line,
+            "type": str(self.type),
+            "vendor": self.vendor,
+            "name": self.name,
+            "id": self.id.hex() if self.id else None,
+            "ext_id": self.ext_id.hex() if self.ext_id else None,
+            "id_method": str(self.id_method) if self.id_method else None,
+            "size": self.size,
+            "page_size": self.page_size,
+            "sector_size": self.sector_size,
+            "erasers": [e.to_json() for e in self.stored("erasers")] or None,
+            "features": sorted(self.stored("features")),
+            "flags": list(self.flags),
+            "via": dict(self.via),
+            "voltage": list(self.voltage) if self.voltage else None,
+            "opcodes": [{"op": u.op, "via": u.via} for u in self.stored("opcodes")],
+            "sfdp": self.sfdp.hex() if self.sfdp else None,
+            "tested": self.tested,
+            "notes": list(self.notes),
+        }
+
+    def stored(self, name: str) -> Any:
+        """What the entry states for field ``name``, without what is derived
+        (:data:`CLAIMS`): ``record.stored("features")`` is its
+        :attr:`feature_claims`, ``record.stored("size")`` its :attr:`size`."""
+        return getattr(self, CLAIMS.get(name, name))
+
+    def opcode_reasons(self) -> dict[str, tuple[OpcodeUse, ...]]:
+        """Each operation in :attr:`opcodes`, and the uses giving it."""
+        out: dict[str, tuple[OpcodeUse, ...]] = {}
+        for use in self.opcodes:
+            out[use.op] = (*out.get(use.op, ()), use)
+        return out
 
     def sfdp_tables(self) -> Sfdp | None:
         """The entry's SFDP dump, decoded (see :mod:`spiflash.sfdp`); ``None``
@@ -274,6 +363,12 @@ class Record:
     def part_names(self) -> tuple[str, ...]:
         """The part numbers the entry's name stands for (see :func:`part_names`)."""
         return part_names(self.name)
+
+
+def _use_order(use: OpcodeUse) -> tuple[tuple[int, int], bool]:
+    """Operations by kind, as :func:`~spiflash.opcodes.sort_key` orders
+    them; a claimed use before an implied one."""
+    return sort_key(use.op), use.implied
 
 
 # A part number and a group of suffixes: "S25FL032(A/P)", "EN25Q32(/A/B)".
@@ -578,17 +673,21 @@ class Flash:
         """Every operation any source says the chip has, by name, in the
         order id, read, program, erase, register, mode. Parts sharing an id
         can differ, and some sources only list what their own driver uses,
-        so :attr:`SupportedOperation.sources` says who vouches for each."""
+        so :attr:`SupportedOperation.sources` says who vouches for each.
+        A source that states an operation is not also listed as implying
+        it."""
         because: dict[str, list[Claim]] = {}
         for r in sorted(self.records, key=lambda r: r.source.priority):
             for use in r.opcodes:
-                claim = Claim(r.source, use.via)
+                claim = Claim(r.source, use.via, use.implied)
                 if claim not in because.setdefault(use.op, []):
                     because[use.op].append(claim)
-        return {
-            name: SupportedOperation(OPERATIONS[name], tuple(because[name]))
-            for name in sorted(because, key=sort_key)
-        }
+        out = {}
+        for name in sorted(because, key=sort_key):
+            stating = {c.source for c in because[name] if not c.implied}
+            claims = (c for c in because[name] if not (c.implied and c.source in stating))
+            out[name] = SupportedOperation(OPERATIONS[name], tuple(claims))
+        return out
 
     @cached_property
     def sfdp_dumps(self) -> tuple[SfdpDump, ...]:
@@ -625,11 +724,12 @@ class Flash:
         return tuple(sorted(claiming, key=lambda s: s.priority))
 
     def values(self, attribute: str) -> dict[Any, tuple[Source, ...]]:
-        """Each value of a :class:`Record` attribute, and the sources giving it:
+        """Each value the records store for an attribute
+        (:meth:`Record.stored`), and the sources giving it:
         ``flash.values("size")`` → ``{16777216: ("flashrom", "linux", ...)}``."""
         out: dict[Any, set[Source]] = {}
         for r in self.records:
-            v = getattr(r, attribute)
+            v = r.stored(attribute)
             if v is not None:
                 out.setdefault(v, set()).add(r.source)
         return {k: tuple(sorted(v, key=lambda s: s.priority)) for k, v in out.items()}
@@ -640,7 +740,7 @@ class Flash:
         that extended ids tell apart (:attr:`variants`) are not compared."""
         out = {}
         for attr in ("size", "page_size", "sector_size", "voltage"):
-            if any(len({getattr(r, attr) for r in v} - {None}) > 1 for v in self.variants):
+            if any(len({r.stored(attr) for r in v} - {None}) > 1 for v in self.variants):
                 out[attr] = self.values(attr)
         return out
 
@@ -748,6 +848,7 @@ class Flash:
                     "kind": o.operation.kind,
                     "description": o.operation.description,
                     "sources": list(o.sources),
+                    "implied_by": list(o.implied_by),
                 }
                 for o in self.opcodes.values()
             ],

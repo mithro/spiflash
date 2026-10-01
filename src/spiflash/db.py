@@ -74,7 +74,9 @@ class SourceInfo:
 
 #: The data files' format; :repo:`tools/update_db.py` writes the same number.
 #: 2: records' ``opcodes`` became a list of {op, opcode, via}.
-FORMAT = 3
+#: 4: ``opcodes`` lose ``opcode``; erase and id operations are derived;
+#: ``via``; consumed flags and notes removed.
+FORMAT = 4
 
 
 def _read(name: str) -> dict[str, Any]:

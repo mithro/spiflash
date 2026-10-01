@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import itertools
 import json
+import pickle
 import re
 from collections import Counter
+from dataclasses import replace
 from datetime import UTC, datetime
 from importlib import resources
 
@@ -30,7 +32,7 @@ from spiflash.model import (
     squash_name,
     strip_continuation,
 )
-from spiflash.opcodes import OPERATIONS
+from spiflash.opcodes import OPERATIONS, OpcodeUse
 from test_sfdp import MX25L25635E, W25Q512JV
 
 
@@ -811,7 +813,9 @@ def test_opcodes_of_a_shipped_chip() -> None:
     assert se.name == "SE"
     assert se.operation.kind == "erase"
     assert se.sources[0] == "flashrom"  # by source priority
-    assert ("openocd", "erase_cmd") in se.because
+    # OpenOCD's erase_cmd is an eraser, which implies the operation.
+    assert ("openocd", "eraser: 256 x 65536", True) in se.because
+    assert "openocd" in se.implied_by
     doc = f.to_json()["opcodes"]
     assert {
         "op": "SE",
@@ -821,31 +825,73 @@ def test_opcodes_of_a_shipped_chip() -> None:
     }.items() <= next(o for o in doc if o["op"] == "SE").items()
 
 
-def test_every_record_opcode_matches_the_table() -> None:
+def test_an_opcode_use_takes_its_opcode_from_the_table() -> None:
     for r in spiflash.records():
         for use in r.opcodes:
-            assert OPERATIONS[use.op].opcode == use.opcode, (r.source, r.name, use)
+            assert use.opcode == OPERATIONS[use.op].opcode
             assert use.via, (r.source, r.name, use.op)
+    assert OpcodeUse("SE", "erase_cmd").opcode == 0xD8
 
 
 def test_opcodes_merge_across_records() -> None:
     db = Database(
         [
-            rec(source="openocd", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "erase_cmd"}]),
+            rec(source="openocd", opcodes=[{"op": "SE", "via": "erase_cmd"}]),
             rec(
                 source="linux",
-                opcodes=[
-                    {"op": "SE", "opcode": 0xD8, "via": "default"},
-                    {"op": "RDID", "opcode": 0x9F, "via": "id"},
-                ],
+                opcodes=[{"op": "SE", "via": "default"}, {"op": "RDID", "via": "id"}],
             ),
-            rec(source="linux", opcodes=[{"op": "SE", "opcode": 0xD8, "via": "default"}]),
+            rec(source="linux", opcodes=[{"op": "SE", "via": "default"}]),
         ]
     )
     (f,) = db.flashes
     assert list(f.opcodes) == ["RDID", "SE"]
-    assert f.opcodes["SE"].because == (("linux", "default"), ("openocd", "erase_cmd"))
+    assert f.opcodes["SE"].because == (("linux", "default", False), ("openocd", "erase_cmd", False))
     assert f.opcodes["SE"].sources == ("linux", "openocd")
+    # Every record's rdid implies RDID; Linux states it too, which wins.
+    rdid_because = (("linux", "id", False), ("openocd", "id read (rdid)", True))
+    assert f.opcodes["RDID"].because == rdid_because
+    assert f.opcodes["RDID"].implied_by == ("openocd",)
+    rdid = next(o for o in f.to_json()["opcodes"] if o["op"] == "RDID")
+    assert (rdid["sources"], rdid["implied_by"]) == (["linux", "openocd"], ["openocd"])
+
+
+def test_record_derives_id_and_erase_operations() -> None:
+    erasers = [{"opcode": 0x20, "blocks": [[4096, 4096]]}, {"opcode": 0xC7, "blocks": [[1, 1]]}]
+    r = rec(erasers=erasers, opcodes=[{"op": "READ_1_1_1", "via": "read"}])
+    assert [(u.op, u.via, u.implied) for u in r.opcodes] == [
+        ("RDID", "id read (rdid)", True),
+        ("READ_1_1_1", "read", False),
+        ("BE_4K", "eraser: 4096 x 4096", True),
+        ("CHIP_ERASE", "eraser: 1 x 1", True),
+    ]
+    assert r.opcode_claims == (OpcodeUse("READ_1_1_1", "read"),)
+    # Derived from the stored fields, so a replaced field re-derives them.
+    r2 = replace(r, erasers=(Eraser(0xD8, (EraseBlock(65536, 256),)),), id_method=IdMethod.REMS)
+    assert [u.op for u in r2.opcodes] == ["REMS", "READ_1_1_1", "SE"]
+    # A stated operation comes before the same one implied.
+    r3 = rec(erasers=erasers[:1], opcodes=[{"op": "BE_4K", "via": "stated"}])
+    assert [(u.op, u.implied) for u in r3.opcode_reasons()["BE_4K"]] == [
+        ("BE_4K", False),
+        ("BE_4K", True),
+    ]
+    # SPI NAND reads its id and erases blocks with other commands.
+    nand = rec(type="nand", id_method="rdid_opcode_dummy", erasers=erasers)
+    assert nand.opcodes == ()
+
+
+def test_record_stored_fields() -> None:
+    r = rec(features=["qpi"], via={"feature:qpi": "QPIEnable"})
+    assert r.stored("features") == r.feature_claims == {Feature.QPI}
+    assert r.stored("size") == r.size
+    assert r.via == {"feature:qpi": "QPIEnable"}
+    with pytest.raises(TypeError):
+        r.via["x"] = "y"  # type: ignore[index]
+    # Hashed and compared on what it stores; pickled with its via.
+    assert hash(r) == hash(rec(features=["qpi"], via={"feature:qpi": "other"}))
+    assert r != rec(features=["qpi"], via={"feature:qpi": "other"})
+    back = pickle.loads(pickle.dumps(r))
+    assert (back, back.via, back.opcodes) == (r, r.via, r.opcodes)
 
 
 def test_operations_table() -> None:

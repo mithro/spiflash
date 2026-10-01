@@ -203,7 +203,7 @@ def test_opcodes_by_id_and_by_name(capsys: pytest.CaptureFixture[str]) -> None:
 def test_opcodes_verbose_says_why(capsys: pytest.CaptureFixture[str]) -> None:
     _, out = run(capsys, "opcodes", "-v", "ef4018")
     assert "          linux           SPI_NOR_QUAD_READ" in out
-    assert "          openocd         erase_cmd" in out
+    assert "          openocd         eraser: 256 x 65536" in out  # from its eraser
 
 
 def test_opcodes_json(capsys: pytest.CaptureFixture[str]) -> None:

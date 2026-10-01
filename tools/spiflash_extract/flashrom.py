@@ -34,9 +34,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from spiflash.derive import ERASE_BY_OPCODE
+
 from . import cparse
-from .ops import ERASE_BY_OPCODE, Opcodes
-from .record import ERASE_FEATURES, Record, make
+from .ops import Opcodes
+from .record import ERASE_FEATURES, Record, feature_via, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -201,7 +203,8 @@ def _record(
     id_hex, ext = id_bytes(method, mfr, model, probe)
 
     flags = cparse.bit_names(f.get("feature_bits", "0"), symbols, "FEATURE_")
-    features = {feat for flag in flags for rx, feat in _FEATURES if rx.fullmatch(flag)}
+    claims = [(feat, flag) for flag in flags for rx, feat in _FEATURES if rx.fullmatch(flag)]
+    features = {feat for feat, _ in claims}
     erasers = _erasers(f.get("block_erasers", "{}"), symbols)
     for e in erasers:
         if len(e["blocks"]) == 1 and e["opcode"] is not None:
@@ -213,6 +216,7 @@ def _record(
     reg_bits = f.get("reg_bits", "")
     if re.search(r"\.bp\s*=", reg_bits):
         features.add("lock")
+        claims.append(("lock", ".reg_bits .bp"))
     size = cparse.evaluate(f["total_size"], symbols) * 1024
     if size > 16 * 1024 * 1024:
         features.add("4byte_addr")
@@ -237,6 +241,7 @@ def _record(
         erasers=erasers or None,
         features=features,
         flags=flags,
+        via=feature_via(claims),
         voltage=voltage,
         tested=tested,
         opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp="sfdp" in features),
