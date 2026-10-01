@@ -315,11 +315,6 @@ class SfdpDump(NamedTuple):
     records: tuple[Record, ...]
 
     @property
-    def tables(self) -> Sfdp:
-        """:attr:`sfdp`, by its old name."""
-        return self.sfdp
-
-    @property
     def source(self) -> Source:
         """The best source carrying the dump."""
         return self.records[0].source

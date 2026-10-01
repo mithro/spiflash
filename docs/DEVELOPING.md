@@ -59,9 +59,16 @@ Those four are what the `test` job of {repo}`.github/workflows/deb.yml` runs,
 on Python 3.11 to 3.14. A green run is what "mergeable" means, and on `main`
 what publishes. `uv run ruff format` applies the formatting.
 
-The code carries no `# noqa`, no `type: ignore` and no per-file lint ignores:
-when a rule fires, the code changes. The rules chosen, and the four families
-left out (and why), are listed in {repo}`pyproject.toml`.
+The code carries no `type: ignore` and no per-file lint ignores: when a rule
+fires, the code changes. Its only `# noqa` are `PLC0415`, each with its
+reason, for an import a function makes where a module-level one cannot be:
+{repo}`derive.py <src/spiflash/derive.py>` and
+{repo}`sfdp.py <src/spiflash/sfdp.py>` build
+{repo}`model.py <src/spiflash/model.py>`'s erasers, and `model` imports them;
+{repo}`tools/db_snapshot.py` imports `spiflash` only once `--src` has set
+the path, and a test imports a tool where it tests it. The rules chosen,
+and the four families left out (and why), are listed in
+{repo}`pyproject.toml`.
 
 ## Layout
 
