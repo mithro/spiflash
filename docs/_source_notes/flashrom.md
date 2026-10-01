@@ -86,6 +86,21 @@ Some comments are wrong, and the record says so in a note:
 (`OTP_COMMANDS_WRONG` and `OTP_SIZE_WRONG` in
 {repo}`tools/spiflash_extract/flashrom.py`.)
 
+Some entries' values are wrong for their part, and the record stores the
+datasheet's, with a note (`ENTRY_WRONG`, both sources):
+- "S25FL128S_UL", "S25FL128S_US" and "S25FL256S Large" and "Small Sectors"
+  give the S25FS-S's 1.7 V to 2.0 V: the S25FL128S and S25FL256S are 2.7 V
+  to 3.6 V parts;
+- the "S25FL128S_UL" (extended id 4d 00 80) has uniform 256 KB sectors and
+  a 512-byte page, not 128 KB and 256 bytes, as the "S25FL128S......1"
+  entry has it, and the "S25FL256S Large Sectors" a 512-byte page too;
+- the "S25FL256S" entries give half the part ("This is just half the
+  size"): it is 32 MiB;
+- the S25FL512S's page is 512 bytes, not 256.
+
+The erase routines that send one opcode are that erase: `s25fl_block_erase`
+is 0xdc, `s25fs_block_erase_d8` 0xd8 (`FUNCTION_OPCODES`).
+
 A comment on an entry saying it "supports SFDP" gives it the `sfdp`
 capability and the [RDSFDP](../opcodes/RDSFDP.md) operation, whose `via`
 then holds the comment. A comment qualified to one model of a multi-part

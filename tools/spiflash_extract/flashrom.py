@@ -171,6 +171,100 @@ OTP_COMMANDS_WRONG: dict[int, tuple[frozenset[str], str]] = {
 }
 
 
+_FL_S = "001-98283 Rev. *T"
+_FL_S_VOLTAGE = (
+    f'the S25FL128S and S25FL256S are 2.7 V to 3.6 V parts ({_FL_S}: "Core supply '
+    "voltage: 2.7 V to 3.6 V\"); 1.7 V to 2.0 V is the S25FS-S's"
+)
+_FL_S_UNIFORM = (
+    "an extended id of 4d 00 80 is the part with uniform 256 KB sectors and a 512-byte "
+    f"page buffer ({_FL_S}, Table 56, sector architecture 00h; ordering information, "
+    "note 63)"
+)
+
+#: Entries some of whose values are wrong, by name, with the value the
+#: part's datasheet gives and why: the record stores the datasheet's, with
+#: a note. ``size`` takes the uniform layouts with it, ``sector`` is the
+#: block of the uniform 0xd8 or 0xdc layout. flashprog's entries of the
+#: same name have the same values.
+ENTRY_WRONG: dict[str, dict[str, tuple[Any, str]]] = {
+    "S25FL128S_UL Uniform 128 kB Sectors": {
+        "sector": (256 * 1024, _FL_S_UNIFORM),
+        "page_size": (512, _FL_S_UNIFORM),
+        "voltage": ((2700, 3600), _FL_S_VOLTAGE),
+    },
+    "S25FL128S_US Uniform 64 kB Sectors": {"voltage": ((2700, 3600), _FL_S_VOLTAGE)},
+    "S25FL256S Large Sectors": {
+        "size": (
+            32 << 20,
+            'the S25FL256S is 256 Mbit, 32 MiB (the entry: "This is just half the size")',
+        ),
+        "page_size": (512, _FL_S_UNIFORM),
+        "voltage": ((2700, 3600), _FL_S_VOLTAGE),
+    },
+    "S25FL256S Small Sectors": {
+        "size": (
+            32 << 20,
+            'the S25FL256S is 256 Mbit, 32 MiB (the entry: "This is just half the size")',
+        ),
+        "voltage": ((2700, 3600), _FL_S_VOLTAGE),
+    },
+    "S25FL512S": {
+        "page_size": (
+            512,
+            'the S25FL512S has a "512-byte Page Programming buffer" (001-98284 Rev. *U, features)',
+        ),
+    },
+}
+
+
+def corrected(
+    name: str,
+    size: int,
+    page: int | None,
+    voltage: list[int] | None,
+    erasers: list[dict[str, Any]],
+    notes: list[str],
+) -> tuple[int, int | None, list[int] | None]:
+    """The size, page and voltage of an entry, and its erasers (changed in
+    place), with what :data:`ENTRY_WRONG` corrects, each with a note."""
+    wrong = ENTRY_WRONG.get(name, {})
+    unknown = set(wrong) - {"size", "sector", "page_size", "voltage"}
+    if unknown:
+        msg = f"no correction for {sorted(unknown)}"
+        raise ValueError(msg)
+    if "size" in wrong:
+        value, why = wrong["size"]
+        notes.append(f"size {value >> 20} MiB, not the entry's {size >> 20} MiB: {why}")
+        size = value
+        for e in erasers:
+            if len(e["blocks"]) != 1:
+                msg = f"a non-uniform layout over a corrected size: {e}"
+                raise ValueError(msg)
+            block = e["blocks"][0][0] if e["blocks"][0][1] != 1 else size
+            e["blocks"] = [[block, size // block]]
+    if "sector" in wrong:
+        value, why = wrong["sector"]
+        for e in erasers:
+            if e["opcode"] in (0xD8, 0xDC) and len(e["blocks"]) == 1:
+                old = e["blocks"][0][0]
+                notes.append(
+                    f"0x{e['opcode']:02x} erases {value >> 10} KiB blocks, not the entry's "
+                    f"{old >> 10} KiB: {why}"
+                )
+                e["blocks"] = [[value, size // value]]
+    if "page_size" in wrong:
+        value, why = wrong["page_size"]
+        notes.append(f"page {value} B, not the entry's {page} B: {why}")
+        page = value
+    if "voltage" in wrong:
+        (lo, hi), why = wrong["voltage"]
+        given = f"{voltage[0]}-{voltage[1]} mV" if voltage else "none"
+        notes.append(f"voltage {lo}-{hi} mV, not the entry's {given}: {why}")
+        voltage = [lo, hi]
+    return size, page, voltage
+
+
 def otp(note: str) -> tuple[dict[str, int], list[str]] | None:
     """The OTP area and the operations an OTP comment gives, where it is
     about the whole entry: ``"OTP: 1024B total; read 0x48; write 0x42,
@@ -309,11 +403,21 @@ def _erasers(expr: str, symbols: dict[str, str | int]) -> list[dict[str, Any]]:
             size, count = (cparse.evaluate(v, symbols) for v in cparse.split_top(blk.body))
             blocks.append([size, count])
         m = re.fullmatch(r"(?i)spi_block_erase_([0-9a-f]{2})", func)
-        item: dict[str, Any] = {"opcode": int(m.group(1), 16) if m else None, "blocks": blocks}
-        if m is None:
+        opcode = int(m.group(1), 16) if m else FUNCTION_OPCODES.get(func.lower())
+        item: dict[str, Any] = {"opcode": opcode, "blocks": blocks}
+        if opcode is None:
             item["function"] = func.lower()
+        elif m is None:
+            item["via"] = func
         out.append(item)
     return out
+
+
+#: The erase routines that send one erase opcode, and the opcode (s25f.c):
+#: ``s25fl_block_erase`` sends 0xdc with a 4-byte address, and
+#: ``s25fs_block_erase_d8`` 0xd8, after switching a hybrid-sector part to
+#: uniform sectors.
+FUNCTION_OPCODES = {"s25fl_block_erase": 0xDC, "s25fs_block_erase_d8": 0xD8}
 
 
 #: The die erase opcodes: an eraser sending one erases a die at a time.
@@ -422,6 +526,9 @@ def _record(
     if "voltage" in f:
         limits = cparse.split_top(f["voltage"].strip()[1:-1])
         voltage = [cparse.evaluate(v, symbols) for v in limits]
+    page = cparse.evaluate(f["page_size"], symbols) if "page_size" in f else None
+    eraser_via = {f"erasers:0x{e['opcode']:02x}": e.pop("via") for e in erasers if "via" in e}
+    size, page, voltage = corrected(name, size, page, voltage, erasers, notes)
     tested = " ".join(f.get("tested", "").split()) or None
     return make(
         source,
@@ -433,11 +540,11 @@ def _record(
         ext_id=ext,
         id_method=method,
         size=size,
-        page_size=cparse.evaluate(f["page_size"], symbols) if "page_size" in f else None,
+        page_size=page,
         erasers=[e for e in erasers if e["opcode"] not in DIE_ERASE_OPCODES] or None,
         features=features,
         flags=flags,
-        via=feature_via(claims) | die_via | mode_via | otp_via,
+        via=feature_via(claims) | die_via | mode_via | otp_via | eraser_via,
         voltage=voltage,
         quad_enable=quad_enable,
         protection=bits or None,

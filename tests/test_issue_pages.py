@@ -352,8 +352,8 @@ def test_one_source_grouped_by_value() -> None:
 
 def test_parts_an_extended_id_tells_apart_are_not_compared() -> None:
     found = {(i.subject, i.attribute) for i in find() if i.kind is IssueKind.VALUE}
-    # flashrom's S25FL128S_UL (1.7-2.0 V) against its and flashprog's 3 V
-    # S25FL128S: one part, a real disagreement.
+    # flashrom's 1.8 V S25FS128S at 4d 00 81 against the 3 V S25FL127S and
+    # S25FL128P, whose entries have no extended id and so cover every part.
     assert ("012018", "voltage") in found
     # The S25FS512S (1.8 V) and the S25FL512S (3 V): two parts.
     assert ("010220", "voltage") not in found

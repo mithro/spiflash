@@ -489,12 +489,16 @@ def test_parts_that_differ_by_ext_id() -> None:
         if f.by_ext_id(attr)
     }
     assert differ == {
+        # The S25FL-S at 4d 00 80: uniform 256 KiB sectors and a 512-byte
+        # page; at 4d 01 80: 64 KiB sectors and a 256-byte page.
+        ("010219", "page_size"),
         ("010219", "sector_size"),  # 4d 00 xx: 256 KiB sectors; 4d 01 xx: 64 KiB
         ("010220", "page_size"),  # the S25FS512S's 256 B at 4d 00 81
         ("010220", "sector_size"),  # U-Boot's S25FL512S_64K at 4d 01
         ("010220", "voltage"),  # the 1.8 V S25FS512S
+        ("012018", "page_size"),
         ("012018", "sector_size"),
-        ("012018", "voltage"),  # flashrom's 1.7-2.0 V S25FL128S_UL/US, an issue
+        ("012018", "voltage"),  # the 1.8 V S25FS128S at 4d 00 81 and 4d 01 81
         ("c841", "size"),  # the GD5F1GQ5RE and the F50L2G41KA
     }
 

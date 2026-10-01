@@ -189,10 +189,10 @@ EXPLAINED = {
         "2.0 V range is wrong, and Dediprog's 3.3 V right."
     ),
     ("010219", "supply_mv"): (
-        "The S25FL256S is a 2.7 V to 3.6 V part, as flashrom's S25FL256S......0 entry "
-        'says; its "S25FL256S Large Sectors" and "Small Sectors" entries give 1.7 V to '
-        "2.0 V, the S25FS256S's, so Dediprog's 3.3 V for the S25FL256S is outside a "
-        "wrong range."
+        "Dediprog's 1.8 V is for the S25FS256S, a 1.7 V to 2.0 V part, which no source "
+        "here gives a range: no source is wrong. (flashrom's \"S25FL256S Large Sectors\" "
+        'and "Small Sectors" entries give the S25FL256S, a 2.7 V to 3.6 V part, the '
+        "S25FS256S's 1.7 V to 2.0 V: their records carry the datasheet's range.)"
     ),
     ("1f2400", "supply_mv"): _AT45,
     ("1f2500", "supply_mv"): _AT45,

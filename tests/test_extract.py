@@ -707,6 +707,10 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
     assert s["id"] == "012018"
     assert s["ext_id"] == "4d0080"  # the id length byte, 4d, the probe skips
     assert s["tested"] == "{ .probe = NA, .read = OK }"
+    # Its 256-byte page is wrong (ENTRY_WRONG): the record has the
+    # datasheet's 512, with a note.
+    assert s["page_size"] == 512
+    assert any(n.startswith("page 512 B, not the entry's 256 B: ") for n in s["notes"])
     assert r["M25P05"]["id_method"] == "res1"
     assert r["M25P05"]["id"] == "05"
     assert r["M95320"]["id"] is None
@@ -793,6 +797,32 @@ def test_flashrom_errors(tmp_path: Path) -> None:
     write(tmp_path, {"flashchips.c": bad})
     with pytest.raises(ValueError, match="unknown probe 'SOMETHING_NEW'"):
         flashrom.extract(tmp_path, "flashprog")
+
+
+def test_flashrom_wrong_values_are_corrected() -> None:
+    # "S25FL256S Large Sectors": half the size, and the S25FS's voltage.
+    notes: list[str] = []
+    erasers = [
+        {"opcode": 0xDC, "blocks": [[256 << 10, 64]]},
+        {"opcode": 0x60, "blocks": [[16 << 20, 1]]},
+    ]
+    got = flashrom.corrected("S25FL256S Large Sectors", 16 << 20, 256, [1700, 2000], erasers, notes)
+    assert got == (32 << 20, 512, [2700, 3600])
+    assert erasers == [
+        {"opcode": 0xDC, "blocks": [[256 << 10, 128]]},
+        {"opcode": 0x60, "blocks": [[32 << 20, 1]]},
+    ]
+    assert [n.split(":")[0] for n in notes] == [
+        "size 32 MiB, not the entry's 16 MiB",
+        "page 512 B, not the entry's 256 B",
+        "voltage 2700-3600 mV, not the entry's 1700-2000 mV",
+    ]
+    # The uniform-128 KiB S25FL128S_UL erases 256 KiB blocks.
+    erasers = [{"opcode": 0xD8, "blocks": [[128 << 10, 128]]}]
+    flashrom.corrected("S25FL128S_UL Uniform 128 kB Sectors", 16 << 20, 256, None, erasers, [])
+    assert erasers == [{"opcode": 0xD8, "blocks": [[256 << 10, 64]]}]
+    # An entry not listed is as it is.
+    assert flashrom.corrected("W25Q128.V", 16 << 20, 256, None, [], []) == (16 << 20, 256, None)
 
 
 def test_flashrom_only_big_spansion_has_an_extended_id() -> None:
