@@ -18,7 +18,7 @@ instead; ``.size`` is left out when the kernel reads it from SFDP.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from spiflash import derive
 
@@ -86,6 +86,61 @@ def _entry_name(fields: dict[str, str], raw_body: str) -> tuple[str | None, list
     return None, notes
 
 
+#: The fixups that set an entry's quad enable method (``params->quad_enable``)
+#: for the part, and the bit it is (``"none"``: ``NULL``, no QE bit).
+#: The manufacturers' ``default_init`` (macronix.c, issi.c, micron-st.c) and
+#: the core's default (core.c, ``spi_nor_init_default_params``) set it for
+#: every part of a maker or of all of them, and only where the part's own
+#: SFDP tables do not override it: driver defaults, so no part's bit.
+_QE_FIXUPS: dict[str, tuple[str, str | dict[str, object]]] = {
+    "mx25l3255e_fixups": ("spi_nor_sr1_bit6_quad_enable", {"register": "sr1", "bit": 6}),
+    "mt35xu512aba_fixups": ("NULL", "none"),
+    "mt35_two_die_fixups": ("NULL", "none"),
+}
+
+#: The manufacturers' fixups whose ``default_init`` sets the quad enable
+#: method for every part of theirs that takes its parameters from its
+#: entry: driver defaults, which no entry gets.
+_QE_DEFAULTS = frozenset({"issi_fixups", "macronix_nor_fixups", "micron_st_nor_fixups"})
+
+#: The fixups that set a quad enable method that is not one bit for the
+#: part, and why the entry gets none.
+_QE_NOT_A_BIT = {
+    # GD25Q256C has SFDP 1.0 and QE at SR1 bit 6; the D and E have 1.6 and
+    # take theirs from it (SR2 bit 1): Rockchip's driver splits them alike.
+    "gd25q256_fixups": (
+        "no quad enable bit: gd25q256_post_bfpt() sets SR1 bit 6 for the GD25Q256C "
+        "(a JESD216 1.0 BFPT) only; the GD25Q256D and E take the bit their BFPT gives"
+    ),
+    # Spansion's S25HL/HS-T: written by address (CFR1V), after the BFPT's.
+    "s25hx_t_fixups": None,
+}
+
+#: The fixups whose operations unlock the part, where they replace the
+#: status register block protection (``locking_ops``): the operation.
+_LOCKING_OPS = {"sst26vf_nor_fixups": ("ULBPR", "SPINOR_OP_GBULK")}
+
+
+def _fixups(text: str, member: str) -> dict[str, list[str]]:
+    """Each ``struct spi_nor_fixups`` in ``text`` whose functions set
+    ``params->member`` (``quad_enable``, ``locking_ops``): its name, and the
+    values they set."""
+    sets: dict[str, list[str]] = {}
+    for m in re.finditer(r"\b(\w+)\s*\([^;{}()]*\)\s*\{", text):
+        start = m.end() - 1
+        body = text[start : cparse.matching(text, start)]
+        found = re.findall(rf"->\s*{member}\s*=\s*([^;]+);", body)
+        if found:
+            sets.setdefault(m.group(1), []).extend(v.strip() for v in found)
+    out = {}
+    for m, init in cparse.initialisers(text, r"struct\s+spi_nor_fixups\s+(\w+)"):
+        functions = [v.strip().lstrip("&") for v in cparse.designated(init.body).values()]
+        values = [v for f in functions for v in sets.get(f, [])]
+        if values:
+            out[m.group(1)] = values
+    return out
+
+
 def extract_nor(root: Path) -> list[Record]:
     core_h = cparse.strip_comments((root / NOR_DIR / "core.h").read_text())
     spinor_h = cparse.strip_comments((root / SPINOR_H).read_text())
@@ -100,17 +155,77 @@ def extract_nor(root: Path) -> list[Record]:
         local = {**symbols, **cparse.defines(stripped)}
         vendors = _manufacturers(text)
         rel = f"{NOR_DIR}/{path.name}"
+        fixups = _Fixups(_fixups(text, "quad_enable"), set(_fixups(text, "locking_ops")))
+        for name, values in fixups.quad_enable.items():
+            known = _QE_FIXUPS.get(name, (None,))[0]
+            mapped = name in _QE_NOT_A_BIT or name in _QE_DEFAULTS or values == [known]
+            if not mapped:
+                msg = f"{rel}: {name} sets quad_enable to {values}, which no table here maps"
+                raise ValueError(msg)
         for m, table in cparse.initialisers(text, r"struct\s+flash_info\s+(\w+)\s*\[\s*\]"):
             vendor = vendors.get(m.group(1))
             for entry in cparse.braced_items(table.body, table.offset):
-                rec = _nor_record(entry, raw, rel, vendor, local)
+                rec = _nor_record(entry, raw, rel, vendor, local, fixups)
                 if rec is not None:
                     records.append(rec)
     return records
 
 
+class _Fixups(NamedTuple):
+    """What a file's fixups set for the entries naming them."""
+
+    #: The quad enable methods, by fixups name.
+    quad_enable: dict[str, list[str]]
+    #: The fixups replacing the status register block protection.
+    locking: set[str]
+
+
+def protection(flags: list[str], symbols: dict[str, str | int]) -> tuple[Any, dict[str, str]]:
+    """The block-protection layout Linux's (and U-Boot's) status register
+    locking gives an entry (``spi_nor_sr_lock``, swp.c), and its ``via``:
+    for ``SPI_NOR_HAS_LOCK``, BP0 to BP2 and SRWD (``SR_BP0``...,
+    ``SR_SRWD``) in SR1; BP3 for ``SPI_NOR_4BIT_BP`` (``SR_BP3``, or
+    ``SR_BP3_BIT6`` with ``SPI_NOR_BP3_SR_BIT6``); TB for
+    ``SPI_NOR_HAS_TB`` (``SR_TB_BIT5``, or
+    ``SR_TB_BIT6`` with ``SPI_NOR_TB_SR_BIT6``); CMP in SR2 for
+    ``SPI_NOR_HAS_CMP``. ``SPI_NOR_SWP_IS_VOLATILE`` makes the BP bits
+    volatile. ``None`` without ``SPI_NOR_HAS_LOCK``."""
+    if "SPI_NOR_HAS_LOCK" not in flags:
+        return None, {}
+
+    def bit(symbol: str, register: str = "sr1", **more: str) -> dict[str, object]:
+        mask = cparse.evaluate(symbol, symbols)
+        return {"register": register, "bit": mask.bit_length() - 1, **more}
+
+    tokens = ["SPI_NOR_HAS_LOCK"]
+    volatile: dict[str, str] = {}
+    if "SPI_NOR_SWP_IS_VOLATILE" in flags:
+        tokens.append("SPI_NOR_SWP_IS_VOLATILE")
+        volatile["writability"] = "volatile"
+    out = {f"bp{i}": bit(f"SR_BP{i}", **volatile) for i in range(3)}
+    out["srp"] = bit("SR_SRWD")
+    via = {"protection": "; ".join(tokens)}
+    if "SPI_NOR_4BIT_BP" in flags:
+        bit6 = "SPI_NOR_BP3_SR_BIT6" in flags
+        out["bp3"] = bit("SR_BP3_BIT6" if bit6 else "SR_BP3", **volatile)
+        via["protection.bp3"] = "SPI_NOR_4BIT_BP" + ("; SPI_NOR_BP3_SR_BIT6" if bit6 else "")
+    if "SPI_NOR_HAS_TB" in flags:
+        bit6 = "SPI_NOR_TB_SR_BIT6" in flags
+        out["tb"] = bit("SR_TB_BIT6" if bit6 else "SR_TB_BIT5")
+        via["protection.tb"] = "SPI_NOR_HAS_TB" + ("; SPI_NOR_TB_SR_BIT6" if bit6 else "")
+    if "SPI_NOR_HAS_CMP" in flags:
+        out["cmp"] = bit("SR2_CMP_BIT6", "sr2")
+        via["protection.cmp"] = "SPI_NOR_HAS_CMP"
+    return out, via
+
+
 def _nor_record(
-    entry: cparse.Block, raw: str, rel: str, vendor: str | None, symbols: dict[str, str | int]
+    entry: cparse.Block,
+    raw: str,
+    rel: str,
+    vendor: str | None,
+    symbols: dict[str, str | int],
+    fixups: _Fixups,
 ) -> Record | None:
     fields = cparse.designated(entry.body)
     raw_body = raw[entry.offset : entry.offset + len(entry.body)]
@@ -148,9 +263,34 @@ def _nor_record(
     # "non-legacy flash entries in flash_info will have a size of zero iff
     # SFDP should be used" (struct flash_info, core.h): such a part's
     # erasers come from its SFDP tables at run time (its RDSFDP says so).
+    fixup = fields.get("fixups", "").strip().lstrip("&")
+    unlock = _LOCKING_OPS.get(fixup) if fixup in fixups.locking else None
     opcodes = _nor_opcodes(
         fields, symbols, features, has_id=id_hex is not None, legacy=size is not None
     )
+    if unlock is not None:
+        op, symbol = unlock
+        ops = Opcodes(symbols)
+        ops.add(op, f"{fixup} (spi_nor_global_block_unlock)", symbol)
+        opcodes += ops.to_json()
+    via = feature_via(claims)
+    layout = None
+    if fixup in fixups.locking:
+        notes.append(f"no block protection bits: its {fixup} replace the status register locking")
+    else:
+        layout, protection_via = protection(flags, symbols)
+        via |= protection_via
+        if layout and "cmp" in layout:
+            # spi_nor_read_cr(): CMP is in the configuration register, 0x35.
+            ops = Opcodes(symbols)
+            ops.add("RDSR2", "spi_nor_read_cr: CMP in SR2", "SPINOR_OP_RDCR")
+            opcodes += ops.to_json()
+    quad_enable = None
+    if fixup in _QE_FIXUPS:
+        quad_enable = _QE_FIXUPS[fixup][1]
+        via["quad_enable"] = f".fixups = &{fixup}"
+    elif note := _QE_NOT_A_BIT.get(fixup):
+        notes.append(note)
     erasers = []
     if size is not None and "no_erase" not in features:
         erasers = _nor_erasers(fields, symbols, size)
@@ -168,7 +308,9 @@ def _nor_record(
         erasers=erasers or None,
         features=features,
         flags=flags,
-        via=feature_via(claims),
+        via=via,
+        quad_enable=quad_enable,
+        protection=layout,
         opcodes=opcodes,
         notes=notes,
     )
@@ -207,6 +349,10 @@ _NO_SFDP_OPS = {
     "SPI_NOR_OCTAL_DTR_PP": "PP_8D_8D_8D",
     "SECT_4K": "BE_4K",
 }
+
+# mfr_flags -> the operation micron-st.c (USE_FSR: micron_st_nor_ready) or
+# spansion.c (USE_CLSR, USE_CLPEF: spansion_nor_clear_sr) sends for it.
+_MFR_OPS = {"USE_FSR": "RDFSR", "USE_CLSR": "CLSR", "USE_CLPEF": "CLPEF"}
 
 
 def _nor_opcodes(
@@ -255,6 +401,11 @@ def _nor_opcodes(
             add_spinor(ops, "SE", "sector erase (spi_nor_no_sfdp_init_params)", assumed=no_sector)
     if "no_erase" not in features:
         add_spinor(ops, "CHIP_ERASE", "default (spi_nor_erase)", assumed=True)
+    # The manufacturer flags micron-st.c and spansion.c read: the flag status
+    # register for ready, and clearing the error bits after a failure.
+    for flag in cparse.flag_names(fields.get("mfr_flags", "0")):
+        if flag in _MFR_OPS:
+            add_spinor(ops, _MFR_OPS[flag], flag)
     if "SPI_NOR_4B_OPCODES" in fixup:
         add_4b_variants(ops, "SPI_NOR_4B_OPCODES")
     return ops.to_json()
@@ -322,7 +473,10 @@ def extract_nand(root: Path) -> list[Record]:
             # The flags are SPINAND_INFO's sixth argument, after the model, id,
             # memory organisation, ECC requirement and op variants.
             flags = cparse.flag_names(args[5]) if len(args) > 5 else []
-            claims = [("quad_read", f) for f in flags if f == "SPINAND_HAS_QE_BIT"]
+            # spinand_init_quad_enable() (core.c) sets CFG_QUAD_ENABLE, bit 0
+            # of the configuration register (REG_CFG, feature 0xb0), for
+            # SPINAND_HAS_QE_BIT; without it, the entry says nothing of one.
+            qe = "SPINAND_HAS_QE_BIT" in flags
             notes = cparse.comments(raw[start:end])
             size = page * ppb * bpl * luns * targets
             records.append(
@@ -338,9 +492,9 @@ def extract_nand(root: Path) -> list[Record]:
                     size=size,
                     page_size=page,
                     erasers=[derive.block_eraser(0xD8, page * ppb, size).to_json()],
-                    features=[feat for feat, _ in claims],
                     flags=flags,
-                    via=feature_via(claims),
+                    quad_enable={"register": "nand-b0", "bit": 0} if qe else None,
+                    via={"quad_enable": "SPINAND_HAS_QE_BIT"} if qe else {},
                     notes=[*notes, f"{bpc} bit(s) per cell, {oob} B OOB per page"],
                 )
             )

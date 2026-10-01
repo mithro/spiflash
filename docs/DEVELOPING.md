@@ -51,6 +51,10 @@ uv sync --group dev --group docs
 uv run ruff check && uv run ruff format --check && uv run mypy && uv run pytest
 ```
 
+The tests build the site's generated pages too ({repo}`docs/_ext/`), so
+they need Sphinx: the `dev` group includes the `docs` one, and a plain
+`uv run pytest` installs both.
+
 Those four are what the `test` job of {repo}`.github/workflows/deb.yml` runs,
 on Python 3.11 to 3.14. A green run is what "mergeable" means, and on `main`
 what publishes. `uv run ruff format` applies the formatting.
@@ -68,6 +72,7 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`db.py <src/spiflash/db.py>` | loading, lookup, find |
 | {repo}`enums.py <src/spiflash/enums.py>` | the fixed vocabularies, as enums: sources in priority order, flash types, id families, features, kinds of operation, ... |
 | {repo}`opcodes.py <src/spiflash/opcodes.py>` | the named operations |
+| {repo}`registers.py <src/spiflash/registers.py>` | register bits: where the quad enable bit is, the quad enable requirement, the block-protection bits |
 | {repo}`derive.py <src/spiflash/derive.py>` | what a record's stored fields imply, worked out at load (every such rule is here) |
 | {repo}`sfdp.py <src/spiflash/sfdp.py>` | the JESD216 (SFDP) decoder, and what tables say in a record's terms (`Sfdp.facts`) |
 | {repo}`sfdp_tools.py <src/spiflash/sfdp_tools.py>` | SFDP tables from the database (`encode`), to an entry (`to_entry`), compared (`diff`) |

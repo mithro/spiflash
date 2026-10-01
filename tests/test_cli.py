@@ -30,6 +30,25 @@ def test_id(capsys: pytest.CaptureFixture[str]) -> None:
     assert "from: flashrom" in out
 
 
+def test_id_registers(capsys: pytest.CaptureFixture[str]) -> None:
+    # The QE bit on the detail line; the layout and requirement with -v.
+    code, out = run(capsys, "id", "c84016", "-v")
+    assert code == 0
+    assert "2.7-3.6 V, QE SR2[1]" in out
+    # openFPGALoader's GD25Q32C entry has the QE bit wrong (S9 is QE).
+    assert "sources disagree on quad_enable: SR2 bit 1 (flashprog, rockchip); SR1 bit 6" in out
+    # Its bp3 is the bit flashrom's tb is.
+    assert "sources put two roles on SR1 bit 5: bp3, tb" in out
+    assert "    protection: bp0 SR1 bit 2, bp1 SR1 bit 3, bp2 SR1 bit 4, tb SR1 bit 5" in out
+    _, out = run(capsys, "id", "ef4020", "-v")
+    assert "quad enable requirement: S2B1v4 (SR2 bit 1, written with a 2-byte WRSR" in out
+    _, js = run(capsys, "id", "ef4020", "--json")
+    (doc,) = json.loads(js)
+    assert doc["quad_enable"] == {"register": "sr2", "bit": 1, "writability": "rw"}
+    assert doc["quad_enable_requirement"] == "S2B1v4"
+    assert doc["protection"]["bp0"] == {"register": "sr1", "bit": 2}
+
+
 def test_id_finds_a_folded_nand_id(capsys: pytest.CaptureFixture[str]) -> None:
     # Linux matches the TC58CVG0S3HRAIJ's first two bytes, Dediprog three.
     for query in ("98e2", "98e240"):
@@ -339,7 +358,12 @@ def test_sfdp_encode(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None
     code, js = run(capsys, "sfdp-encode", "--json", "--revision", "1.5", "--assume", "ef4020")
     doc = json.loads(js)
     assert (doc["chip"], doc["revision"], doc["missing"]) == ("ef4020", "1.5", [])
-    assert any(a.startswith("DW15: the quad enable requirement") for a in doc["assumed"])
+    # Its quad enable requirement is known (QEMU's dump: S2B1v4): written,
+    # not assumed.
+    assert not any(a.startswith("DW15: the quad enable requirement") for a in doc["assumed"])
+    bfpt = parse(bytes.fromhex(doc["data"])).bfpt
+    assert bfpt is not None
+    assert bfpt.quad_enable == 4
     # A query naming several chips, or none, or a revision it cannot write.
     assert cli.main(["sfdp-encode", "W25Q512JV"]) == 2
     assert "names 2 SPI NOR chips, not one: ef4020 (W25Q512JV), ef7020" in (capsys.readouterr().err)

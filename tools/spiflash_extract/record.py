@@ -65,6 +65,22 @@ Fields (``None`` / empty when the upstream does not say):
     ...) need none, and operations have their own ``via``.
 ``voltage``
     ``[min_mV, max_mV]``.
+``quad_enable``
+    Where the part's quad enable bit is, as the entry states it:
+    ``{"register": "sr2", "bit": 1}`` (and ``"writability"`` where it is not
+    ``rw``; :class:`spiflash.registers.RegisterBit`), or ``"none"`` where it
+    says the part has none. A register is named by the command reading it
+    (:class:`spiflash.registers.Register`). Not with ``quad_enable_requirement``,
+    which gives the bit, nor where the record's SFDP tables give the same.
+``quad_enable_requirement``
+    JESD216's quad enable requirement, as the entry states it (Zephyr's
+    ``"S2B1v1"``, ...; :class:`spiflash.registers.QuadEnableRequirement`),
+    where its SFDP tables do not give the same.
+``protection``
+    Where its block-protection bits are, by role:
+    ``{"bp0": {"register": "sr1", "bit": 2}, ..., "tb": {...}}``
+    (:class:`spiflash.registers.Protection`); no two roles, nor a role and
+    the quad enable bit, on one bit.
 ``opcodes``
     The operations the entry states (a record's ``opcode_claims``):
     ``[{"op": "READ_1_1_4", "via": "SPI_NOR_QUAD_READ"}, ...]``, ``op`` a name
@@ -100,8 +116,10 @@ from typing import TYPE_CHECKING, Any
 
 from spiflash import derive
 from spiflash.enums import Feature, FlashType, OperationKind, Source
+from spiflash.model import SFDP_VALUES
 from spiflash.model import Record as Model
 from spiflash.opcodes import OPERATIONS, OpcodeUse
+from spiflash.registers import ROLES
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -125,6 +143,9 @@ KEYS = (
     "flags",
     "via",
     "voltage",
+    "quad_enable",
+    "quad_enable_requirement",
+    "protection",
     "opcodes",
     "sfdp",
     "sfdp_tables",
@@ -179,11 +200,13 @@ VIA_FIELDS = frozenset(KEYS) - {
     "notes",
 }
 
-#: The components a ``<field>.<component>`` key may name, by field: none yet.
-VIA_COMPONENTS: dict[str, frozenset[str]] = {}
+#: The components a ``<field>.<component>`` key may name, by field: a role
+#: of ``protection`` (``protection.tb``), where the roles come from
+#: different tokens; a token giving several is under ``protection``.
+VIA_COMPONENTS: dict[str, frozenset[str]] = {"protection": frozenset(ROLES)}
 
 # A via key: feature:<feature>, <field>, <field>.<component> or <field>:<member>.
-_VIA_KEY = re.compile(r"feature:([a-z0-9_]+)|([a-z_]+)(?:\.([a-z_]+))?(?::([a-z0-9_]+))?")
+_VIA_KEY = re.compile(r"feature:([a-z0-9_]+)|([a-z_]+)(?:\.([a-z0-9_]+))?(?::([a-z0-9_]+))?")
 
 
 def _eraser_members(rec: Record) -> set[str]:
@@ -214,10 +237,14 @@ def check_via(rec: Record) -> None:
                 ok = False
             elif field == "erasers":
                 ok = bool(_eraser_members(rec))
+            elif field in SFDP_VALUES and rec[field] is None:
+                # A value its SFDP tables give, which the entry states too.
+                ok = getattr(Model.from_json(rec), field) is not None
             else:
                 ok = rec[field] not in (None, [], "", {})
             if component is not None:
-                ok = ok and component in VIA_COMPONENTS.get(field, ())
+                known = component in VIA_COMPONENTS.get(field, ())
+                ok = ok and known and component in rec[field]
             if member is not None:
                 ok = ok and field == "erasers" and member in _eraser_members(rec)
         if not ok:
@@ -262,7 +289,9 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     record derives them at load; so are a size, page size or eraser its SFDP
     tables give (:func:`_drop_sfdp`). A sector size is refused: give the
     eraser (:func:`spiflash.derive.block_eraser`). A record cannot carry
-    both a whole SFDP dump and copied tables."""
+    both a whole SFDP dump and copied tables, nor both a quad enable bit
+    and a requirement, nor two roles (of ``protection``, or one and the
+    quad enable bit) on one bit."""
     if "sector_size" in fields:
         msg = "sector_size is derived from the erasers: give the eraser instead"
         raise KeyError(msg)
@@ -314,6 +343,10 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     rec["via"] = {key: "; ".join(via[key]) for key in sorted(via)}
     check_via(rec)
     _check_once(rec)
+    shared = Model.from_json(rec).shared_bits()
+    if shared:
+        msg = f"{rec['source']} {rec['name']}: two roles on one bit: {shared}"
+        raise ValueError(msg)
     lost = claimed - Model.from_json(rec).features
     if lost:
         msg = f"{rec['source']} {rec['name']}: dropping implied claims lost {sorted(lost)}"
@@ -332,19 +365,22 @@ def _drop_implied(rec: Record) -> None:
 
 
 def _drop_sfdp(rec: Record) -> None:
-    """Drop the size, page size and erasers ``rec`` states that its own SFDP
-    tables give the same (:meth:`spiflash.sfdp.Sfdp.facts`): the record
+    """Drop the size, page size, quad enable requirement or bit
+    (:data:`spiflash.model.SFDP_VALUES`) and erasers ``rec`` states that its
+    own SFDP tables give the same (:meth:`spiflash.sfdp.Sfdp.facts`): the record
     derives them from the tables at load. A value that differs stays, as the
     upstream's own (a :meth:`spiflash.model.Record.sfdp_disagreements`). The
-    ``via`` token of a dropped eraser stays: its ``erasers:0x..`` key names
-    the eraser the tables give, which it also states (QEMU's ``ER_4K``)."""
+    ``via`` token of a dropped value stays, under the value its tables give,
+    which the entry also states (Zephyr's ``quad-enable-requirements``, and
+    QEMU's ``ER_4K`` under the ``erasers:0x20`` key)."""
     if not (rec["sfdp"] or rec["sfdp_tables"]):
         return
-    facts = Model.from_json(rec).sfdp_facts
+    model = Model.from_json(rec)
+    facts = model.sfdp_facts
     if facts is None:
         return
-    for name in ("size", "page_size"):
-        if rec[name] is not None and rec[name] == getattr(facts, name):
+    for name in SFDP_VALUES:
+        if model.stored(name) is not None and model.stored(name) == getattr(facts, name):
             rec[name] = None
     given = [e.to_json() for e in Model.from_json(rec).sfdp_erasers]
     kept = [e for e in rec["erasers"] or () if e not in given]

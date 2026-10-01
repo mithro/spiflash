@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from spiflash import database
 from spiflash.enums import IdFamily, Source
+from spiflash.model import COMPARED_VALUES, register_bits
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -32,6 +33,7 @@ class IssueKind(StrEnum):
     VALUE = "value"
     SAME_SOURCE = "same-source"
     SFDP = "sfdp"
+    SHARED_BIT = "shared-bit"
     NAME_IDS = "name-ids"
     MANUFACTURER = "manufacturer"
     DATASHEET = "datasheet"
@@ -49,7 +51,10 @@ class IssueKind(StrEnum):
 _ISSUE_TITLES = {
     IssueKind.VALUE: (
         "Sources disagree on a value",
-        "Two sources give one chip id a different size, page size, sector size or supply voltage.",
+        (
+            "Two sources give one chip id a different size, page size, sector size, "
+            "supply voltage, quad enable bit or requirement, or block-protection bit."
+        ),
     ),
     IssueKind.SAME_SOURCE: (
         "One source, two values",
@@ -61,8 +66,16 @@ _ISSUE_TITLES = {
     IssueKind.SFDP: (
         "A source disagrees with its own SFDP tables",
         (
-            "A source gives a part a size, page size or erase layout, and with it "
-            "the part's own SFDP tables, which say otherwise."
+            "A source gives a part a size, page size, erase layout or quad enable "
+            "requirement, and with it the part's own SFDP tables, which say otherwise."
+        ),
+    ),
+    IssueKind.SHARED_BIT: (
+        "Two roles on one register bit",
+        (
+            "The sources' answers, role by role, put two of a chip's register bits "
+            "(two block-protection roles, or one and the quad enable bit) on one bit "
+            "of one register, which no part has."
         ),
     ),
     IssueKind.NAME_IDS: (
@@ -83,16 +96,19 @@ _ISSUE_TITLES = {
 }
 
 
-#: The values sources are compared on.
-ATTRIBUTES = ("size", "page_size", "sector_size", "voltage")
+#: The values sources are compared on (:data:`spiflash.model.COMPARED_VALUES`):
+#: a protection layout role by role (``"protection.tb"``).
+ATTRIBUTES = COMPARED_VALUES
 
 
 @dataclass(frozen=True, slots=True)
 class Answer:
     """One answer to an issue's question, and the records giving it."""
 
-    #: A size in bytes, a :class:`~spiflash.Voltage`, a manufacturer's name,
-    #: or a chip id as :attr:`spiflash.Flash.key` writes it.
+    #: A size in bytes, a :class:`~spiflash.Voltage`, a register bit, a quad
+    #: enable requirement, a manufacturer's name, a chip id as
+    #: :attr:`spiflash.Flash.key` writes it, or for
+    #: :attr:`IssueKind.SHARED_BIT` a role and its bit.
     value: Any
     records: tuple[Record, ...]
 
@@ -114,8 +130,10 @@ class Issue:
     flashes: tuple[Flash, ...]
     #: The answers, the most-given first.
     answers: tuple[Answer, ...]
-    #: For a value: which one (``"size"``, ...; see :data:`ATTRIBUTES`);
-    #: for :attr:`IssueKind.SFDP`, the field (``"page_size"``, ``"erasers"``).
+    #: For a value: which one (``"size"``, ``"protection.tb"``, ...; see
+    #: :data:`ATTRIBUTES`); for :attr:`IssueKind.SFDP`, the field
+    #: (``"page_size"``, ``"erasers"``); for :attr:`IssueKind.SHARED_BIT`,
+    #: the bit (``"SR1 bit 5"``).
     attribute: str | None = None
     #: For :attr:`IssueKind.DATASHEET`: the part, and its datasheets.
     part: str | None = None
@@ -136,6 +154,7 @@ def find(db: Database | None = None) -> list[Issue]:
         *_values(db.flashes),
         *_same_source(db.flashes),
         *_sfdp(db.flashes),
+        *_shared_bits(db.flashes),
         *_name_ids(db.flashes),
         *_manufacturers(db.flashes),
         *_datasheets(db.flashes),
@@ -162,13 +181,13 @@ def _values(flashes: Iterable[Flash]) -> Iterator[Issue]:
             # gathers every variant whose sources disagree.
             disagree: dict[int, Record] = {}
             for variant in f.variants:
-                answers = _answers((r.given(attr), r) for r in variant)
+                answers = _answers((r.compared(attr), r) for r in variant)
                 # One source alone giving two values is the next check's.
                 sources = {r.source for a in answers for r in a.records}
                 if len(answers) > 1 and len(sources) > 1:
                     disagree.update((id(r), r) for r in variant)
             if disagree:
-                answers = _answers((r.given(attr), r) for r in disagree.values())
+                answers = _answers((r.compared(attr), r) for r in disagree.values())
                 yield Issue(IssueKind.VALUE, f.key, (f,), answers, attribute=attr)
 
 
@@ -179,7 +198,7 @@ def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
             groups[(r.source, r.ext_id)].append(r)
         for (_source, _ext), records in sorted(groups.items(), key=lambda kv: kv[0][0].priority):
             for attr in ATTRIBUTES:
-                answers = _answers((r.given(attr), r) for r in records)
+                answers = _answers((r.compared(attr), r) for r in records)
                 if len(answers) > 1:
                     yield Issue(IssueKind.SAME_SOURCE, f.key, (f,), answers, attribute=attr)
 
@@ -193,6 +212,21 @@ def _sfdp(flashes: Iterable[Flash]) -> Iterator[Issue]:
             for d in r.sfdp_disagreements():
                 answers = (Answer(d.stored, (r,)), Answer(d.sfdp, (r,)))
                 yield Issue(IssueKind.SFDP, f.key, (f,), answers, attribute=d.field)
+
+
+def _shared_bits(flashes: Iterable[Flash]) -> Iterator[Issue]:
+    """One issue per bit the sources' answers put two roles on
+    (:meth:`spiflash.Flash.shared_bits`): the answers are each role on it,
+    ``(role, bit)``, and the records giving that role that bit."""
+    for f in flashes:
+        for bit, roles in f.shared_bits().items():
+            pairs = []
+            for role in roles:
+                for r in f.records:
+                    given = register_bits(r.quad_enable, r.protection).get(role)
+                    if given is not None and f"{given.register.label} bit {given.bit}" == bit:
+                        pairs.append(((role, given.unqualified), r))
+            yield Issue(IssueKind.SHARED_BIT, f.key, (f,), _answers(pairs), attribute=bit)
 
 
 def _name_ids(flashes: Iterable[Flash]) -> Iterator[Issue]:

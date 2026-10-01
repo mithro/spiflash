@@ -13,11 +13,12 @@ followed by designated fields for the odd parts (FRAM).
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from spiflash import derive
 
 from . import cparse
+from .linux import protection
 from .ops import Opcodes, add_4b_variants, add_spinor
 from .record import Record, feature_via, make
 
@@ -122,6 +123,14 @@ def _record(
     features = {feat for feat, _ in claims}
     if "4byte_opcodes" in features:
         features.add("4byte_addr")
+    layout: Any = None
+    layout_via: dict[str, str] = {}
+    if "SPI_NOR_HAS_SST26LOCK" not in flags:
+        # SPI_NOR_HAS_TB has no bit-6 form here: spi-nor-core.c tests
+        # SR_TB, bit 5, on every part, so the bit is its driver's, not the
+        # part's (the W25Q256/512 family's is bit 6). The flag stays.
+        tb_free = [f for f in flags if f != "SPI_NOR_HAS_TB"]
+        layout, layout_via = protection(tb_free, symbols)
     erasers = []
     if sector and size and "no_erase" not in features:
         for flag, opcode in (("SECT_4K", 0x20), ("SECT_4K_PMC", 0xD7)):
@@ -142,7 +151,10 @@ def _record(
         erasers=erasers or None,
         features=features,
         flags=flags,
-        via=feature_via(claims),
+        # SPI_NOR_HAS_SST26LOCK parts lock with their block protection
+        # register (sst26_lock), not the status register.
+        via=feature_via(claims) | layout_via,
+        protection=layout,
         opcodes=_opcodes(flags, symbols, features, has_id=id_hex is not None),
         notes=notes,
     )
@@ -158,6 +170,8 @@ _FLAG_OPS = {
     "SST_WRITE": ["AAI_WP", "BP"],  # sst_write(): AAI words, a byte at the ends
     "USE_FSR": ["RDFSR"],
     "USE_CLSR": ["CLSR"],
+    # sst26_unlock(): the global block protection unlock.
+    "SPI_NOR_HAS_SST26LOCK": ["ULBPR"],
 }
 
 

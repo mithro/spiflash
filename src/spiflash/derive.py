@@ -13,13 +13,20 @@ the record stores (:data:`~spiflash.model.CLAIMS`). They are:
   erase operation;
 - its SFDP tables (an upstream's dump, or tables it copies) give what they
   say in the record's own terms (:meth:`Sfdp.facts
-  <spiflash.sfdp.Sfdp.facts>`): the size and page size where the entry
-  states none, erasers, and operations with their dummy clocks;
+  <spiflash.sfdp.Sfdp.facts>`): the size, page size and quad enable
+  requirement where the entry states none, erasers, and operations with
+  their dummy clocks;
+- its quad enable requirement gives where its QE bit is
+  (:attr:`QuadEnableRequirement.bit
+  <spiflash.registers.QuadEnableRequirement.bit>`, where the entry states
+  no bit), and the register operations writing it
+  (:data:`REQUIREMENT_OPERATIONS`);
 - the operations it states, other than driver defaults, and those its SFDP
   tables give, its block erasers, its size, and two things only SFDP says
   give capabilities (:func:`features`, by :data:`FEATURE_IMPLIED_BY`,
   :data:`ERASE_FEATURE` and :data:`SFDP_FEATURES`), among them
-  ``4byte_addr`` from :func:`address_bytes`;
+  ``4byte_addr`` from :func:`address_bytes`; so do its quad enable bit
+  (``quad_read``) and its block-protection bits (``lock``);
 - its erasers give its sector size (:func:`sector_size`).
 
 :func:`opcodes`, :func:`features` and :func:`sector_size` apply them, and
@@ -36,11 +43,13 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from .enums import Feature, FlashType, IdMethod
 from .opcodes import OPERATIONS, OpcodeUse
+from .registers import QuadEnableRequirement, RegisterBit
 from .sfdp import AddressBytes, FourByteMethod
 from .units import human_size
 
 if TYPE_CHECKING:
     from .model import Eraser, Record
+    from .registers import NoQuadEnable, Protection
     from .sfdp import Sfdp, SfdpFacts
 
 #: The operation behind each way of reading an id. Only SPI NOR records
@@ -107,13 +116,38 @@ def opcodes(record: Record) -> tuple[OpcodeUse, ...]:
     its ``id_method`` (unless ``via`` names the command the entry reads the
     id with), the erase operation of each eraser it stores with an opcode,
     and the operations its SFDP tables give (:attr:`SfdpFacts.opcodes
-    <spiflash.sfdp.SfdpFacts.opcodes>`, with their dummy clocks). SPI NOR
-    only: a SPI NAND read-id or block erase is another command, so a
-    SPI NAND record derives none."""
+    <spiflash.sfdp.SfdpFacts.opcodes>`, with their dummy clocks), and those
+    its quad enable requirement, stated or from its tables, gives
+    (:data:`REQUIREMENT_OPERATIONS`). SPI NOR only: a SPI NAND read-id or
+    block erase is another command, so a SPI NAND record derives none."""
     if record.type is not FlashType.NOR:
         return ()
     facts = record.sfdp_facts
-    return _stored_opcodes(record) + (facts.opcodes if facts else ())
+    return _stored_opcodes(record) + (facts.opcodes if facts else ()) + _requirement_opcodes(record)
+
+
+#: The register operations each quad enable requirement says the part
+#: has, to read and write its QE bit (JESD216B, DW15[22:20]): a 2-byte
+#: write status (``S2B1v1``, ``S2B1v4``), with status register 2 read with
+#: 0x35 (``S2B1v5``), or 0x31 and 0x35 (``S2B1v6``). ``S1B6``'s 1-byte
+#: write status and read status are every part's, and ``S2B7``'s 0x3e and
+#: 0x3f no operation here.
+REQUIREMENT_OPERATIONS: dict[QuadEnableRequirement, tuple[str, ...]] = {
+    QuadEnableRequirement.S2B1V1: ("WRSR_16",),
+    QuadEnableRequirement.S2B1V4: ("WRSR_16",),
+    QuadEnableRequirement.S2B1V5: ("WRSR_16", "RDSR2"),
+    QuadEnableRequirement.S2B1V6: ("WRSR2", "RDSR2"),
+}
+
+
+def _requirement_opcodes(record: Record) -> tuple[OpcodeUse, ...]:
+    """What :func:`opcodes` gives from the record's quad enable
+    requirement (:data:`REQUIREMENT_OPERATIONS`)."""
+    qer = record.quad_enable_requirement
+    if qer is None:
+        return ()
+    via = f"quad enable requirement {qer}"
+    return tuple(OpcodeUse(op, via, implied=True) for op in REQUIREMENT_OPERATIONS.get(qer, ()))
 
 
 def _stored_opcodes(record: Record) -> tuple[OpcodeUse, ...]:
@@ -221,6 +255,9 @@ class _Given(NamedTuple):
     erasers: tuple[Eraser, ...]
     size: int | None
     facts: SfdpFacts | None
+    #: Its quad enable bit, stated or from its quad enable requirement.
+    quad_enable: RegisterBit | NoQuadEnable | None = None
+    protection: Protection | None = None
 
 
 def _given(record: Record) -> _Given:
@@ -228,7 +265,15 @@ def _given(record: Record) -> _Given:
     facts = record.sfdp_facts
     stated = tuple(u for u in record.stored("opcodes") if not u.assumed)
     sfdp_ops = facts.opcodes if facts and nor else ()
-    return _Given(nor, stated + sfdp_ops, record.erasers, record.size, facts)
+    return _Given(
+        nor,
+        stated + sfdp_ops,
+        record.erasers,
+        record.size,
+        facts,
+        record.quad_enable,
+        record.protection,
+    )
 
 
 def _block(eraser: Eraser) -> int | None:
@@ -284,8 +329,19 @@ def address_bytes(record: Record) -> AddressBytes | None:
 def _implied(g: _Given) -> dict[Feature, str]:
     """What :func:`features` gives, each with the first thing implying it."""
     out: dict[Feature, str] = {}
-    if not g.nor:
-        return out
+    if g.nor:
+        _nor_implied(g, out)
+    if isinstance(g.quad_enable, RegisterBit):
+        out.setdefault(Feature.QUAD_READ, f"its quad enable bit, {g.quad_enable}")
+    if g.protection is not None and g.protection.blocks:
+        roles = ", ".join(g.protection.roles())
+        out.setdefault(Feature.LOCK, f"its block protection bits ({roles})")
+    return out
+
+
+def _nor_implied(g: _Given, out: dict[Feature, str]) -> None:
+    """What :func:`_implied` gives a SPI NOR record from its operations,
+    erasers, size and SFDP tables."""
     for u in g.ops:
         for f in _IMPLIES.get(u.op, ()):
             out.setdefault(f, f"{u.op} ({u.via})")
@@ -308,7 +364,6 @@ def _implied(g: _Given) -> dict[Feature, str]:
         for what, feats in SFDP_FEATURES.items():
             for f in feats if found[what] else ():
                 out.setdefault(f, f"its SFDP tables ({what})")
-    return out
 
 
 def features(record: Record) -> frozenset[Feature]:
@@ -329,16 +384,37 @@ def features(record: Record) -> frozenset[Feature]:
       <spiflash.model.Eraser.assumed>`);
     - ``4byte_addr`` where :func:`address_bytes` is neither ``THREE`` nor
       ``None``;
-    - what only SFDP says (:data:`SFDP_FEATURES`)."""
+    - what only SFDP says (:data:`SFDP_FEATURES`);
+    - ``quad_read`` from a quad enable bit (stated, or from the quad enable
+      requirement), which a part has only to enable quad I/O; not from
+      :data:`~spiflash.registers.QE_NONE`;
+    - ``lock`` from a block-protection bit (:attr:`Protection.blocks
+      <spiflash.registers.Protection.blocks>`: a BP bit, or TB, SEC or CMP,
+      which only change what the BP bits protect).
+
+    The last two hold for SPI NAND too."""
     return frozenset(_implied(_given(record)))
+
+
+def _alone(sfdp: Sfdp) -> _Given:
+    """What the capability rules read from a dump alone: its operations,
+    erasers and size, its quad enable requirement's bit, and the rest of
+    what it says."""
+    facts = sfdp.facts()
+    return _Given(
+        nor=True,
+        ops=facts.opcodes,
+        erasers=facts.erasers,
+        size=facts.size,
+        facts=facts,
+        quad_enable=facts.quad_enable,
+    )
 
 
 def sfdp_features(sfdp: Sfdp) -> frozenset[Feature]:
     """The capabilities SFDP tables imply on their own: what
     :func:`features` gives a record whose only source is ``sfdp``."""
-    facts = sfdp.facts()
-    alone = _Given(nor=True, ops=facts.opcodes, erasers=facts.erasers, size=facts.size, facts=facts)
-    return frozenset(_implied(alone))
+    return frozenset(_implied(_alone(sfdp)))
 
 
 def sfdp_claims(sfdp: Sfdp) -> dict[Feature, str]:
@@ -346,9 +422,9 @@ def sfdp_claims(sfdp: Sfdp) -> dict[Feature, str]:
     do not (:data:`SFDP_FEATURES`, and ``4byte_addr`` from the BFPT's
     address bytes or DW16), each with why: the capabilities a record must
     claim to say what the tables say without carrying them
-    (:func:`spiflash.sfdp_tools.to_entry`)."""
-    facts = sfdp.facts()
-    alone = _Given(nor=True, ops=facts.opcodes, erasers=facts.erasers, size=facts.size, facts=facts)
+    (:func:`spiflash.sfdp_tools.to_entry`, which stores their quad enable
+    requirement, so ``quad_read`` from it is not among them)."""
+    alone = _alone(sfdp)
     bare = alone._replace(facts=None)
     without = _implied(bare)
     return {f: why for f, why in _implied(alone).items() if f not in without}

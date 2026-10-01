@@ -9,10 +9,30 @@ here.
 An entry gives the manufacturer and model, the number of 64 KiB sectors,
 which erases the part has (`sector_erase`, 0xd8 over the 64 KiB sectors, and
 `subsector_erase`, 0x20 over 4 KiB ones: the records' erase layouts), and its
-block-protection layout: the `flags` of its records (`bp_offset`,
-`tb_register`, `quad_mask`, ...), which no other source gives. `bp_len` and
-`quad_register`, which give a record its `lock` and `quad_read`, are those
-capabilities' `via`. The
+status register bits:
+
+- `bp_offset`'s masks are the BP bits in SR1, in order (`bp_len` counts them,
+  wrongly for the MX25L parts, 5 for 4 masks; 0 is no block protection);
+- `tb_register` and `tb_offset` are the TB bit: `STATR` is SR1, `FUNCR`
+  ISSI's function register (read with 0x48), `CONFR` SR2 (read with 0x35),
+  or on a Macronix part its configuration register, read with 0x15: SR3.
+  Its `get_tb()` means to read that one with 0x15, but tests a four-byte id
+  against two bytes, so never does. A TB of `(1 << 14)` (the GD25Q16C and
+  GD25Q32C, whose comment says it is CMP) is past the one byte `get_tb()`
+  reads: not taken, and a note says why. `tb_otp` makes it one-time
+  programmable;
+- the AT25DF321A's `bp_offset` bits 2 to 4 are its sector protection status
+  and write protect pin bits (SWP, WPP), not block-protect bits: its record
+  has no layout, a `lock` claim and a note;
+- `quad_register` and `quad_mask` are the quad enable bit its
+  `set_quad_bit()` sets; `NONER` or a mask of 0 is "not filled in" (its
+  error says "or spiFlashdb must be updated"), so no bit. The GD25Q32C's
+  `STATR (1 << 6)` is wrong: its datasheet has QE at S9 (SR2 bit 1), and
+  bit 6 is BP4;
+- `global_lock` parts (the SST26VF032B and 064B) power up locked, and it
+  unlocks them with [ULBPR](../opcodes/ULBPR.md).
+
+The rest stay its records' `flags`. The
 opcodes are what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends:
 read, page program, and the erases the table allows. The read and page
 program, sent to every part, and the 4-byte forms of all of them, which it

@@ -82,7 +82,10 @@ class SourceInfo:
 #: 6: records gain ``sfdp_tables`` (Zephyr's copied tables); what a record's
 #: SFDP tables say is derived, not stored (QEMU's and Zephyr's decoded
 #: operations, capabilities, sizes, page sizes and erasers dropped).
-FORMAT = 6
+#: 7: records gain ``quad_enable``, ``quad_enable_requirement`` and
+#: ``protection``; ``lock`` and ``quad_read`` claims they imply dropped; new
+#: register operations.
+FORMAT = 7
 
 
 def _read(name: str) -> dict[str, Any]:

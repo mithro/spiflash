@@ -7,13 +7,25 @@ import datetime
 import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from functools import cached_property
+from enum import StrEnum
+from functools import cached_property, partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 
 from . import derive
 from .enums import Feature, FlashType, IdFamily, IdMethod, Source
 from .opcodes import OPERATIONS, OpcodeUse, Operation, sort_key
+from .registers import (
+    ROLES,
+    NoQuadEnable,
+    Protection,
+    QuadEnableRequirement,
+    RegisterBit,
+    Writability,
+    quad_enable_from_json,
+    quad_enable_to_json,
+    shared_bits,
+)
 from .sfdp import Sfdp, SfdpFacts, from_tables
 from .sfdp import parse as parse_sfdp
 from .vendors import canonical
@@ -260,18 +272,58 @@ CLAIMS = {
     "erasers": "eraser_claims",
     "features": "feature_claims",
     "opcodes": "opcode_claims",
+    "quad_enable": "quad_enable_claim",
+    "quad_enable_requirement": "quad_enable_requirement_claim",
 }
 
 #: The single values a record gives from its SFDP tables where it states
 #: none: :meth:`Record.given` reads the whole value, and
 #: :meth:`Record.sfdp_disagreements` compares the stated one with the
-#: tables'.
-SFDP_VALUES = ("size", "page_size")
+#: tables'. The quad enable bit is the requirement's
+#: (:attr:`QuadEnableRequirement.bit
+#: <spiflash.registers.QuadEnableRequirement.bit>`), whether the entry
+#: states the requirement or its tables give it.
+SFDP_VALUES = ("size", "page_size", "quad_enable_requirement", "quad_enable")
 
 #: The fields a record only derives, never stores: ``sector_size`` is
 #: worked out from its erasers (:func:`spiflash.derive.sector_size`).
 #: :meth:`Record.stored` refuses them; :meth:`Record.given` reads them.
 DERIVED = frozenset({"sector_size"})
+
+
+class Compared(StrEnum):
+    """How the sources are compared on a value (:data:`COMPARED`)."""
+
+    #: The values must be equal.
+    EQUAL = "equal"
+    #: Each role of the value is compared on its own, and a source that
+    #: does not give a role does not vote on it: a layout giving only TB
+    #: agrees with a fuller one that has the same TB.
+    PER_ROLE = "per-role"
+
+
+#: The values the sources are compared on, and how: what
+#: :attr:`Flash.conflicts`, :meth:`Flash.by_ext_id`, the command's
+#: description and the data issues checks read. A record's own value is
+#: :meth:`Record.given`'s.
+COMPARED: dict[str, Compared] = {
+    "size": Compared.EQUAL,
+    "page_size": Compared.EQUAL,
+    "sector_size": Compared.EQUAL,
+    "voltage": Compared.EQUAL,
+    "quad_enable": Compared.EQUAL,
+    "quad_enable_requirement": Compared.EQUAL,
+    "protection": Compared.PER_ROLE,
+}
+
+#: :data:`COMPARED`, each value as it is compared: a value compared per
+#: role is one name per role (``"protection.tb"``), which
+#: :meth:`Record.given` and :meth:`Flash.value` read.
+COMPARED_VALUES: tuple[str, ...] = tuple(
+    n
+    for name, how in COMPARED.items()
+    for n in ((name,) if how is Compared.EQUAL else tuple(f"{name}.{r}" for r in ROLES))
+)
 
 
 @dataclass(frozen=True)
@@ -280,7 +332,8 @@ class Record:
 
     The fields made from arguments are what the entry states, as the data
     stores them; :attr:`size`, :attr:`page_size`, :attr:`erasers`,
-    :attr:`features`, :attr:`opcodes` and :attr:`sector_size` are worked
+    :attr:`features`, :attr:`opcodes`, :attr:`sector_size`,
+    :attr:`quad_enable_requirement` and :attr:`quad_enable` are worked
     out from them and from its SFDP tables (:mod:`spiflash.derive`). See
     :mod:`spiflash_extract.record` for what each field means."""
 
@@ -318,6 +371,15 @@ class Record:
     #: the upstream copies them without the area around them (Zephyr's
     #: ``sfdp-bfp``). A record has this or :attr:`sfdp`, not both.
     sfdp_tables: Mapping[int, bytes] = field(default_factory=dict, hash=False, repr=False)
+    #: Where the entry says the quad enable bit is, or that the part has
+    #: none (:data:`~spiflash.registers.QE_NONE`). A record states this or
+    #: :attr:`quad_enable_requirement_claim`, not both.
+    quad_enable_claim: RegisterBit | NoQuadEnable | None = None
+    #: The quad enable requirement (JESD216's code) the entry states, where
+    #: it differs from its SFDP tables' (or it has none).
+    quad_enable_requirement_claim: QuadEnableRequirement | None = None
+    #: Where the entry says the part's block-protection bits are.
+    protection: Protection | None = None
     #: The size: :attr:`size_claim`, or failing that its SFDP tables' density.
     size: int | None = field(init=False, compare=False, repr=False)
     #: The page size: :attr:`page_size_claim`, or failing that its SFDP tables'.
@@ -336,18 +398,34 @@ class Record:
     #: (:func:`spiflash.derive.sector_size`): a SPI NOR part's 0xd8 block
     #: (failing that its 0xdc, then its 0x52 block), a SPI NAND part's block.
     sector_size: int | None = field(init=False, compare=False, repr=False)
+    #: The quad enable requirement: :attr:`quad_enable_requirement_claim`,
+    #: or failing that its SFDP tables' (BFPT DW15).
+    quad_enable_requirement: QuadEnableRequirement | None = field(
+        init=False, compare=False, repr=False
+    )
+    #: Where the quad enable bit is: :attr:`quad_enable_claim`, or failing
+    #: that where :attr:`quad_enable_requirement` puts it.
+    quad_enable: RegisterBit | NoQuadEnable | None = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "via", MappingProxyType(dict(self.via)))
         object.__setattr__(self, "sfdp_tables", MappingProxyType(dict(self.sfdp_tables)))
+        if self.quad_enable_claim is not None and self.quad_enable_requirement_claim is not None:
+            msg = f"{self.source} {self.name}: a quad enable bit and a requirement, not one"
+            raise ValueError(msg)
         facts = self.sfdp_facts
         size, page = self.size_claim, self.page_size_claim
+        qer = self.quad_enable_requirement_claim
         erasers = self.eraser_claims
         if facts is not None:
             size = facts.size if size is None else size
             page = facts.page_size if page is None else page
+            qer = facts.quad_enable_requirement if qer is None else qer
         object.__setattr__(self, "size", size)
         object.__setattr__(self, "page_size", page)
+        object.__setattr__(self, "quad_enable_requirement", qer)
+        qe = self.quad_enable_claim
+        object.__setattr__(self, "quad_enable", qer.bit if qe is None and qer else qe)
         erasers += tuple(e for e in self.sfdp_erasers if e not in erasers)
         object.__setattr__(self, "erasers", erasers)
         features = self.feature_claims | derive.features(self)
@@ -401,6 +479,11 @@ class Record:
             sfdp_tables={
                 int(k, 16): bytes.fromhex(v) for k, v in (d.get("sfdp_tables") or {}).items()
             },
+            quad_enable_claim=quad_enable_from_json(d.get("quad_enable")),
+            quad_enable_requirement_claim=QuadEnableRequirement(d["quad_enable_requirement"])
+            if d.get("quad_enable_requirement")
+            else None,
+            protection=Protection.from_json(d["protection"]) if d.get("protection") else None,
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -424,6 +507,9 @@ class Record:
             "flags": list(self.flags),
             "via": dict(self.via),
             "voltage": list(self.voltage) if self.voltage else None,
+            "quad_enable": quad_enable_to_json(self.stored("quad_enable")),
+            "quad_enable_requirement": _str_or_none(self.stored("quad_enable_requirement")),
+            "protection": self.protection.to_json() if self.protection else None,
             "opcodes": [
                 {
                     "op": u.op,
@@ -453,11 +539,26 @@ class Record:
         """The record's own value for field ``name``, as the sources are
         compared on it: what it stores (:meth:`stored`); for a field it
         only derives (:data:`DERIVED`: ``sector_size``), what its stored
-        fields give; for ``size`` and ``page_size`` (:data:`SFDP_VALUES`),
-        what it states or, where it states none, what its SFDP tables say."""
+        fields give; for those of :data:`SFDP_VALUES` (``size``,
+        ``page_size``, and the quad enable bit and requirement), what it
+        states or, where it states none, what its SFDP tables say. A role
+        of its block protection is ``"protection.<role>"``
+        (``"protection.tb"``)."""
+        field_name, _, role = name.partition(".")
+        if role:
+            if field_name != "protection" or role not in ROLES:
+                msg = f"no such value: {name}"
+                raise KeyError(msg)
+            return getattr(self.protection, role) if self.protection else None
         if name in DERIVED or name in SFDP_VALUES:
             return getattr(self, name)
         return self.stored(name)
+
+    def compared(self, name: str) -> Any:
+        """:meth:`given`, as the sources are compared on it
+        (:func:`compared_value`): a register bit by its place, without how
+        it is written, which most sources do not say."""
+        return compared_value(self.given(name))
 
     def feature_reasons(self) -> dict[Feature, str]:
         """Each capability in :attr:`features`, and why the entry gives it
@@ -512,8 +613,9 @@ class Record:
 
     def sfdp_disagreements(self) -> tuple[SfdpDisagreement, ...]:
         """The values the entry states that its own SFDP tables give
-        otherwise: its size or page size (the stated one is the record's
-        value, as the upstream's own code uses it), or an eraser whose
+        otherwise: its size, page size, quad enable requirement or quad
+        enable bit (the stated one is the record's value, as the upstream's
+        own code uses it), or an eraser whose
         opcode the tables give with other blocks (over the record's size:
         :attr:`sfdp_erasers`)."""
         facts = self.sfdp_facts
@@ -531,6 +633,12 @@ class Record:
             if e.opcode is not None and f.opcode == e.opcode and f.blocks != e.blocks
         )
         return tuple(out)
+
+    def shared_bits(self) -> dict[str, tuple[str, ...]]:
+        """The bits its quad enable bit and its protection roles share
+        (``{"SR1 bit 6": ("tb", "quad_enable")}``): a layout no part has.
+        Empty for every record the data holds."""
+        return shared_bits(register_bits(self.quad_enable, self.protection))
 
     @property
     def manufacturer(self) -> str | None:
@@ -559,6 +667,43 @@ class Record:
     def part_names(self) -> tuple[str, ...]:
         """The part numbers the entry's name stands for (see :func:`part_names`)."""
         return part_names(self.name)
+
+
+def _str_or_none(value: object) -> str | None:
+    return None if value is None else str(value)
+
+
+def plain_value(value: Any) -> Any:
+    """A compared value (:data:`COMPARED_VALUES`) as plain JSON: a voltage
+    as its ``[min, max]``, a register bit as its :meth:`RegisterBit.to_json
+    <spiflash.registers.RegisterBit.to_json>`, ``QE_NONE`` as ``"none"``."""
+    if isinstance(value, RegisterBit | NoQuadEnable):
+        return quad_enable_to_json(value)
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, StrEnum):
+        return str(value)
+    return value
+
+
+def compared_value(value: Any) -> Any:
+    """A value as the sources are compared on it: a register bit without
+    its writability (:attr:`RegisterBit.unqualified
+    <spiflash.registers.RegisterBit.unqualified>`), as one source not saying
+    how a bit is written does not disagree with one that does; anything
+    else as it is."""
+    return value.unqualified if isinstance(value, RegisterBit) else value
+
+
+def register_bits(
+    quad_enable: RegisterBit | NoQuadEnable | None, protection: Protection | None
+) -> dict[str, RegisterBit]:
+    """The register bits of a quad enable and a protection layout, by role
+    (``"quad_enable"``, ``"bp0"``, ...)."""
+    out = dict(protection.roles()) if protection else {}
+    if isinstance(quad_enable, RegisterBit):
+        out["quad_enable"] = quad_enable
+    return out
 
 
 def _use_order(use: OpcodeUse) -> tuple[tuple[int, int], bool]:
@@ -857,6 +1002,88 @@ class Flash:
     def voltage(self) -> Voltage | None:
         return self._value(lambda r: r.voltage)
 
+    def _bit(self, get: Callable[[Record], Any]) -> Any:
+        """A register bit (or ``QE_NONE``) the sources agree on: the place
+        most of the most specific records giving one say
+        (:func:`compared_value`), then how it is written as most of the
+        records putting it there say, where any does."""
+        place = self._value(lambda r: compared_value(get(r)))
+        if not isinstance(place, RegisterBit):
+            return place
+
+        def how(r: Record) -> Writability | None:
+            bit = get(r)
+            return bit.writability if compared_value(bit) == place else None
+
+        writability = self._value(how)
+        return replace(place, writability=writability) if writability else place
+
+    @cached_property
+    def quad_enable(self) -> RegisterBit | NoQuadEnable | None:
+        """Where the quad enable bit is (:data:`~spiflash.registers.QE_NONE`:
+        the part has none), as most sources say: each record's own, stated
+        or from its quad enable requirement (:attr:`Record.quad_enable`)."""
+        found: RegisterBit | NoQuadEnable | None = self._bit(lambda r: r.quad_enable)
+        return found
+
+    @cached_property
+    def quad_enable_requirement(self) -> QuadEnableRequirement | None:
+        """The quad enable requirement (JESD216's code) most sources give,
+        of those that put the QE bit where :attr:`quad_enable` says: a
+        requirement putting it elsewhere is not this part's (and the
+        sources disagree on the bit; ``None`` where none agrees)."""
+        qe = compared_value(self.quad_enable)
+        return self._value(
+            lambda r: (
+                q if (q := r.quad_enable_requirement) and compared_value(q.bit) == qe else None
+            )
+        )
+
+    @cached_property
+    def _protection_roles(self) -> dict[str, RegisterBit]:
+        """Each protection role, as most of the sources giving that role
+        say (a source not giving a role does not vote on it)."""
+        out = {}
+        for role in ROLES:
+            name = f"protection.{role}"
+            bit = self._bit(partial(Record.given, name=name))
+            if bit is not None:
+                out[role] = bit
+        return out
+
+    @cached_property
+    def protection(self) -> Protection | None:
+        """Where the block-protection bits are: each role as most of the
+        sources giving it say. Where that puts two roles on one bit
+        (:meth:`shared_bits`), a layout no part has, the best source's own
+        layout instead: of the most specific records giving one
+        (:attr:`layers`), as each value is."""
+        roles = self._protection_roles
+        if not roles:
+            return None
+        if shared_bits(roles):
+            for layer in self.layers or (self.records,):
+                given = [r for r in layer if r.protection]
+                if given:
+                    return min(given, key=lambda r: r.source.priority).protection
+        return Protection(**roles)
+
+    def shared_bits(self) -> dict[str, tuple[str, ...]]:
+        """The bits that the sources' answers, role by role, put two roles
+        on: two protection roles (``{"SR1 bit 5": ("bp3", "tb")}``), or a
+        protection role and the quad enable bit. A part has no such
+        layout, so one source is wrong."""
+        return shared_bits(register_bits(self.quad_enable, None) | self._protection_roles)
+
+    def value(self, name: str) -> Any:
+        """The chip's value of ``name``, one of :data:`COMPARED_VALUES`:
+        ``flash.value("size")`` is :attr:`size`, ``flash.value("protection.tb")``
+        the ``tb`` of :attr:`protection`."""
+        field_name, _, role = name.partition(".")
+        if role:
+            return getattr(self.protection, role) if self.protection else None
+        return getattr(self, field_name)
+
     @cached_property
     def features(self) -> frozenset[Feature]:
         """Every capability any source claims for this id, or implies by
@@ -949,24 +1176,26 @@ class Flash:
         return tuple(found.values())
 
     def values(self, attribute: str) -> dict[Any, tuple[Source, ...]]:
-        """Each value the records give for an attribute
-        (:meth:`Record.given`: what they store, or for ``sector_size`` what
-        their erasers give), and the sources giving it:
+        """Each value the records give for an attribute, as they are
+        compared (:meth:`Record.compared`: what they store, or for
+        ``sector_size`` what their erasers give; a register bit without how
+        it is written), and the sources giving it:
         ``flash.values("size")`` → ``{16777216: ("flashrom", "linux", ...)}``."""
         out: dict[Any, set[Source]] = {}
         for r in self.records:
-            v = r.given(attribute)
+            v = r.compared(attribute)
             if v is not None:
                 out.setdefault(v, set()).add(r.source)
         return {k: tuple(sorted(v, key=lambda s: s.priority)) for k, v in out.items()}
 
     @property
     def conflicts(self) -> dict[str, dict[Any, tuple[Source, ...]]]:
-        """The attributes the sources disagree on, for one part: records
-        that extended ids tell apart (:attr:`variants`) are not compared."""
+        """The values (:data:`COMPARED_VALUES`) the sources disagree on,
+        for one part: records that extended ids tell apart
+        (:attr:`variants`) are not compared."""
         out = {}
-        for attr in ("size", "page_size", "sector_size", "voltage"):
-            if any(len({r.given(attr) for r in v} - {None}) > 1 for v in self.variants):
+        for attr in COMPARED_VALUES:
+            if any(len({r.compared(attr) for r in v} - {None}) > 1 for v in self.variants):
                 out[attr] = self.values(attr)
         return out
 
@@ -980,8 +1209,9 @@ class Flash:
         part of its own. (A lookup narrows through
         :meth:`Database.narrow <spiflash.db.Database.narrow>`, which only adds
         the maker and the datasheets to these values.)"""
-        values = {e: getattr(self.with_ext_id(e), attribute) for e in self._part_ext_ids}
-        return values if len(set(values.values()) - {None}) > 1 else {}
+        values = {e: self.with_ext_id(e).value(attribute) for e in self._part_ext_ids}
+        compared = {compared_value(v) for v in values.values()}
+        return values if len(compared - {None}) > 1 else {}
 
     @cached_property
     def _part_ext_ids(self) -> tuple[bytes, ...]:
@@ -1066,6 +1296,9 @@ class Flash:
             "page_size": self.page_size,
             "sector_size": self.sector_size,
             "voltage": list(self.voltage) if self.voltage else None,
+            "quad_enable": quad_enable_to_json(self.quad_enable),
+            "quad_enable_requirement": _str_or_none(self.quad_enable_requirement),
+            "protection": self.protection.to_json() if self.protection else None,
             "features": sorted(self.features),
             "feature_sources": {
                 f: [s._asdict() for s in self.feature_sources(f)] for f in sorted(self.features)
@@ -1084,10 +1317,7 @@ class Flash:
             ],
             "sources": list(self.sources),
             "conflicts": {
-                k: [
-                    {"value": list(v) if isinstance(v, tuple) else v, "sources": list(s)}
-                    for v, s in vals.items()
-                ]
+                k: [{"value": plain_value(v), "sources": list(s)} for v, s in vals.items()]
                 for k, vals in self.conflicts.items()
             },
             "datasheets": [

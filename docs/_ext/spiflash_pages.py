@@ -71,8 +71,9 @@ from source_pages import sources_table as sources_list
 from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE
 from spiflash.enums import Feature, FlashType, OperationKind, Source
-from spiflash.model import strip_continuation
+from spiflash.model import compared_value, strip_continuation
 from spiflash.opcodes import OPERATIONS
+from spiflash.registers import ROLES, RegisterBit
 from spiflash.sfdp_tools import diff as sfdp_diff
 from spiflash.units import human_size, human_time
 
@@ -113,6 +114,7 @@ def chip_page(
     out += _identification(db, f, kind)
     out += _extended_ids(db, f)
     out += _capabilities(f)
+    out += _registers(f)
     out += _sfdp(f)
     out += _opcodes(f)
     out += _erase_layouts(f)
@@ -332,6 +334,65 @@ def _capabilities(f: Flash) -> list[str]:
     return out
 
 
+def _who(sources: tuple[Source, ...]) -> str:
+    return " ".join(source_badge(s) for s in sources)
+
+
+def _registers(f: Flash) -> list[str]:
+    """The quad enable bit and requirement, and the block-protection bits,
+    each value with the sources giving it."""
+    qe = f.values("quad_enable")
+    qer = f.values("quad_enable_requirement")
+    roles = {role: f.values(f"protection.{role}") for role in ROLES}
+    if not (qe or qer or any(roles.values())):
+        return []
+    out = [
+        "## Registers\n",
+        (
+            "Where the part's register bits are, as the sources give them: a register "
+            "is named by the command that reads it, so a Macronix configuration register "
+            "(read with 0x15) is SR3, and a Spansion CR1 (read with 0x35) SR2 "
+            "([](../derived.md#registers)).\n"
+        ),
+    ]
+    rows = []
+
+    def shown(value: Any, chip: Any) -> tuple[str, str]:
+        """A value as the sources give it (the chip's with how it is
+        written, where a source says), and the chip's mark."""
+        if value != compared_value(chip):
+            return str(value), ""
+        return str(chip), " {bdg-primary}`chip`"
+
+    for value, who in qe.items():
+        what, mine = shown(value, f.quad_enable)
+        if isinstance(value, RegisterBit):
+            what += f" (read with {value.register.read_with})"
+        rows.append(["Quad enable bit", esc(what) + mine, _who(who)])
+    for value, who in qer.items():
+        mine = " {bdg-primary}`chip`" if value == f.quad_enable_requirement else ""
+        rows.append(
+            ["Quad enable requirement", esc(f"{value}: {value.description}") + mine, _who(who)]
+        )
+    layout = f.protection.roles() if f.protection else {}
+    for role, given in roles.items():
+        for value, who in given.items():
+            what, mine = shown(value, layout.get(role))
+            rows.append([f"Protection: {role}", esc(what) + mine, _who(who)])
+    out.append(list_table(["Field", "Bit", "Sources"], rows, "sf-table sf-registers"))
+    out.append("")
+    out.append(
+        "{bdg-primary}`chip` marks the value the chip is given: the one most sources "
+        "give, role by role.\n"
+    )
+    for bit, shared in f.shared_bits().items():
+        out.append(
+            f"The sources' answers put {' and '.join(shared)} on one bit, {esc(bit)}, "
+            "which no part has: the chip is given the best source's own layout.\n"
+        )
+    return out
+
+
 def _sfdp(f: Flash) -> list[str]:
     if not f.sfdp_dumps:
         return []
@@ -546,6 +607,17 @@ def _sfdp_mark(r: Record, attr: str) -> str:
     return "" if r.stored(attr) is not None else " *(SFDP)*"
 
 
+def _quad_enable(r: Record) -> str:
+    """A record's quad enable bit, ``SR2 bit 1``, marked where it comes from
+    its quad enable requirement (that of its SFDP tables, or one it states)."""
+    if r.quad_enable is None:
+        return EM_DASH
+    if r.stored("quad_enable") is not None:
+        return esc(str(r.quad_enable))
+    from_tables = r.stored("quad_enable_requirement") is None
+    return f"{esc(str(r.quad_enable))} *({'SFDP' if from_tables else r.quad_enable_requirement})*"
+
+
 def _record_id(r: Record) -> bytes:
     return strip_continuation(r.id or b"")[1]
 
@@ -568,6 +640,7 @@ def _sources(db: Database, f: Flash) -> list[str]:
                 size_text(r.sector_size) + _sfdp_mark(r, "sector_size"),
                 volt(r.voltage[0] if r.voltage else None),
                 volt(r.voltage[1] if r.voltage else None),
+                _quad_enable(r),
                 esc(r.tested or EM_DASH),
                 where,
             ]
@@ -585,6 +658,7 @@ def _sources(db: Database, f: Flash) -> list[str]:
                 "Sector",
                 "V min",
                 "V max",
+                "QE",
                 "Tested",
                 "Where",
             ],
@@ -838,6 +912,10 @@ def derived_table(db: Database) -> str:
             for what, feats in derive.SFDP_FEATURES.items()
             if Feature(feat) in feats
         )
+        if feat == Feature.QUAD_READ:
+            why.append("a quad enable bit, stated or from a quad enable requirement")
+        if feat == Feature.LOCK:
+            why.append("a block-protection bit: BP, or TB, SEC or CMP")
         rows.append(
             [
                 badge(*FEATURE_TEXT[feat]),

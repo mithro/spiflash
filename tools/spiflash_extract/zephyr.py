@@ -170,6 +170,14 @@ _IO_MODE = {
 #:   "Single QSPI IP write must fit the 128-byte Tx FIFO."
 PAGE_SIZE_IS_THE_DRIVERS = frozenset({"adi,max32-spixf-nor", "jedec,nor"})
 
+#: The bindings whose driver ignores ``quad-enable-requirements``
+#: (:upstream:`zephyr:dts/bindings/mtd/jedec,jesd216.yaml`'s JESD216 DW15
+#: code): :upstream:`zephyr:drivers/flash/spi_nor.c` takes the requirement
+#: from the BFPT, the node's or the part's. On such a node it stays a flag.
+#: The QSPI and OSPI controllers' drivers (STM32, nRF, NXP, ...) and the
+#: MSPI one (``jedec,nor``) use it.
+QER_IGNORED_BY = frozenset({"jedec,spi-nor"})
+
 #: The SFDP parameter tables a node copies, by property: the table id each is.
 SFDP_TABLES = {"sfdp-bfp": BFPT_ID, "sfdp-ff05": PROFILE1_ID, "sfdp-ff84": FOUR_BYTE_ID}
 
@@ -336,10 +344,17 @@ class _Node:
             if self.props.get(prop)
         }
         via = {"sfdp_tables": "; ".join(p for p in SFDP_TABLES if self.props.get(p))}
-        if not tables and "use-sfdp" in self.props:
-            self.ops.add("RDSFDP", "use-sfdp")
+        if not tables:
+            via = {}
+            if "use-sfdp" in self.props:
+                self.ops.add("RDSFDP", "use-sfdp")
         self.modes()
         self.capabilities(binding)
+        qer = self.string("quad-enable-requirements")
+        if qer is not None and binding_name not in QER_IGNORED_BY:
+            via["quad_enable_requirement"] = f"quad-enable-requirements={qer}"
+        else:
+            qer = None
         return make(
             "zephyr",
             self.rel,
@@ -353,7 +368,8 @@ class _Node:
             page_size=page_size,
             features=self.features,
             flags=self.flags() + ([f"page-size={driver_page}"] if driver_page else []),
-            via=via if tables else {},
+            via=via,
+            quad_enable_requirement=qer,
             opcodes=self.ops.to_json() if binding.type == "nor" else [],
             sfdp_tables=tables,
             notes=self.notes,
@@ -411,6 +427,10 @@ class _Node:
             self.features.add("lock")
         if "use-flag-status-register" in self.props:
             self.ops.add("RDFSR", "use-flag-status-register")
+        # The binding (jedec,spi-nor-common.yaml) says the part needs ULBPR,
+        # 0x98, to unlock its block protection; spi_nor.c sends it.
+        if "requires-ulbpr" in self.props:
+            self.ops.add("ULBPR", "requires-ulbpr")
         if "use-4b-addr-opcodes" in self.props:
             self.features.update({"4byte_addr", "4byte_opcodes"})
         if {"address-size-32", "use-4byte-addressing"} & set(self.props):

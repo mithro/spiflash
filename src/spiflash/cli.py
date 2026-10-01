@@ -25,7 +25,8 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from . import __version__
 from .db import Database, NameMatch, database
 from .enums import FlashType
-from .model import Flash, SfdpDump, parse_id
+from .model import COMPARED_VALUES, Flash, SfdpDump, parse_id
+from .registers import NoQuadEnable, RegisterBit, Writability
 from .sfdp import SIGNATURE, Sfdp
 from .sfdp import parse as parse_sfdp
 from .sfdp_tools import diff, encode, to_entry
@@ -69,6 +70,26 @@ def volts(v: tuple[int, int]) -> str:
     return f"{v[0] / 1000:g}-{v[1] / 1000:g} V"
 
 
+def quad_enable(qe: RegisterBit | NoQuadEnable) -> str:
+    """A quad enable bit as the detail line writes it: ``SR2[1]``, ``none``."""
+    if isinstance(qe, NoQuadEnable):
+        return str(qe)
+    how = qe.writability
+    rw = "" if how in (None, Writability.RW) else f" {how.upper()}"
+    return f"{qe.register.label}[{qe.bit}]{rw}"
+
+
+def shown(attribute: str, value: Any) -> str:
+    """A compared value (:data:`~spiflash.model.COMPARED_VALUES`) in words:
+    a size as ``16 MiB``, a voltage as ``2.7-3.6 V``, a register bit as
+    ``SR2 bit 1``."""
+    if attribute == "voltage":
+        return volts(value)
+    if attribute in ("size", "page_size", "sector_size"):
+        return human_size(value)
+    return str(value)
+
+
 def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     lines = [header(f)]
     detail = [f"size {human_size(f.size)}"]
@@ -78,21 +99,26 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
         detail.append(f"sector {human_size(f.sector_size)}")
     if f.voltage:
         detail.append(volts(f.voltage))
+    if f.quad_enable is not None:
+        detail.append(f"QE {quad_enable(f.quad_enable)}")
     lines.append("    " + ", ".join(detail))
     if f.features:
         lines.append("    features: " + " ".join(sorted(f.features)))
     for attr, vals in f.conflicts.items():
-        # A voltage prints as its (min, max) pair, not its NamedTuple repr.
-        said = "; ".join(
-            f"{tuple(v) if isinstance(v, tuple) else v} ({', '.join(s)})" for v, s in vals.items()
-        )
+        said = "; ".join(f"{shown(attr, v)} ({', '.join(s)})" for v, s in vals.items())
         lines.append(f"    sources disagree on {attr}: {said}")
-    for attr in ("size", "page_size", "sector_size", "voltage"):
+    for bit, roles in f.shared_bits().items():
+        lines.append(f"    sources put two roles on {bit}: {', '.join(roles)}")
+    for attr in COMPARED_VALUES:
         if parts := f.by_ext_id(attr):
-            show = volts if attr == "voltage" else human_size
-            said = ", ".join(f"{show(v)} ({e.hex()})" for e, v in parts.items() if v)
+            said = ", ".join(f"{shown(attr, v)} ({e.hex()})" for e, v in parts.items() if v)
             lines.append(f"    parts differ on {attr} by ext id: {said}")
     if verbose:
+        if f.quad_enable_requirement is not None:
+            qer = f.quad_enable_requirement
+            lines.append(f"    quad enable requirement: {qer} ({qer.description})")
+        if f.protection is not None:
+            lines.append(f"    protection: {f.protection}")
         for r in f.records:
             ext = f" ext {r.ext_id.hex()}" if r.ext_id else ""
             lines.append(f"    {r.source:15} {r.name}{ext}  [{r.url}]")

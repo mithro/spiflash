@@ -213,10 +213,13 @@ def _record(
     # The RDSFDP operation's via holds the comment (and implies ``sfdp``).
     sfdp = [n for n in notes if _SUPPORTS_SFDP.fullmatch(n)]
     notes = [n for n in notes if n not in sfdp]
-    reg_bits = f.get("reg_bits", "")
-    if re.search(r"\.bp\s*=", reg_bits):
-        features.add("lock")
-        claims.append(("lock", ".reg_bits .bp"))
+    bits = _reg_bits(f.get("reg_bits", ""))
+    quad_enable = bits.pop("qe", None)
+    # FEATURE_WRSR_EXT3 is the EXT2 bit and one of its own, which has no
+    # name: the bit names alone would give EXT2.
+    ext3 = cparse.evaluate("FEATURE_WRSR_EXT3", symbols)
+    if cparse.evaluate(f.get("feature_bits", "0"), symbols) & ext3 == ext3:
+        flags = [*(fl for fl in flags if fl != "FEATURE_WRSR_EXT2"), "FEATURE_WRSR_EXT3"]
     size = cparse.evaluate(f["total_size"], symbols) * 1024
     voltage = None
     if "voltage" in f:
@@ -239,10 +242,69 @@ def _record(
         flags=flags,
         via=feature_via(claims),
         voltage=voltage,
+        quad_enable=quad_enable,
+        protection=bits or None,
         tested=tested,
-        opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp=bool(sfdp)),
+        opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp=bool(sfdp), source=source),
         notes=notes,
     )
+
+
+# enum flash_reg -> the register, named by the command reading it:
+# spi25_statusreg.c reads STATUS2 with 0x35, STATUS3 and CONFIG with 0x15
+# (Macronix's configuration register), SECURITY with RDSCUR (0x2b).
+_REGISTERS = {
+    "STATUS1": "sr1",
+    "STATUS2": "sr2",
+    "STATUS3": "sr3",
+    "CONFIG": "sr3",
+    "SECURITY": "security",
+}
+_WRITABILITY = {"RW": "rw", "RO": "ro", "OTP": "otp"}
+
+
+def _reg_bit(value: str) -> dict[str, Any]:
+    """``{STATUS2, 1, RW}`` as a register bit's JSON."""
+    reg, bit, how = cparse.split_top(value.strip()[1:-1])
+    # flashrom always says how the bit is written: RW too.
+    return {
+        "register": _REGISTERS[reg.strip()],
+        "bit": cparse.evaluate(bit),
+        "writability": _WRITABILITY[how.strip()],
+    }
+
+
+def _reg_bits(expr: str) -> dict[str, Any]:
+    """``.reg_bits`` (``struct reg_bit_info``s by role, include/flash.h):
+    each role's register bit, ``bp`` as ``bp0``, ``bp1``, ... in order; the
+    quad enable bit (flashprog's ``.qe``) as ``qe``. flashprog's ``.dc``
+    (the dummy-cycle bits) has no field."""
+    if not expr.strip():
+        return {}
+    out: dict[str, Any] = {}
+    for role, value in cparse.designated(expr.strip()[1:-1]).items():
+        if role == "bp":
+            bps = cparse.braced_items(value.strip()[1:-1])
+            out.update({f"bp{i}": _reg_bit("{" + b.body + "}") for i, b in enumerate(bps)})
+        elif role != "dc":
+            out[role] = _reg_bit(value)
+    return out
+
+
+# flashprog's spi25_statusreg.c reads a CONFIG bit with RDCR (0x15) and a
+# SECURITY bit with RDSCUR (0x2b) whatever the feature bits; flashrom only
+# with FEATURE_CFGR and FEATURE_SCUR, which give those operations.
+_FLASHPROG_READS = {"CONFIG": ("RDSR3", "JEDEC_RDCR"), "SECURITY": ("RDSCUR", "JEDEC_RDSCUR")}
+
+
+def _register_reads(ops: Opcodes, source: str, reg_bits: str) -> None:
+    """Add the register reads flashprog sends for the registers its
+    ``.reg_bits`` name."""
+    if source != "flashprog":
+        return
+    for reg, (op, symbol) in _FLASHPROG_READS.items():
+        if re.search(rf"\b{reg}\b", reg_bits):
+            ops.add(op, f".reg_bits {reg}", symbol)
 
 
 # How flashrom reads an id -> the operation (probe_spi_rdid, probe_spi_rems,
@@ -305,8 +367,22 @@ _FEATURE_OPS: dict[str, list[tuple[str, tuple[str, ...]]]] = {
     ],
     "FEATURE_WRSR_WREN": [("WRSR", ("JEDEC_WRSR",))],
     "FEATURE_WRSR_EWSR": [("EWSR", ("JEDEC_EWSR",)), ("WRSR", ("JEDEC_WRSR",))],
-    "FEATURE_WRSR2": [("WRSR2", ("JEDEC_WRSR2",))],
-    "FEATURE_WRSR3": [("WRSR3", ("JEDEC_WRSR3",))],
+    # How spi25_statusreg.c reads and writes STATUS2, STATUS3 and CONFIG:
+    # with their own 0x31 and 0x11 (WRSR2, WRSR3), or with a 2- or 3-byte
+    # 0x01 (WRSR_EXT2, WRSR_EXT3, which has EXT2's bit too, and CONFIG's
+    # {SR1, CR}); read with 0x35, and 0x15. FEATURE_SCUR is "has security
+    # register (RDSCUR/WRSCUR commands)".
+    "FEATURE_WRSR2": [("WRSR2", ("JEDEC_WRSR2",)), ("RDSR2", ("JEDEC_RDSR2",))],
+    "FEATURE_WRSR3": [("WRSR3", ("JEDEC_WRSR3",)), ("RDSR3", ("JEDEC_RDSR3",))],
+    "FEATURE_WRSR_EXT2": [("WRSR_16", ("JEDEC_WRSR",)), ("RDSR2", ("JEDEC_RDSR2",))],
+    "FEATURE_WRSR_EXT3": [
+        ("WRSR_16", ("JEDEC_WRSR",)),
+        ("WRSR_24", ("JEDEC_WRSR",)),
+        ("RDSR2", ("JEDEC_RDSR2",)),
+        ("RDSR3", ("JEDEC_RDSR3",)),
+    ],
+    "FEATURE_CFGR": [("RDSR3", ("JEDEC_RDCR",)), ("WRSR_16", ("JEDEC_WRSR",))],
+    "FEATURE_SCUR": [("RDSCUR", ("JEDEC_RDSCUR",)), ("WRSCUR", ("JEDEC_WRSCUR",))],
     "FEATURE_QPI_35_F5": [("EQPI_35", ()), ("RSTQIO_F5", ())],
     "FEATURE_QPI_38_FF": [("EQPI_38", ()), ("RSTQIO_FF", ())],
     "FEATURE_SET_READ_PARAMS": [("SET_READ_PARAMS", ())],
@@ -321,6 +397,7 @@ def _opcodes(
     symbols: dict[str, str | int],
     *,
     sfdp: bool,
+    source: str = "flashrom",
 ) -> list[dict[str, object]]:
     """The operations a flashrom entry says the chip has: its probe, its
     read and write functions, each eraser (flashrom's spi_block_erase_<xx>
@@ -351,4 +428,5 @@ def _opcodes(
             ops.add(feature_op, flag, *feature_syms)
     if sfdp:
         ops.add("RDSFDP", "comment: supports SFDP", "JEDEC_SFDP")
+    _register_reads(ops, source, f.get("reg_bits", ""))
     return ops.to_json()

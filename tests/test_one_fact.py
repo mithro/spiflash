@@ -14,10 +14,12 @@ from typing import Any
 
 import pytest
 
+import spiflash
 from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE, ID_OPERATION
 from spiflash.enums import Feature, IdMethod
 from spiflash.model import Record
+from spiflash.registers import RegisterBit
 from spiflash_extract import record
 
 
@@ -287,8 +289,10 @@ def test_a_disagreement_is_the_stored_value() -> None:
                 assert d[field] == stored, _where(d)
     # One board copies another part's table (16 MiB, with DTR, for a 2 MiB
     # P25Q16H). Two boards' page-size is their driver's setting, kept as a
-    # flag (spiflash_extract.zephyr.PAGE_SIZE_IS_THE_DRIVERS).
-    assert sorted(found) == [("P25Q16H", "size")]
+    # flag (spiflash_extract.zephyr.PAGE_SIZE_IS_THE_DRIVERS). frdm_mcxe247's
+    # W25Q64 carries the MX25R6435F's table (QE at SR1 bit 6), and its own
+    # quad-enable-requirements, Winbond's S2B1v1.
+    assert sorted(found) == [("P25Q16H", "size"), ("W25Q64", "quad_enable_requirement")]
 
 
 def test_no_sfdp_residue() -> None:
@@ -298,3 +302,104 @@ def test_no_sfdp_residue() -> None:
     assert not [n for n in notes if n.startswith(("SFDP:", "sfdp-bfp gives"))]
     # One decoder: the extractors have none of their own.
     assert not (Path(record.__file__).parent / "sfdp.py").exists()
+
+
+# --- register bits: the quad enable bit, its requirement, protection ---------
+
+
+def test_a_quad_enable_bit_or_a_requirement_not_both() -> None:
+    both = [r for r in RECORDS if r["quad_enable"] is not None and r["quad_enable_requirement"]]
+    assert not [_where(r) for r in both]
+
+
+def test_no_lock_or_quad_read_claim_the_registers_imply() -> None:
+    def twice(d: dict[str, Any]) -> set[str]:
+        r = Record.from_json(d)
+        out = set()
+        if "lock" in d["features"] and r.protection is not None and r.protection.blocks:
+            out.add("lock")
+        if "quad_read" in d["features"] and isinstance(r.quad_enable, RegisterBit):
+            out.add("quad_read")
+        return out
+
+    assert not [(_where(d), twice(d)) for d in RECORDS if twice(d)]
+
+
+def test_no_two_roles_on_one_bit() -> None:
+    # Protection refuses two of its roles on one bit; nor is the quad
+    # enable bit one of them (Linux's GD25Q256 entry would have had QE and
+    # TB both at SR1 bit 6, had it taken the GD25Q256C's QE).
+    shared = [(_where(d), Record.from_json(d).shared_bits()) for d in RECORDS]
+    assert not [(where, bits) for where, bits in shared if bits]
+
+
+def test_no_requirement_operation_stored() -> None:
+    def stored(d: dict[str, Any]) -> set[str]:
+        qer = Record.from_json(d).quad_enable_requirement
+        ops = set(derive.REQUIREMENT_OPERATIONS.get(qer, ())) if qer else set()
+        return ops & {o["op"] for o in d["opcodes"]}
+
+    assert not [(_where(d), stored(d)) for d in RECORDS if stored(d)]
+
+
+#: Where each source's quad enable bits come from, as (source, the start of
+#: their via): the entry's own statement, never a driver's default for
+#: every part (Linux's core SR2 bit 1, its makers' default_init).
+#: flashprog's are all its .reg_bits' .qe, so need no via.
+QUAD_ENABLE_FROM = {
+    ("flashprog", None),
+    ("dediprog", "QEbitAddr="),
+    ("rockchip", "QE_bits="),
+    ("rockchip", "has_qe_bits="),
+    ("openfpgaloader", "quad_register="),
+    ("linux", ".fixups = &"),
+    ("linux", "SPINAND_HAS_QE_BIT"),
+}
+
+
+def test_only_the_known_sources_give_a_quad_enable_bit() -> None:
+    def source(d: dict[str, Any]) -> tuple[str, str | None]:
+        via = d["via"].get("quad_enable")
+        starts = [s for src, s in QUAD_ENABLE_FROM if src == d["source"] and s]
+        return d["source"], next((s for s in starts if via and via.startswith(s)), via)
+
+    found = {source(d) for d in RECORDS if d["quad_enable"] is not None}
+    assert found == QUAD_ENABLE_FROM
+
+
+def test_no_template_quad_enable() -> None:
+    # Dediprog's 0x200 (its template's SR2 bit 1) and 0 say nothing of the
+    # part, and 0x80 is SR1 bit 7, the status register protect bit.
+    vias = [d["via"].get("quad_enable", "") for d in RECORDS if d["source"] == "dediprog"]
+    masks = {int(v.removeprefix("QEbitAddr="), 16) for v in vias if v}
+    assert masks
+    assert not masks & {0, 0x200, 0x80}
+
+
+def test_no_protection_layout_from_a_mask_or_another_scheme() -> None:
+    # Dediprog's ProtectBlockMask is the bits its programmer clears, not a
+    # layout; Linux's entries whose fixups replace the status register
+    # locking, and U-Boot's SST26 parts (a block protection register), have
+    # none either. Their lock stays a claim.
+    def other(d: dict[str, Any]) -> bool:
+        replaced = any("replace the status register locking" in n for n in d["notes"])
+        sst26 = any("SPI_NOR_HAS_SST26LOCK" in o["via"] for o in d["opcodes"])
+        return d["source"] == "dediprog" or replaced or sst26
+
+    assert not [_where(d) for d in RECORDS if other(d) and d["protection"]]
+    claims = [d for d in RECORDS if other(d) and d["source"] != "dediprog"]
+    assert len(claims) == 15  # Linux 11, U-Boot 4
+    assert all("lock" in d["features"] for d in claims)
+
+
+def test_no_tb_from_a_drivers_constant() -> None:
+    # U-Boot tests SR_TB, bit 5, on every SPI_NOR_HAS_TB part, and QEMU's
+    # model puts every HAS_SR_TB part's TB there: the bit is theirs, not
+    # the part's, so neither gives a TB. The W25Q512JV's is bit 6.
+    tb = [
+        d for d in RECORDS if d["source"] in ("u-boot", "qemu") and "tb" in (d["protection"] or {})
+    ]
+    assert not [_where(d) for d in tb]
+    (chip,) = spiflash.lookup("ef4020")
+    assert chip.protection is not None
+    assert chip.protection.tb is None or chip.protection.tb.bit != 5

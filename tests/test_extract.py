@@ -137,7 +137,19 @@ def test_linux_nor(linux_tree: Path) -> None:
     ]
     assert sector(w) is None
     assert features(w) == ["dual_read", "erase_4k", "lock", "quad_read"]
-    assert w["features"] == ["lock"]  # the rest are implied
+    assert w["features"] == []  # all implied: lock by its protection bits
+    # SPI_NOR_HAS_LOCK: BP0-2 and SRWD (swp.c); SPI_NOR_HAS_TB without
+    # SPI_NOR_TB_SR_BIT6: TB at bit 5.
+    assert w["protection"] == {
+        "bp0": {"register": "sr1", "bit": 2},
+        "bp1": {"register": "sr1", "bit": 3},
+        "bp2": {"register": "sr1", "bit": 4},
+        "tb": {"register": "sr1", "bit": 5},
+        "srp": {"register": "sr1", "bit": 7},
+    }
+    # No quad enable bit: winbond.c sets none, and the core's default is
+    # every part's.
+    assert w["quad_enable"] is None
     # core.c's defaults, plus what the no_sfdp_flags set up.
     assert ops(w) == {
         "RDID": (0x9F, "id read (rdid)"),
@@ -160,10 +172,14 @@ def test_linux_nor(linux_tree: Path) -> None:
     assert assumed(w) == {"READ_1_1_1", "READ_1_1_1_FAST", "PP_1_1_1", "CHIP_ERASE"}
     # The id read is derived, not stored; then read, ...
     assert [o["op"] for o in w["opcodes"]][:2] == ["READ_1_1_1", "READ_1_1_1_FAST"]
-    assert "SPI_NOR_HAS_TB" in w["flags"]
-    # A claim no operation explains keeps its token in via, not in flags.
-    assert w["via"] == {"erasers:0x20": "SECT_4K", "feature:lock": "SPI_NOR_HAS_LOCK"}
+    # A token a field holds is in via, not in flags.
+    assert w["via"] == {
+        "erasers:0x20": "SECT_4K",
+        "protection": "SPI_NOR_HAS_LOCK",
+        "protection.tb": "SPI_NOR_HAS_TB",
+    }
     assert "SPI_NOR_HAS_LOCK" not in w["flags"]
+    assert "SPI_NOR_HAS_TB" not in w["flags"]
     assert "SPI_NOR_QUAD_READ" not in w["flags"]  # READ_1_1_4 holds it
     assert w["notes"] == ["Flavors w/ and w/o SFDP."]
     assert w["file"] == "drivers/mtd/spi-nor/winbond.c"
@@ -193,7 +209,9 @@ def test_linux_nor(linux_tree: Path) -> None:
     s = r["S25FL128S1"]
     assert s["id"] == "012018"
     assert s["ext_id"] == "4d0180"
-    assert "USE_CLSR" in s["flags"]
+    # spansion_nor_clear_sr() clears its error bits with CLSR.
+    assert ops(s)["CLSR"] == (0x30, "USE_CLSR")
+    assert "USE_CLSR" not in s["flags"]
 
     n = r["EVERSPIN-NONJEDEC"]
     assert n["id"] is None
@@ -215,10 +233,13 @@ def test_linux_nand(linux_tree: Path) -> None:
     assert n["page_size"] == 2048
     assert n["erasers"] == [{"opcode": 0xD8, "blocks": [[2048 * 64, 1024]]}]
     assert sector(n) == 2048 * 64
-    assert n["features"] == ["quad_read"]
+    # SPINAND_HAS_QE_BIT: bit 0 of the configuration register (0xb0),
+    # which implies quad_read.
+    assert n["quad_enable"] == {"register": "nand-b0", "bit": 0}
+    assert n["features"] == []
     assert features(n) == ["quad_read"]  # a SPI NAND eraser implies no erase_*
     assert ops(n) == {}  # nor the SE of a SPI NOR part
-    assert n["via"] == {"feature:quad_read": "SPINAND_HAS_QE_BIT"}
+    assert n["via"] == {"quad_enable": "SPINAND_HAS_QE_BIT"}
     assert n["flags"] == []
     assert n["notes"][0] == "3.3V"
 
@@ -228,6 +249,146 @@ def test_linux_nand_manufacturer_per_table(tmp_path: Path) -> None:
     write(tmp_path, {"drivers/mtd/nand/spi/esmt.c": LINUX_ESMT})
     ids = {r["name"]: r["id"] for r in linux.extract_nand(tmp_path)}
     assert ids == {"F50L1G41LC": "8c2c", "F50L1G41LB": "c8017f7f7f"}
+
+
+LINUX_REGISTERS = """
+static int atmel_nor_global_protection_late_init(struct spi_nor *nor)
+{
+    nor->params->locking_ops = &atmel_nor_global_protection_ops;
+    return 0;
+}
+
+static const struct spi_nor_fixups atmel_nor_global_protection_fixups = {
+    .late_init = atmel_nor_global_protection_late_init,
+};
+
+static void mx25l3255e_late_init_fixups(struct spi_nor *nor)
+{
+    struct spi_nor_flash_parameter *params = nor->params;
+    params->quad_enable = spi_nor_sr1_bit6_quad_enable;
+}
+
+static const struct spi_nor_fixups mx25l3255e_fixups = {
+    .late_init = mx25l3255e_late_init_fixups,
+};
+
+static int gd25q256_post_bfpt(struct spi_nor *nor,
+                  const struct sfdp_parameter_header *bfpt_header,
+                  const struct sfdp_bfpt *bfpt)
+{
+    if (bfpt_header->major == SFDP_JESD216_MAJOR &&
+        bfpt_header->minor == SFDP_JESD216_MINOR)
+        nor->params->quad_enable = spi_nor_sr1_bit6_quad_enable;
+    return 0;
+}
+
+static const struct spi_nor_fixups gd25q256_fixups = {
+    .post_bfpt = gd25q256_post_bfpt,
+};
+
+static void macronix_nor_default_init(struct spi_nor *nor)
+{
+    nor->params->quad_enable = spi_nor_sr1_bit6_quad_enable;
+}
+
+static const struct spi_nor_fixups macronix_nor_fixups = {
+    .default_init = macronix_nor_default_init,
+};
+
+static const struct flash_info x_parts[] = {
+    {
+        .id = SNOR_ID(0x1f, 0x47, 0x01),
+        .name = "at25df321a",
+        .size = SZ_4M,
+        .flags = SPI_NOR_HAS_LOCK | SPI_NOR_SWP_IS_VOLATILE,
+        .fixups = &atmel_nor_global_protection_fixups
+    }, {
+        .id = SNOR_ID(0xbf, 0x25, 0x41),
+        .name = "sst25vf016b",
+        .size = SZ_2M,
+        .flags = SPI_NOR_HAS_LOCK | SPI_NOR_SWP_IS_VOLATILE,
+    }, {
+        .id = SNOR_ID(0xef, 0x40, 0x20),
+        .name = "w25q512jvq",
+        .size = SZ_64M,
+        .flags = SPI_NOR_HAS_LOCK | SPI_NOR_HAS_TB | SPI_NOR_TB_SR_BIT6 |
+             SPI_NOR_4BIT_BP | SPI_NOR_HAS_CMP,
+    }, {
+        .id = SNOR_ID(0xc2, 0x9e, 0x16),
+        .name = "mx25l3255e",
+        .size = SZ_4M,
+        .fixups = &mx25l3255e_fixups,
+    }, {
+        .id = SNOR_ID(0xc8, 0x40, 0x19),
+        .name = "gd25q256",
+        .size = SZ_32M,
+        .fixups = &gd25q256_fixups,
+    },
+};
+
+const struct spi_nor_manufacturer spi_nor_x = {
+    .name = "x",
+    .parts = x_parts,
+    .fixups = &macronix_nor_fixups,
+};
+"""
+
+
+def test_linux_nor_registers(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "drivers/mtd/spi-nor/core.h": LINUX_CORE_H,
+            linux.SPINOR_H: SPINOR_H,
+            "drivers/mtd/spi-nor/x.c": LINUX_REGISTERS,
+        },
+    )
+    r = by_name(linux.extract_nor(tmp_path))
+    # Its fixups replace the status register locking: no bits, the claim stays.
+    at = r["AT25DF321A"]
+    assert at["protection"] is None
+    assert at["features"] == ["lock"]
+    assert "SPI_NOR_SWP_IS_VOLATILE" in at["flags"]
+    # Otherwise SPI_NOR_SWP_IS_VOLATILE makes the BP bits volatile.
+    sst = r["SST25VF016B"]["protection"]
+    assert sst["bp0"] == {"register": "sr1", "bit": 2, "writability": "volatile"}
+    assert sst["srp"] == {"register": "sr1", "bit": 7}
+    w = r["W25Q512JVQ"]
+    assert {role: (b["register"], b["bit"]) for role, b in w["protection"].items()} == {
+        "bp0": ("sr1", 2),
+        "bp1": ("sr1", 3),
+        "bp2": ("sr1", 4),
+        "bp3": ("sr1", 5),
+        "tb": ("sr1", 6),
+        "cmp": ("sr2", 6),
+        "srp": ("sr1", 7),
+    }
+    assert w["via"]["protection.tb"] == "SPI_NOR_HAS_TB; SPI_NOR_TB_SR_BIT6"
+    assert w["via"]["protection.bp3"] == "SPI_NOR_4BIT_BP"
+    # The part's own quad enable fixup is its claim; the maker's
+    # default_init (macronix_nor_fixups) is no part's.
+    mx = r["MX25L3255E"]
+    assert mx["quad_enable"] == {"register": "sr1", "bit": 6}
+    assert mx["via"]["quad_enable"] == ".fixups = &mx25l3255e_fixups"
+    assert "quad_read" in features(mx)
+    # GD25Q256: the C's bit, not the D's or E's: none, and a note.
+    gd = r["GD25Q256"]
+    assert gd["quad_enable"] is None
+    assert any("gd25q256_post_bfpt" in n for n in gd["notes"])
+
+
+def test_linux_unknown_quad_enable_fixup(tmp_path: Path) -> None:
+    text = LINUX_REGISTERS.replace("mx25l3255e_fixups", "new_fixups")
+    write(
+        tmp_path,
+        {
+            "drivers/mtd/spi-nor/core.h": LINUX_CORE_H,
+            linux.SPINOR_H: SPINOR_H,
+            "drivers/mtd/spi-nor/x.c": text,
+        },
+    )
+    with pytest.raises(ValueError, match="new_fixups sets quad_enable"):
+        linux.extract_nor(tmp_path)
 
 
 def test_linux_extract_is_both(linux_tree: Path) -> None:
@@ -357,7 +518,10 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
     # FEATURE_QPI_38 & ~FEATURE_FAST_READ_QOUT: everything but the quad output
     # read. Each bit is an operation's via, or a claim's, so none is left.
     assert e["flags"] == []
-    assert e["via"] == {"feature:lock": ".reg_bits .bp", "feature:otp": "FEATURE_OTP"}
+    assert e["via"] == {"feature:otp": "FEATURE_OTP"}
+    # .reg_bits gives the protection bits, by role: .bp is BP0, BP1, ...
+    # flashrom says how each bit is written: RW too.
+    assert e["protection"] == {"bp0": {"register": "sr1", "bit": 2, "writability": "rw"}}
     assert features(e) == [
         "dual_read",
         "erase_4k",
@@ -368,8 +532,8 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
         "qpi",
         "sfdp",
     ]
-    # Its operations and erasers imply the rest.
-    assert e["features"] == ["lock", "otp"]
+    # Its operations, erasers and protection bits imply the rest.
+    assert e["features"] == ["otp"]
     assert e["erasers"][0] == {"opcode": 0x20, "blocks": [[4096, 4096]]}
     assert e["erasers"][3] == {
         "opcode": None,
@@ -420,6 +584,51 @@ def test_flashprog_single_file(tmp_path: Path) -> None:
     assert features(e) == ["4byte_addr", "4byte_opcodes", "erase_64k"]
     assert e["features"] == []  # each is implied
     assert e["flags"] == []  # READ_1_1_1_4B, EWSR and WRSR hold them
+
+
+def test_flashprog_register_bits(tmp_path: Path) -> None:
+    # A .reg_bits as flashprog writes them (W25Q128.V's, with a fixed QE and
+    # a Macronix-style OTP TB), and the feature bits naming how SR2 and SR3
+    # are written: FEATURE_WRSR_EXT3 is the EXT2 bit and one of its own.
+    reg_bits = """.reg_bits	=
+		{
+			.qe	= {STATUS2, 1, RO}, /* Fixed QE=1 */
+			.srp    = {STATUS1, 7, RW},
+			.srl    = {STATUS2, 0, RW},
+			.bp     = {{STATUS1, 2, RW}, {STATUS1, 3, RW}, {STATUS1, 4, RW}},
+			.tb     = {CONFIG, 3, OTP},
+			.wps    = {SECURITY, 7, OTP},
+			.dc	= {{STATUS3, 0, RW}, {STATUS3, 1, RW}},
+		},
+		.block_erasers"""
+    text = FLASHPROG_C.replace(".block_erasers", reg_bits).replace(
+        "FEATURE_WRSR_EITHER | FEATURE_4BA_READ", "FEATURE_WRSR_WREN | FEATURE_WRSR_EXT3"
+    )
+    write(tmp_path, {**FLASHROM_HEADERS, "flashchips.c": text})
+    (e,) = flashrom.extract(tmp_path, "flashprog")
+    # flashprog's .qe is the quad enable bit; RO: fixed.
+    assert e["quad_enable"] == {"register": "sr2", "bit": 1, "writability": "ro"}
+    assert "quad_read" in features(e)
+    # CONFIG is read with 0x15, as SR3 is; SECURITY with RDSCUR.
+    rw = {"writability": "rw"}
+    assert e["protection"] == {
+        "bp0": {"register": "sr1", "bit": 2, **rw},
+        "bp1": {"register": "sr1", "bit": 3, **rw},
+        "bp2": {"register": "sr1", "bit": 4, **rw},
+        "tb": {"register": "sr3", "bit": 3, "writability": "otp"},
+        "srp": {"register": "sr1", "bit": 7, **rw},
+        "srl": {"register": "sr2", "bit": 0, **rw},
+        "wps": {"register": "security", "bit": 7, "writability": "otp"},
+    }
+    # flashprog reads CONFIG with RDCR (0x15) and SECURITY with RDSCUR.
+    assert ops(e)["RDSCUR"] == (0x2B, ".reg_bits SECURITY")
+    assert "lock" in features(e)
+    assert e["flags"] == []
+    given = ops(e)
+    assert given["WRSR_24"] == (0x01, "FEATURE_WRSR_EXT3")
+    assert given["WRSR_16"] == (0x01, "FEATURE_WRSR_EXT3")
+    assert given["RDSR2"] == (0x35, "FEATURE_WRSR_EXT3")
+    assert given["RDSR3"] == (0x15, "FEATURE_WRSR_EXT3; .reg_bits CONFIG")
 
 
 @pytest.mark.parametrize("comment", ["the latter supports SFDP", "F model supports SFDP"])
@@ -547,18 +756,30 @@ def test_openfpgaloader(tmp_path: Path) -> None:
     assert s["id"] == "010219"
     assert s["vendor"] == "spansion"
     assert s["size"] == 32 << 20
-    assert s["features"] == ["lock", "quad_read"]
+    # Its quad enable bit and protection bits imply lock and quad_read.
+    assert s["features"] == []
+    # CONFR (1 << 1): SR2 (read with 0x35) bit 1; TB at CONFR (1 << 5), OTP;
+    # BP0 to BP2 from bp_offset.
+    assert s["quad_enable"] == {"register": "sr2", "bit": 1}
+    assert s["protection"] == {
+        "bp0": {"register": "sr1", "bit": 2},
+        "bp1": {"register": "sr1", "bit": 3},
+        "bp2": {"register": "sr1", "bit": 4},
+        "tb": {"register": "sr2", "bit": 5, "writability": "otp"},
+    }
     assert s["erasers"] == [{"opcode": 0xD8, "blocks": [[65536, 512]]}]
     assert sector(s) == 65536
     assert s["via"] == {
         "erasers:0xd8": "sector_erase=true",
-        "feature:lock": "bp_len=3",
-        "feature:quad_read": "quad_register=CONFR",
+        "protection": "bp_len=3; bp_offset={(1 << 2), (1 << 3), (1 << 4), 0}",
+        "protection.tb": "tb_register=CONFR; tb_offset=(1 << 5); tb_otp=true",
+        "quad_enable": "quad_register=CONFR; quad_mask=(1 << 1)",
     }
     assert "quad_register=CONFR" not in s["flags"]
     assert "sector_erase=true" not in s["flags"]
     assert s["notes"][0].startswith("https://www.mouser.fr/")
-    # 32 MiB: the 4-byte forms too; no subsector_erase, so no BE_4K.
+    # 32 MiB: the 4-byte forms too; no subsector_erase, so no BE_4K;
+    # set_quad_bit() reads CONFR with 0x35 and writes it with a 2-byte WRSR.
     assert set(ops(s)) == {
         "RDID",
         "READ_1_1_1",
@@ -567,6 +788,8 @@ def test_openfpgaloader(tmp_path: Path) -> None:
         "PP_1_1_1_4B",
         "SE",
         "SE_4B",
+        "RDSR2",
+        "WRSR_16",
     }
     assert ops(s)["SE"] == (0xD8, "eraser: 512 x 65536")
     # Every read and write is its driver's, so implies nothing; the erases
@@ -580,6 +803,31 @@ def test_openfpgaloader(tmp_path: Path) -> None:
         {"opcode": 0x20, "blocks": [[4096, 4096]]},
         {"opcode": 0xD8, "blocks": [[65536, 256]]},
     ]
+    # NONER: not filled in, so no bit; bp_len 0: no block protection.
+    assert (r["W25Q128"]["quad_enable"], r["W25Q128"]["protection"]) == (None, None)
+    # Locked at power-up: the driver sends ULBPR first.
+    sst = r["SST26VF064B"]
+    assert ops(sst)["ULBPR"] == (0x98, "global_lock=true")
+    assert sst["protection"] is None
+    # Macronix's CONFR is its configuration register, read with 0x15: SR3.
+    mx = r["MX25L12833"]
+    assert mx["protection"]["tb"] == {"register": "sr3", "bit": 3, "writability": "otp"}
+    assert mx["quad_enable"] == {"register": "sr1", "bit": 6}
+    assert mx["protection"]["bp3"] == {"register": "sr1", "bit": 5}  # bp_len 5, 4 offsets
+    # A TB past the first status byte, (1 << 14), is never read: none.
+    gd = r["GD25Q32C"]
+    assert "tb" not in gd["protection"]
+    assert any(n.startswith("tb_offset=(1 << 14) left out") for n in gd["notes"])
+    # Its bp_offset bits are its sector protection status and WP pin bits,
+    # not block protect ones: no layout, and a lock claim.
+    at = r["AT25DF321A"]
+    assert at["protection"] is None
+    assert any(n.startswith("bp_offset left out") for n in at["notes"])
+    assert at["features"] == ["lock"]
+    assert "tb_offset=(1 << 3)" in at["flags"]
+    # get_tb() reads CONFR: 0x35, and on a Macronix part 0x15.
+    assert ops(s)["RDSR2"] == (0x35, "set_quad_bit: CONFR; get_tb: CONFR")
+    assert ops(mx)["RDSR3"] == (0x15, "get_tb: CONFR, Macronix")
 
 
 def test_openfpgaloader_no_map(tmp_path: Path) -> None:
@@ -605,11 +853,32 @@ def test_rockchip_nor() -> None:
     # Feature 0x05: quad read, and the status registers written together;
     # prog_cmd_4 is there, but no FEA_4BIT_PROG to use it.
     assert features(gd) == ["erase_4k", "erase_64k", "quad_read"]
-    assert gd["flags"] == ["QE_bits=9", "write_status=snor_write_status1"]
+    # QE_bits 9: register 1 (0x35), bit 1. snor_write_status1 sets it by
+    # reading SR2 and writing both registers with a 2-byte 0x01.
+    assert gd["quad_enable"] == {"register": "sr2", "bit": 1}
+    assert gd["flags"] == []
     # READ_1_1_4's via, "read_cmd_4 (FEA_4BIT_READ)", holds the bit.
-    assert gd["via"] == {}
-    assert set(ops(gd)) == {"RDID", "READ_1_1_1", "READ_1_1_4", "PP_1_1_1", "BE_4K", "SE"}
+    assert gd["via"] == {"quad_enable": "QE_bits=9"}
+    assert set(ops(gd)) == {
+        "RDID",
+        "READ_1_1_1",
+        "READ_1_1_4",
+        "PP_1_1_1",
+        "BE_4K",
+        "SE",
+        "RDSR2",
+        "WRSR_16",
+    }
     assert ops(gd)["READ_1_1_4"] == (0x6B, "read_cmd_4 (FEA_4BIT_READ)")
+    assert ops(gd)["WRSR_16"] == (0x01, "write_status=snor_write_status1")
+    # snor_write_status: SR2 with its own 0x31.
+    gd64 = r["GD25Q64B/GD25Q64C/GD25Q64E"]
+    assert {"RDSR2", "WRSR2"} <= set(ops(gd64))
+    # GD25Q256: its bit is the revision's (snor_flash_info_adjust): none.
+    gd256 = r["GD25Q256B/GD25Q256C/GD25Q256D/GD25Q256E"]
+    assert gd256["quad_enable"] is None
+    assert "QE_bits=6" in gd256["flags"]
+    assert any(n.startswith("no quad enable bit: snor_flash_info_adjust") for n in gd256["notes"])
 
     # The names in a comment, each part spelled out.
     assert "GD25Q64B/GD25Q64C/GD25Q64E" in r
@@ -635,7 +904,12 @@ def test_rockchip_nor() -> None:
     assert xm["notes"][1].startswith("prog_cmd_4 0x3e left out")
     mx = r["MX25L25635E/MX25L25635F/MX25L25645G/MX25L25645GMI-08G"]
     assert ops(mx)["PP_1_4_4_4B"] == (0x3E, "prog_cmd_4 (FEA_4BIT_PROG)")
-    assert "write_status=snor_write_status2" in mx["flags"]
+    # snor_write_status2: SR1 bit 6, written with the configuration
+    # register (read with 0x15) in a 2-byte 0x01.
+    assert mx["quad_enable"] == {"register": "sr1", "bit": 6}
+    assert ops(mx)["RDSR3"] == (0x15, "write_status=snor_write_status2")
+    assert ops(mx)["WRSR_16"] == (0x01, "write_status=snor_write_status2")
+    assert "write_status=snor_write_status2" not in mx["flags"]
     assert ops(r["MX25L6433F"])["PP_1_4_4"] == (0x38, "prog_cmd_4 (FEA_4BIT_PROG)")
 
     # Feature 0x3c: 4-byte addresses, entering 4-byte mode first.
@@ -662,9 +936,20 @@ def test_rockchip_nand() -> None:
     ]
     assert r["TC58CVG2S0HRAIJ"]["page_size"] == 4096
     assert sector(r["XT26G04A"]) == 128 * 2048
+    # No FEA_4BIT_READ: has_qe_bits=0 says nothing, and stays a flag.
+    assert tc["quad_enable"] is None
     assert r["W25N01GV"]["id"] == "efaa21"
     assert "FEA_SOFT_QOP_BIT" in r["W25N01GV"]["flags"]
     assert r["W25N01GV"]["features"] == ["quad_pp", "quad_read"]
+    # Quad reads with has_qe_bits=0: sfc_nand_init() sets no QE bit first,
+    # as NOR's QE_bits=0.
+    assert r["W25N01GV"]["quad_enable"] == "none"
+    assert r["W25N01GV"]["via"]["quad_enable"] == "has_qe_bits=0"
+    # has_qe_bits=1: bit 0 of feature 0xb0, which implies quad_read.
+    (mx,) = (x for x in recs if x["id"] == "c226")
+    assert mx["quad_enable"] == {"register": "nand-b0", "bit": 0}
+    assert "quad_read" not in mx["features"]
+    assert "quad_read" in features(mx)
     gd = r["GD5F1GQ5REYIG"]
     # A third byte repeating the manufacturer's, or 0x7f, follows the id.
     assert (gd["id"], gd["ext_id"]) == ("c841", "c8")
@@ -704,6 +989,17 @@ NAND_ENTRY = (
     "{ 0xEF, 0xAA, 0x21, 4, 0x40, 1, 1024, 0x4C, 18, 0x1, 0, "
     "{ 0x04, 0x14, 0x24, 0xFF }, &sfc_nand_get_ecc_status1 },\n"
 )
+
+
+def test_rockchip_nor_no_quad_enable_bit(tmp_path: Path) -> None:
+    # QE_bits 0 with quad reads (feature 0x05): the driver sets no bit.
+    root = rockchip_tree(tmp_path, nor=f"/* A1 */\n{NOR_ENTRY.replace(', 9, 0 }', ', 0, 0 }')}")
+    (a,) = rockchip.extract_nor(root)
+    assert a["quad_enable"] == "none"
+    assert a["via"] == {"quad_enable": "QE_bits=0"}
+    # Nothing is written, so the write function stays a flag.
+    assert {"RDSR2", "WRSR_16"}.isdisjoint(ops(a))
+    assert a["flags"] == ["write_status=snor_write_status1"]
 
 
 def test_rockchip_nor_duplicate_id(tmp_path: Path) -> None:
@@ -1308,6 +1604,61 @@ def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
     assert Record.from_json(m).sfdp_disagreements() == ()
 
 
+def test_zephyr_quad_enable_requirement(tmp_path: Path) -> None:
+    table = """sfdp-bfp = [e5 20 f1 ff ff ff ff 03 44 eb 08 6b 08 3b 04 bb
+                        ee ff ff ff ff ff 00 ff ff ff 00 ff 0c 20 0f 52
+                        10 d8 00 ff 23 72 f5 00 82 ed 04 cc 44 83 68 44
+                        30 b0 30 b0 f7 c4 d5 5c 00 be 29 ff f0 d0 ff ff];"""
+    a, b, c, d = zephyr_board(
+        tmp_path,
+        f"""gd25q16@0 {{
+            compatible = "nordic,qspi-nor";
+            jedec-id = [c8 40 15];
+            quad-enable-requirements = "S2B1v1";
+        }};
+        sst26vf064b@1 {{
+            compatible = "jedec,spi-nor";
+            jedec-id = [bf 26 43];
+            quad-enable-requirements = "S1B6";
+            requires-ulbpr;
+        }};
+        mx25r6435f@2 {{
+            compatible = "nordic,qspi-nor";
+            jedec-id = [c2 28 17];
+            {table}
+            quad-enable-requirements = "S1B6";
+        }};
+        mx25r6435f@3 {{
+            compatible = "nordic,qspi-nor";
+            jedec-id = [c2 28 17];
+            {table}
+            quad-enable-requirements = "S2B1v5";
+        }};""",
+    )
+    # The QSPI driver's requirement: stored; the bit and the register
+    # operations it says are derived.
+    assert a["quad_enable_requirement"] == "S2B1v1"
+    assert a["via"] == {"quad_enable_requirement": "quad-enable-requirements=S2B1v1"}
+    loaded = Record.from_json(a)
+    assert str(loaded.quad_enable) == "SR2 bit 1"
+    assert "quad_read" in features(a)
+    assert ops(a)["WRSR_16"] == (0x01, "quad enable requirement S2B1v1")
+    # spi_nor.c (jedec,spi-nor) ignores it: a flag. requires-ulbpr: ULBPR.
+    assert b["quad_enable_requirement"] is None
+    assert "quad-enable-requirements=S1B6" in b["flags"]
+    assert ops(b)["ULBPR"] == (0x98, "requires-ulbpr")
+    # The table's own requirement (S1B6) is derived, not stored again; one
+    # that differs is the node's, and a disagreement with its table.
+    assert c["quad_enable_requirement"] is None
+    assert c["via"]["quad_enable_requirement"] == "quad-enable-requirements=S1B6"
+    assert "quad-enable-requirements=S1B6" not in c["flags"]
+    assert Record.from_json(c).quad_enable_requirement == "S1B6"
+    assert d["quad_enable_requirement"] == "S2B1v5"
+    assert Record.from_json(d).sfdp_disagreements()[:1] == (
+        ("quad_enable_requirement", "S2B1v5", "S1B6"),
+    )
+
+
 def test_zephyr_skips(tmp_path: Path) -> None:
     # Not SPI flash, and a node nothing names; a SPI NAND part that is named.
     (nand,) = zephyr_board(
@@ -1522,14 +1873,19 @@ def test_qemu(tmp_path: Path) -> None:
     # Flags for the status register layout; the multi-line heading before Spansion.
     n = r["N25Q256A"]
     assert n["vendor"] == "Micron"
-    assert n["flags"] == []
     assert n["via"] == {
         "erasers:0x20": "ER_4K",
-        "feature:lock": "HAS_SR_BP3_BIT6; HAS_SR_TB",
+        "protection.bp3": "HAS_SR_BP3_BIT6",
         "sfdp": ".sfdp_read = m25p80_sfdp_n25q256a",
     }
-    assert n["features"] == ["lock"]
+    # The model's BP0-2 are every part's, and its TB bit 5 every HAS_SR_TB
+    # part's: only BP3 at bit 6 is the part's own, which implies lock.
+    assert n["protection"] == {"bp3": {"register": "sr1", "bit": 6}}
+    assert n["flags"] == ["HAS_SR_TB"]
+    assert n["features"] == []
+    assert "lock" in features(n)
     assert n["sfdp"] is not None
+    assert n["quad_enable"] is None
     assert r["S25SL032P"]["vendor"] == "Spansion"
     assert r["S25SL032P"]["ext_id"] == "4d00"
     assert r["S25FL016K"]["vendor"] == "Spansion"  # filed there, with a Winbond id
@@ -1633,6 +1989,34 @@ def dediprog_line(**attrs: str | None) -> str:
 def dediprog_chip(root: Path, **attrs: str | None) -> list[record.Record]:
     """The records of a table of one chip (:func:`dediprog_line`)."""
     return dediprog.extract(dediprog_tree(root, f"<x>\n{dediprog_line(**attrs)}\n</x>\n"))
+
+
+@pytest.mark.parametrize(
+    ("mask", "bit"),
+    [
+        ("0x40", {"register": "sr1", "bit": 6}),
+        ("0x00000400", {"register": "sr2", "bit": 2}),
+        ("0x00000200", None),  # the template's
+        ("0", None),
+        ("0x80", None),  # SR1 bit 7 is the status register protect bit
+        ("0x20", None),  # SR1 bit 5, a block-protect bit (EN25QH256's)
+    ],
+)
+def test_dediprog_quad_enable(tmp_path: Path, mask: str, bit: dict[str, object] | None) -> None:
+    (w,) = dediprog_chip(tmp_path, QEbitAddr=mask)
+    assert w["quad_enable"] == bit
+    assert ("quad_enable" in w["via"]) is (bit is not None)
+    # An SR1 bit other than 6 is left out with a note.
+    left_out = mask in ("0x80", "0x20")
+    assert any(n.startswith(f"QEbitAddr={mask} left out") for n in w["notes"]) is left_out
+
+
+def test_dediprog_protect_mask_is_no_layout(tmp_path: Path) -> None:
+    # ProtectBlockMask is the bits the programmer clears, not where each
+    # role is: lock stays a claim, and there is no layout.
+    (w,) = dediprog_chip(tmp_path)
+    assert w["protection"] is None
+    assert w["features"] == ["lock", "qpi"]
 
 
 def test_dediprog(tmp_path: Path) -> None:

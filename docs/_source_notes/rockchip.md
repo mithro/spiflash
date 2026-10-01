@@ -48,6 +48,22 @@ XM25QH256B, so it is left out of their records, with a note. The driver also
 changes one entry at run time: a GD25Q256 (c84019) whose parameter page says
 version 6 gets quad enable bit 9 and quad program 0x34 instead.
 
+`QE_bits` is the quad enable bit (the record's `quad_enable`): register
+`n >> 3` of those `snor_read_status()` reads (0x05, 0x35, 0x15), bit
+`n & 7`, so `QE_bits=9` is SR2 bit 1. `QE_bits=0` on a part with quad reads
+is no bit: the driver reads with four lines without setting one. The
+GD25Q256's bit depends on its revision, as above (the C's SR1 bit 6, the D's
+and E's SR2 bit 1, as {sfsrc}`linux` splits them too), so its record has
+none. To set the bit the driver reads its register, then writes it with the
+entry's `write_status` function (`feature & 3`): `snor_write_status` with
+the register's own command ([WRSR2](../opcodes/WRSR2.md) for SR2),
+`snor_write_status1` with a 2-byte 0x01 after reading SR2
+([WRSR_16](../opcodes/WRSR_16.md), [RDSR2](../opcodes/RDSR2.md)), and
+`snor_write_status2`, Macronix's, with a 2-byte 0x01 of SR1 and the
+configuration register, read with 0x15 ([RDSR3](../opcodes/RDSR3.md)). The
+records have those operations; a part whose bit is in SR1, written with a
+plain 0x01, needs none more.
+
 For an SPI NAND entry, `sfc_nand_init()` in sfc_nand.c:
 
 - the id is read with 0x9f and an address byte, like {sfsrc}`linux`'s
@@ -62,7 +78,11 @@ For an SPI NAND entry, `sfc_nand_init()` in sfc_nand.c:
   blocks, which `density` agrees with in every entry;
 - `FEA_4BIT_READ` and `FEA_4BIT_PROG` are quad read (0x6b) and quad program
   load (0x32). SPI NAND records have no opcodes, as {sfsrc}`linux`'s have
-  none.
+  none;
+- `has_qe_bits=1` is a quad enable bit, bit 0 of the configuration feature
+  (0xb0), which `sfc_nand_enable_QE()` sets before quad reads; with
+  `has_qe_bits=0` a part with quad reads is read with four lines setting
+  nothing, as a SPI NOR entry's `QE_bits=0` is: no bit.
 
 An SPI NAND id is two bytes where the third is 0. It is the same chip as
 {sfsrc}`linux`'s id for the same part wherever Linux matches the same bytes,
@@ -89,14 +109,12 @@ id is never used, and its record says which line wins
 
 The raw fields are kept in the record's `flags`: the feature bits that give
 no capability (`FEA_SOFT_QOP_BIT`, ...; `FEA_4BIT_READ` and the others that
-do are the capability's `via`), and the following fields, which the
-database has no field for yet:
+do are the capability's `via`), the function writing the status registers
+where it sends nothing the record has as an operation
+(`write_status=snor_write_status`), `has_qe_bits=0` on a part without quad
+reads, which says nothing, and the following fields, which the database has
+no field for yet:
 
-- the SPI NOR quad enable bit (`QE_bits=9`: status register 2, bit 1) and
-  the function that writes the status registers
-  (`write_status=snor_write_status1`: both registers in one write);
-- whether an SPI NAND part has a quad enable bit (`has_qe_bits=1`: bit 0 of
-  feature register 0xb0);
 - the ECC strength its FTL expects (`max_ecc_bits=8`);
 - where the FTL keeps its metadata in the spare area
   (`meta={ 0x04, 0x08, 0xFF, 0xFF }`);

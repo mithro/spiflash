@@ -47,7 +47,7 @@ def test_linux_page() -> None:
     linux = [r for r in db.records if r.source == "linux"]
     assert f"{len(linux)} entries" in page
     assert "SPI NAND" in page
-    assert "It gives no supply voltage, test status or SFDP dump." in page
+    assert "It gives no supply voltage, quad enable requirement, test status or SFDP dump." in page
     # Its claims and what its operations and erasers imply are counted apart.
     assert "Capabilities it claims" in page
     assert "Capabilities it implies" in page

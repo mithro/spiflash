@@ -18,3 +18,12 @@ sector size is an erase layout, 0xd8 over the `INFO` sectors (and 0x20 or
 part, and the quad page program it adds for every `SPI_NOR_QUAD_READ` part,
 are its driver's defaults, as are their 4-byte forms: they imply no
 capability.
+
+`SPI_NOR_HAS_LOCK` gives the block-protection bits its
+{upstream}`spi-nor.h <u-boot:include/linux/mtd/spi-nor.h>` defines (BP0 to
+BP2 and SRWD), as {sfsrc}`linux`'s flags do. `SPI_NOR_HAS_TB` gives no TB:
+U-Boot has only `SR_TB`, bit 5, for every part, and no flag for the bit 6
+of the W25Q256 and W25Q512 families, so the bit is its driver's, and the
+flag stays a flag. An
+`SPI_NOR_HAS_SST26LOCK` part locks with a block protection register instead:
+no bits, a `lock` claim, and [ULBPR](../opcodes/ULBPR.md) to unlock it.

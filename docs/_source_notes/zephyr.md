@@ -10,8 +10,12 @@ some with placeholder ids.
 - A node gives the id, the size (in bits in the JESD216-based bindings), and,
   where the board sets them, the page size, the read and program modes it
   uses (`readoc`, `writeoc`, the MSPI I/O mode) and what the chip needs
-  (`has-dpd`, `quad-enable-requirements`, `enter-4byte-addr`, ...), kept in
-  the record's `flags`.
+  (`has-dpd`, `enter-4byte-addr`, ...), kept in the record's `flags`.
+  `quad-enable-requirements` is JESD216's quad enable requirement, the
+  record's `quad_enable_requirement` (which gives its quad enable bit), but
+  on a `jedec,spi-nor` node, whose driver takes the requirement from the
+  BFPT and ignores the property: there it stays a flag. `requires-ulbpr`
+  gives [ULBPR](../opcodes/ULBPR.md).
 - About a fifth of the nodes carry a copy of the chip's own SFDP Basic
   Flash Parameter table (`sfdp-bfp`), and a few its 4-byte instruction and
   xSPI profile tables (`sfdp-ff84`, `sfdp-ff05`). The record stores them (its

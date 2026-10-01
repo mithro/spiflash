@@ -390,6 +390,50 @@ def test_sfdp_to_entry_to_sfdp_loses_only_what_is_documented() -> None:
         }, (r.name, d.tables)
 
 
+def test_encode_writes_the_quad_enable_requirement() -> None:
+    # A requirement a source gives goes in DW15, and reads back.
+    r = rec(quad_enable_requirement="S2B1v4")
+    out = encode(r, assume=True)
+    bfpt = out.sfdp.bfpt
+    assert bfpt is not None
+    assert bfpt.quad_enable == 4
+    assert not any(line.startswith("DW15: the quad enable") for line in out.assumed)
+    back = Record.from_json(to_entry(out.sfdp) | IDENTITY)
+    assert (back.quad_enable_requirement, str(back.quad_enable)) == ("S2B1v4", "SR2 bit 1")
+    # Without assume, 1.0, which has no DW15: the requirement is listed lost.
+    assert "DW15: the quad enable requirement, S2B1v4, known but left out" in encode(r).missing
+    # None known: written as 0, and said so.
+    assert "DW15: the quad enable requirement, written as 0, no QE bit" in (
+        encode(rec(), assume=True).assumed
+    )
+
+
+def test_encode_writes_no_requirement_the_qe_bit_contradicts() -> None:
+    # SR1 bit 6 has one code, S1B6: written, with the 1-byte write assumed.
+    out = encode(rec(quad_enable={"register": "sr1", "bit": 6}), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.quad_enable == 2
+    assert any(a.startswith("DW15: how the QE bit (SR1 bit 6) is written") for a in out.assumed)
+    # No QE bit: NONE, which the database says.
+    out = encode(rec(quad_enable="none"), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.quad_enable == 0
+    assert not any(a.startswith("DW15: the quad enable") for a in out.assumed)
+    # SR2 bit 1, not how it is written: never 0 ("no QE bit"); the reserved
+    # 7, which reads back as no requirement, and listed missing.
+    out = encode(rec(quad_enable={"register": "sr2", "bit": 1}), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.quad_enable == 7
+    assert out.sfdp.facts().quad_enable_requirement is None
+    said = "DW15: the quad enable requirement: the QE bit is SR2 bit 1, but not how it is written"
+    assert said in out.missing
+    # The shipped chips: c22018's SR1 bit 6, ef4018's SR2 bit 1.
+    for key, code in (("c22018", 2), ("ef4018", 7)):
+        bfpt = encode(chip(key), assume=True).sfdp.bfpt
+        assert bfpt is not None
+        assert bfpt.quad_enable == code, key
+
+
 def test_encode_never_invents() -> None:
     # A part with no page size: 1.0 without assume, and missing says why.
     r = rec(page_size=None, erasers=[{"opcode": 0x20, "blocks": [[4096, 4096]]}])
@@ -457,7 +501,7 @@ def test_encode_qpi_sequences_land_in_their_dw15_bits() -> None:
     dw15 = encode(chip("852017"), assume=True).sfdp.bfpt
     assert dw15 is not None
     assert (dw15.qpi_enable, dw15.qpi_disable, dw15.mode_0_4_4) == (("0x38",), ("0xff",), False)
-    assert dw15.dwords[14] == 0xFF000021
+    assert dw15.dwords[14] & ~(7 << 20) == 0xFF000021  # the QER aside
     # diff compares 0-4-4 mode.
     with_044 = parse(W25Q512JV)
     assert with_044.bfpt is not None
