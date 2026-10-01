@@ -284,6 +284,19 @@ NOT_THE_PARTS = {
     ),
 }
 
+#: ``jedec-id``\ s a node gives wrongly, by file and the id it gives: the
+#: part's id, and why. The record has the part's, with a note.
+ID_WRONG = {
+    ("boards/ct/ctcc/ctcc_nrf9161_common.dtsi", "c22538"): (
+        "c22817",
+        (
+            "c2 25 38 is the 128 Mbit 1.8 V MX25U12835F's; the node's MX25R6435F (its "
+            "name, its 64 Mbit size and its dpd-wakeup-sequence are the MX25R's) answers "
+            "c2 28 17 (its datasheet, Rev. 1.6)"
+        ),
+    ),
+}
+
 #: Quad enable requirements a node gives wrongly, by chip id and the code
 #: it gives: the code the part's datasheet gives, and why. The record
 #: stores the datasheet's, with a note.
@@ -487,6 +500,12 @@ class _Node:
         elif binding.chip_vendor:
             vendor = binding_name.split(",")[0]
         jedec_id = dts.bytestring(self.props["jedec-id"] or "")
+        id_notes = []
+        wrong_id = ID_WRONG.get((self.rel, jedec_id.hex()))
+        if wrong_id is not None:
+            fixed, why = wrong_id
+            id_notes.append(f"jedec-id {jedec_id.hex()} is not the part's: {why}")
+            jedec_id = bytes.fromhex(fixed)
 
         self.ops.add("RDID", "jedec-id")
         size = next(
@@ -498,6 +517,7 @@ class _Node:
         if binding_name in PAGE_SIZE_IS_THE_DRIVERS and "page-size" in self.props:
             driver_page, page_size = page_size, None
         self.notes = [n for n in _comments(self.text, self.node) if not states_size(n, size)]
+        self.notes += id_notes
         # The tables' facts are derived at load (spiflash.sfdp); make()
         # drops a size or page size they repeat. Zephyr's spi_nor driver
         # refuses a size the BFPT contradicts, and other drivers use the

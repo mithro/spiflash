@@ -167,8 +167,9 @@ MACRONIX = 0xC2
 NOT_BLOCK_PROTECT = {
     0x1F4701: (
         "bp_offset left out: the AT25DF321A's status register bits 2 to 4 are its "
-        "sector protection status (SWP) and write protect pin (WPP) bits; it "
-        "protects by sector, with global protect and unprotect"
+        "sector protection status (SWP) and write protect pin (WPP) bits (its datasheet, "
+        "3686I, Table 11-1, p. 30); it protects by sector, with global protect and "
+        "unprotect, so the mask can unprotect it but never protect it"
     ),
 }
 

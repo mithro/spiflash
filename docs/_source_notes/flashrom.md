@@ -102,7 +102,13 @@ datasheet's, with a note (`ENTRY_WRONG`, both sources):
 - GigaDevice's 1.8 V GD25LQ, GD25LB, GD25LR and GD25LF entries give 1.695 V
   ({sfsrc}`flashrom`) or 1.65 V ({sfsrc}`flashprog`) to 1.95 V: their
   datasheets give 1.65 V to 2.0 V (2.1 V for the GD25LQ16C and E);
-- the XM25QH64C is a 2.3 V to 3.6 V part, not 2.7 V.
+- the XM25QH64C is a 2.3 V to 3.6 V part, not 2.7 V;
+- the W25Q128JW is a 1.7 V to 1.95 V part ("W25Q128.JW.DTR"), and
+  "W25Q128.W" covers it and the 1.65 V W25Q128FW: the range they share.
+
+An SST entry written a byte or a word (AAI) at a time (`spi_chip_write1`,
+`spi_aai_write`) has no page size: the part has no page program, and its
+`.page_size` is no page (the SST25VF010A has Byte-Program and AAI only).
 
 And some OTP comments' sizes (`OTP_SIZE_WRONG`): the GD25LQ128D and E, the
 GD25Q127C and the GD25Q128E have three 1024-byte security registers, not

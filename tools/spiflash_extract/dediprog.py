@@ -193,7 +193,8 @@ RES2_MAKERS = {0x62: "Sanyo"}
 
 _NO_RES = (
     "the M25PX parts answer 0xab only as release from deep power-down, with no "
-    "signature (M25PX80 datasheet, Rev. B, the command table)"
+    "signature (the command tables of their datasheets: M25PX80 Rev. B, M25PX16 "
+    "pp. 18 and 40, M25PX32 p. 24, M25PX64 p. 27)"
 )
 
 #: ``AlternativeID`` (or ``UniqueID``) values that are wrong, by part and

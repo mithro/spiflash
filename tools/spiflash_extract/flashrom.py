@@ -289,6 +289,23 @@ ENTRY_WRONG: dict[str, dict[str, tuple[Any, str]]] = {
             'the XM25QH64C datasheet (Rev. 1.6) gives "Full voltage range: 2.3-3.6V"',
         )
     },
+    # Winbond: the W25Q128JW is 1.7-1.95 V (its datasheet, Rev. I: "W = 1.7V
+    # to 1.95V"), the W25Q128FW 1.65-1.95 V.
+    "W25Q128.W": {
+        "voltage": (
+            (1700, 1950),
+            (
+                "the entry covers the W25Q128FW (1.65 V to 1.95 V) and the W25Q128JW "
+                "(1.7 V to 1.95 V, its datasheet, Rev. I): the range they share"
+            ),
+        )
+    },
+    "W25Q128.JW.DTR": {
+        "voltage": (
+            (1700, 1950),
+            'the W25Q128JW datasheet (Rev. I) gives "W = 1.7V to 1.95V"',
+        )
+    },
 }
 
 
@@ -382,6 +399,12 @@ def otp(note: str) -> tuple[dict[str, int], list[str]] | None:
 
 
 _SKIP_IDS = {"GENERIC_MANUF_ID", "PROGMANUF_ID", "GENERIC_DEVICE_ID", "SFDP_DEVICE_ID"}
+
+#: SST's JEDEC byte, and the write routines that send a byte (or an AAI
+#: word) at a time: an SST entry with one has no page program, so its
+#: ``.page_size`` is no page.
+SST = 0xBF
+BYTE_WRITES = frozenset({"spi_chip_write1", "spi_chip_write_1", "spi_aai_write", "spi_write_aai"})
 
 #: The comments naming the 1-1-1 fast read: ``Fast read (0x0B) supported``,
 #: ``Fast read (0x0B) and multi I/O supported``, ``also fast read 0x0B``.
@@ -712,6 +735,12 @@ def _record(
         limits = cparse.split_top(f["voltage"].strip()[1:-1])
         voltage = [cparse.evaluate(v, symbols) for v in limits]
     page = cparse.evaluate(f["page_size"], symbols) if "page_size" in f else None
+    write = f.get("write", "").strip().lower()
+    if (mfr & 0xFF) == SST and write in BYTE_WRITES and page is not None:
+        # SST's parts written a byte or a word (AAI) at a time have no page
+        # program (the SST25VF010A datasheet: Byte-Program and AAI only), and
+        # flashrom's write routine uses no page: no page size.
+        page = None
     eraser_via = {f"erasers:0x{e['opcode']:02x}": e.pop("via") for e in erasers if "via" in e}
     size, page, voltage = corrected(name, size, page, voltage, erasers, notes)
     tested = " ".join(f.get("tested", "").split()) or None

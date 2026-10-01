@@ -158,6 +158,11 @@ _MX25V = (
 #: What is known of an issue, by its chip and value: why the sources
 #: disagree where that is not plain from their answers.
 EXPLAINED = {
+    ("c22817", "timings.dpd_exit.maximum"): (
+        "ctcc_nrf9161's dpd-wakeup-sequence gives tRDP 30 µs; the MX25R6435F datasheet "
+        "(Rev. 1.6) gives 35 µs in ultra low power mode and 45 µs in high performance "
+        "mode, and its BFPT 40 µs: the board's is short."
+    ),
     ("c22817", "timings.erase_resume_to_suspend.typical"): (
         "Two versions of the MX25R6435F's BFPT, which Zephyr's boards copy, differ in DW12's "
         "erase resume-to-suspend interval alone."

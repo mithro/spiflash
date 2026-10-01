@@ -104,6 +104,9 @@ some with placeholder ids.
   manufacturer.
 - Boards often share a chip: nodes that give the same values are one record,
   at the first file, with a note listing the others.
+- ctcc_nrf9161's MX25R6435F node gives the MX25U12835F's `jedec-id`, c2 25 38:
+  its name, size and wake-up sequence are the MX25R6435F's, so the record
+  has that part's c2 28 17, with a note (`ID_WRONG`).
 - The node's comments are the record's notes, but one that only gives the
   node's size ("64 Mbits", "134217728 bits = 16 Mbytes"), which the record
   holds.

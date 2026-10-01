@@ -41,10 +41,14 @@ def test_id_timing(capsys: pytest.CaptureFixture[str]) -> None:
     # -v: every time, each value with who gives it; and the clock.
     _, out = run(capsys, "id", "c22817", "-v")
     # Compared at SFDP resolution (35 µs and 40 µs agree), shown as given.
-    assert "    time: dpd_exit maximum: 35 µs (zephyr); 40 µs (zephyr (SFDP))" in out
+    assert (
+        "    time: dpd_exit maximum: 30 µs (zephyr); 35 µs (zephyr); 40 µs (zephyr (SFDP))" in out
+    )
     assert "    time: block_erase:0x20 maximum: 384 ms (zephyr (SFDP))" in out
     assert "    clock: Dediprog lists 70 MHz" in out
-    assert "sources disagree on timings.dpd_exit.maximum" not in out
+    # ctcc_nrf9161's 30 µs is shorter than the datasheet's 35 µs.
+    expected = "sources disagree on timings.dpd_exit.maximum: 30 µs (zephyr); 35 µs (zephyr)"
+    assert expected in out
     _, js = run(capsys, "id", "c22817", "--json")
     (chip,) = json.loads(js)
     assert chip["timings"]["dpd_exit"]["maximum"]["value"] == 35_000
