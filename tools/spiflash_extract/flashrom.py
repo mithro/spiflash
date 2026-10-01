@@ -285,6 +285,15 @@ def id_bytes(
     if model > 0xFFFF:
         msg = f"a model id of more than two bytes, 0x{model:x}, from probe {probe!r}"
         raise ValueError(msg)
+    if mfr > 0xFF and probe != "SPI_RDID4":
+        # An answer starting 0x7f is 7f, the maker, then the model:
+        # flashrom's rdid_get_ids() (spi25.c) reads one model byte for
+        # PROBE_SPI_RDID (PMC's 7f 9d 22) and two for PROBE_SPI_RDID4
+        # (AMIC's 7f 37 20 10); flashprog's probe_spi_rdid() reads four
+        # bytes where it can, three where not, so its ID_SPI_RDID model is
+        # as wide as the table writes it (PMC_PM25LD020 0x22, AMIC_A25L05PT
+        # 0x2020).
+        return _hex_bytes(mfr) + _hex_bytes(model), None
     return _hex_bytes(mfr) + f"{model:04x}", None
 
 

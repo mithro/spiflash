@@ -790,6 +790,16 @@ def test_flashrom_only_big_spansion_has_an_extended_id() -> None:
         flashrom.id_bytes("rdid", 0x01, 0x20180080, "SPI_RDID")
 
 
+def test_flashrom_continuation_id_has_a_one_byte_model() -> None:
+    # rdid_get_ids(): 3 bytes starting 0x7f are 7f, the maker, one model
+    # byte (PMC's PM25LD020 is 7f 9d 22); RDID4 reads two (AMIC's), and
+    # flashprog's ID_SPI_RDID as many as the table writes.
+    assert flashrom.id_bytes("rdid", 0x7F9D, 0x22, "SPI_RDID") == ("7f9d22", None)
+    assert flashrom.id_bytes("rdid", 0x7F37, 0x2010, "SPI_RDID4") == ("7f372010", None)
+    assert flashrom.id_bytes("rdid", 0x7F37, 0x2020, "SPI_RDID") == ("7f372020", None)
+    assert flashrom.id_bytes("rdid", 0x7F37, 0x20, "SPI_RDID4") == ("7f370020", None)
+
+
 def flashrom_micron(tmp_path: Path) -> record.Record:
     """flashrom's MT25QL01G, from the fixture."""
     write(
