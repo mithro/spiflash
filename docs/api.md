@@ -506,3 +506,9 @@ Changes in data format 11 (the final verification pass):
   `EraseCmd`, {sfsrc}`openocd`'s `chip_erase_cmd`);
   {py:attr}`Record.erasers <spiflash.model.Record.erasers>` gives it as
   before. Every stored layout is over the record's size.
+- {py:data}`spiflash.vendors.SUCCESSORS` and {py:func}`spiflash.vendors.company`
+  are new: the company a maker's flash parts went to (Atmel, Adesto, Dialog,
+  Renesas; ST and Intel, Numonyx, Micron; Spansion, Cypress, Infineon; SST,
+  Microchip; ...). A MANUFACTURER data issue is now one where the sources
+  name different companies, not one company's successive names: 194 issues
+  become 85;

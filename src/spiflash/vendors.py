@@ -124,6 +124,41 @@ _ALIASES = {
 }
 
 
+#: Each flash maker's successor: the company its flash parts went to, by
+#: acquisition or a change of name, so that one part's sources may name
+#: either. Atmel's serial flash went to Adesto (2012), Adesto to Dialog
+#: (2020) and Dialog to Renesas (2021); ST's and Intel's NOR flash to
+#: Numonyx (2008), and Numonyx to Micron (2010); Spansion merged into
+#: Cypress (2015), and Cypress into Infineon (2020); SST went to Microchip
+#: (2010), Sanyo's semiconductors to ON Semiconductor (2011), Toshiba's
+#: memory became Kioxia (2019), and PMC (Chingis) became part of ISSI.
+SUCCESSORS = {
+    "Atmel": "Adesto",
+    "Adesto": "Dialog",
+    "Dialog": "Renesas",
+    "ST": "Numonyx",
+    "Intel": "Numonyx",
+    "Numonyx": "Micron",
+    "Spansion": "Cypress",
+    "Cypress": "Infineon",
+    "SST": "Microchip",
+    "Sanyo": "ON Semiconductor",
+    "Toshiba": "Kioxia",
+    "PMC": "ISSI",
+}
+
+
+def company(vendor: str | None) -> str | None:
+    """The company a maker's flash parts are with now: ``vendor`` (a
+    :func:`canonical` name) followed through :data:`SUCCESSORS`
+    (``"Atmel"`` is ``"Renesas"``); another name comes back unchanged."""
+    seen = set()
+    while vendor in SUCCESSORS and vendor not in seen:
+        seen.add(vendor)
+        vendor = SUCCESSORS[vendor]
+    return vendor
+
+
 def canonical(vendor: str | None) -> str | None:
     """The display name for an upstream's vendor spelling; unknown spellings
     come back unchanged."""

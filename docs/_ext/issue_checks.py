@@ -24,6 +24,7 @@ from spiflash.model import (
     register_bits,
     same_supply_part,
 )
+from spiflash.vendors import company
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -111,7 +112,12 @@ _ISSUE_TITLES = {
     ),
     IssueKind.MANUFACTURER: (
         "Sources disagree on the manufacturer",
-        "Sources name different manufacturers for one chip id.",
+        (
+            "Sources name different manufacturers for one chip id: different "
+            "companies, not one company's successive names (Atmel, Adesto and "
+            "Renesas; ST, Numonyx and Micron; Spansion, Cypress and Infineon; SST "
+            "and Microchip; ...)."
+        ),
     ),
     IssueKind.DATASHEET: (
         "Ids the datasheets don't give",
@@ -498,9 +504,12 @@ def _name_ids(flashes: Iterable[Flash]) -> Iterator[Issue]:
 
 
 def _manufacturers(flashes: Iterable[Flash]) -> Iterator[Issue]:
+    """One issue per chip whose sources name more than one company: one
+    company's successive names (Atmel, Adesto, Renesas:
+    :data:`spiflash.vendors.SUCCESSORS`) are not a disagreement."""
     for f in flashes:
         answers = _answers((r.manufacturer, r) for r in f.records)
-        if len(answers) > 1:
+        if len({company(a.value) for a in answers}) > 1:
             yield Issue(IssueKind.MANUFACTURER, f.key, (f,), answers)
 
 

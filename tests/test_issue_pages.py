@@ -6,7 +6,7 @@ import spiflash
 from issue_checks import EXPLAINED, IssueKind, find
 from issue_pages import VALUE_TITLES, chip_issues, generate_all
 from page_markup import EM_SPACE, EN_DASH
-from spiflash import Database, Datasheet
+from spiflash import Database, Datasheet, vendors
 from spiflash.enums import Source
 from spiflash.model import COMPARED, part_key
 from spiflash.registers import Register, RegisterBit
@@ -201,10 +201,16 @@ def test_legacy_ids_and_wildcards_are_not_name_issues() -> None:
 
 
 def test_manufacturers() -> None:
-    db = Database([rec(vendor="Spansion", id="012018"), rec(vendor="Cypress", id="012018")])
+    db = Database([rec(vendor="Winbond", id="012018"), rec(vendor="Spansion", id="012018")])
     (issue,) = find(db)
     assert issue.kind is IssueKind.MANUFACTURER
-    assert {a.value for a in issue.answers} == {"Spansion", "Cypress"}
+    assert {a.value for a in issue.answers} == {"Winbond", "Spansion"}
+    # One company's successive names are not two manufacturers.
+    db = Database([rec(vendor="Spansion", id="012018"), rec(vendor="Cypress", id="012018")])
+    assert find(db) == []
+    assert vendors.company("Atmel") == vendors.company("Renesas") == "Renesas"
+    assert vendors.company("ST") == vendors.company("Intel") == "Micron"
+    assert vendors.company("Winbond") == "Winbond"
 
 
 def datasheet(parts: list[str], confirmed: list[str]) -> Datasheet:
