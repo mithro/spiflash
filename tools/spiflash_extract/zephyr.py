@@ -247,6 +247,19 @@ TIMES: dict[str, tuple[str, TimingKey, Bound, int]] = {
     ),
 }
 
+#: Boards whose reset times are their own, not the part's, by directory,
+#: and why: the st_b_m2mem_pack1 shield's overlays
+#: (``b_m2mem_pack1_mb1927_33ba.overlay:31-38``) say "The reset line
+#: drives the module LDO enable, so a reset is a power cycle", and give
+#: every module a 5 ms pulse and a 10 ms recovery for the rail, not the
+#: part's RESET# times.
+BOARD_MARGINS = {
+    "boards/shields/st_b_m2mem_pack1/": (
+        "the shield's reset is a power cycle of the module (its LDO enable), "
+        "so its times are the rail's, not the part's RESET# times"
+    ),
+}
+
 #: ``dpd-wakeup-sequence``: three times in nanoseconds, "(1) tDPDD (Delay
 #: Time for Release from Deep Power-Down Mode) (2) tCDRP (CSn Toggling Time
 #: before Release from Deep Power-Down Mode) (3) tRDP (Recovery Time for
@@ -568,6 +581,10 @@ class _Node:
         via: dict[str, list[str]] = {}
         for prop, (_binding, key, bound, unit) in TIMES.items():
             n = self.cell(prop)
+            margin = next((why for d, why in BOARD_MARGINS.items() if self.rel.startswith(d)), None)
+            if n and prop.startswith("t-reset-") and margin:
+                self.notes.append(f"{prop}={n} not read: {margin}")
+                continue
             if n and prop.endswith("-dpd-delay") and "use-udpd" in self.props:
                 # The AT45's times are then Ultra-Deep Power-Down's.
                 self.notes.append(f"{prop}={n} not read: use-udpd, so ultra-deep power-down's")

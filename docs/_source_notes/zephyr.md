@@ -28,9 +28,13 @@ some with placeholder ids.
   NAND's `*-duration-max` (in µs) would be maxima, but no node naming its
   part gives them (the two that do name it only in a comment). The
   st_b_m2mem_pack1 shield's 5 ms reset pulse and 10 ms recovery, on every
-  module it carries, are its board's margin (its overlay: "a reset is a
-  power cycle"), and are kept as the node's, with that comment as their
-  note; no other source gives those parts a reset time to disagree with. A `t-exit-dpd` is often more precise than the BFPT's DW14, which
+  module it carries, are not taken: its reset line drives the module's
+  supply (its overlay: "The reset line drives the module LDO enable, so a
+  reset is a power cycle"), so they are the rail's, not the part's RESET#
+  times, and a note says so
+  ({py:data}`~spiflash_extract.zephyr.BOARD_MARGINS`). Some `t-exit-dpd`s
+  are a board's margin too: the GD25Q16C boards' 100 µs, where its
+  datasheet's tRES1 is 20 µs. A `t-exit-dpd` is often more precise than the BFPT's DW14, which
   rounds it up (the MX25R6435F's 35 µs is 40 µs there): it is kept, and is
   no disagreement; nrf7002dk's 5 µs is ([data issues](../issues/sfdp.md)).
   `spi-max-frequency` and the other clock and controller properties are the
