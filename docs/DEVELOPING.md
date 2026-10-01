@@ -51,6 +51,10 @@ uv sync --group dev --group docs
 uv run ruff check && uv run ruff format --check && uv run mypy && uv run pytest
 ```
 
+The tests build the site's generated pages too ({repo}`docs/_ext/`), so
+they need Sphinx: the `dev` group includes the `docs` one, and a plain
+`uv run pytest` installs both.
+
 Those four are what the `test` job of {repo}`.github/workflows/deb.yml` runs,
 on Python 3.11 to 3.14. A green run is what "mergeable" means, and on `main`
 what publishes. `uv run ruff format` applies the formatting.

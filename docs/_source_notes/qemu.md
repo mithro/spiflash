@@ -10,9 +10,10 @@ emulate: `INFO(name, jedec_id, ext_id, sector_size, n_sectors, flags)`,
 under a comment naming the vendor. So its geometry rarely adds anything, and
 as the model decodes every opcode for every part (its `FlashCMD` enum), the
 table says little per part beyond its geometry and its `ER_4K`/`ER_32K`
-flags. Its model keeps BP0 to BP2 at SR1 bits 2 to 4 for every part, so
-those are no part's own; `HAS_SR_TB` (TB at bit 5) and `HAS_SR_BP3_BIT6`
-are, and are all of a record's `protection`. The read, fast read, page program and chip erases it decodes for every
+flags. Its model keeps BP0 to BP2 at SR1 bits 2 to 4 for every part, and
+TB at bit 5 for every `HAS_SR_TB` part, so those are no part's own:
+`HAS_SR_TB` is a `lock` claim, and `HAS_SR_BP3_BIT6` (BP3 at bit 6) all of
+a record's `protection`. The read, fast read, page program and chip erases it decodes for every
 part are its defaults, which imply no capability.
 
 It is alone, though, in carrying complete SFDP

@@ -217,8 +217,14 @@ Changes in data format 7 (register bits):
   `{"register": "sr2", "bit": 1}`, or `"none"`),
   `"quad_enable_requirement"` (`"S2B1v4"`, ...) and `"protection"` (register
   bits by role, `{"bp0": {...}, "tb": {...}}`), each `null` where the entry
-  says nothing ({py:mod}`spiflash.registers`); a `"via"` key may name a
-  role (`"protection.tb"`);
+  says nothing ({py:mod}`spiflash.registers`); a register bit has
+  `"writability"` only where its source says how it is written; a `"via"`
+  key may name a role (`"protection.tb"`);
+- sources are compared on where a register bit is, not on how it is
+  written ({py:meth}`Record.compared <spiflash.model.Record.compared>`,
+  {py:func}`~spiflash.model.compared_value`), so
+  {py:meth}`Flash.values <spiflash.model.Flash.values>` gives a bit without
+  its writability, and a chip's bit is written as most sources saying so say;
 - {py:class}`~spiflash.model.Record` has
   {py:attr}`~spiflash.model.Record.quad_enable_claim`,
   {py:attr}`~spiflash.model.Record.quad_enable_requirement_claim` and

@@ -1390,10 +1390,19 @@ source = { editable = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "furo" },
     { name = "mypy" },
+    { name = "myst-parser" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "sphinx", version = "9.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sphinx-copybutton" },
+    { name = "sphinx-design" },
+    { name = "sphinxcontrib-wavedrom" },
+    { name = "types-docutils" },
+    { name = "wavedrom" },
 ]
 docs = [
     { name = "furo" },
@@ -1411,10 +1420,18 @@ docs = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "furo", specifier = ">=2024.8" },
     { name = "mypy", specifier = ">=1.11" },
+    { name = "myst-parser", specifier = ">=4" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=5.0" },
     { name = "ruff", specifier = ">=0.6" },
+    { name = "sphinx", specifier = ">=8" },
+    { name = "sphinx-copybutton", specifier = ">=0.5" },
+    { name = "sphinx-design", specifier = ">=0.6" },
+    { name = "sphinxcontrib-wavedrom", specifier = ">=3.0" },
+    { name = "types-docutils" },
+    { name = "wavedrom", specifier = ">=2.0" },
 ]
 docs = [
     { name = "furo", specifier = ">=2024.8" },

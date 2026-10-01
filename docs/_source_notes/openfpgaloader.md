@@ -19,8 +19,11 @@ status register bits:
   Its `get_tb()` means to read that one with 0x15, but tests a four-byte id
   against two bytes, so never does. A TB of `(1 << 14)` (the GD25Q16C and
   GD25Q32C, whose comment says it is CMP) is past the one byte `get_tb()`
-  reads, and the AT25DF321A's is one of its BP bits: neither is taken, and
-  a note says why. `tb_otp` makes it one-time programmable;
+  reads: not taken, and a note says why. `tb_otp` makes it one-time
+  programmable;
+- the AT25DF321A's `bp_offset` bits 2 to 4 are its sector protection status
+  and write protect pin bits (SWP, WPP), not block-protect bits: its record
+  has no layout, a `lock` claim and a note;
 - `quad_register` and `quad_mask` are the quad enable bit its
   `set_quad_bit()` sets; `NONER` or a mask of 0 is "not filled in" (its
   error says "or spiFlashdb must be updated"), so no bit. The GD25Q32C's

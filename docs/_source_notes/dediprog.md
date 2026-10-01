@@ -95,8 +95,10 @@ already names one as where it came from (`via`). `QEbitAddr` is the quad
 enable bit, a mask over the status registers (SR1 its low byte, then SR2):
 `0x40` is SR1 bit 6. Its template's `0x200` (SR2 bit 1, on 255 of 356
 Macronix parts and 89 of 90 Micron ones, whose bit is elsewhere or none) and
-`0` say nothing of the part, and the MX25U51271G's `0x80` is SR1 bit 7, its
-status register protect bit: none of them is taken. `ProtectBlockMask` is
+`0` say nothing of the part, and are not taken; nor is an SR1 bit other
+than 6, which is a status, block-protect or SRWD bit (the MX25U51271G's
+`0x80` is SRWD, the EN25QH256's `0x20` its BP3, a part whose SFDP says it
+has no QE bit), and a note says so. `ProtectBlockMask` is
 the bits its software clears to unprotect the part, not where each role is
 (0x9C on the W25Q128FV, 0xFC on the W25Q128JV, whose bits are the same), so
 it gives only the `lock` claim. The entry has much that the

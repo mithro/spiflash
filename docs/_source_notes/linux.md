@@ -43,7 +43,8 @@ capability.
 bits as {upstream}`swp.c <linux:drivers/mtd/spi-nor/swp.c>` uses them: BP0
 to BP2 and SRWD in SR1, BP3 for `SPI_NOR_4BIT_BP` (bit 5, or 6 with
 `SPI_NOR_BP3_SR_BIT6`), TB for `SPI_NOR_HAS_TB` (bit 5, or 6 with
-`SPI_NOR_TB_SR_BIT6`), CMP in SR2 for `SPI_NOR_HAS_CMP`; with
+`SPI_NOR_TB_SR_BIT6`), CMP in SR2 for `SPI_NOR_HAS_CMP` (read with
+[RDSR2](../opcodes/RDSR2.md), 0x35); with
 `SPI_NOR_SWP_IS_VOLATILE` the BP bits are volatile. Where an entry's fixups
 replace that locking (Atmel's global protection, the AT25FS's own scheme,
 the SST26VF's block protection register, unlocked with
