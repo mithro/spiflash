@@ -816,9 +816,11 @@ class Sfdp:
         )
 
     def _dw1_erase(self) -> int | None:
-        """The 4 KiB erase opcode of BFPT DW1, where no erase type has it."""
+        """The 4 KiB erase opcode of BFPT DW1, where DW1[1:0] says the part
+        erases 4 KiB uniformly (01; 11 is no such erase, whatever DW1[15:8]
+        holds) and no erase type has it."""
         bfpt = self.bfpt
-        if bfpt is None or bfpt.erase_4k_opcode is None:
+        if bfpt is None or bfpt.erase_4k_opcode is None or not bfpt.uniform_4k:
             return None
         if any(e.opcode == bfpt.erase_4k_opcode and e.size == 4096 for e in bfpt.erase_types):
             return None
