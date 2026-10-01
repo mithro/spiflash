@@ -165,8 +165,8 @@ class Feature(StrEnum):
 
 _FEATURE_DESCRIPTIONS = {
     Feature.ERASE_4K: "4 KiB sectors can be erased (0x20 or equivalent)",
-    Feature.ERASE_32K: "32 KiB blocks can be erased (0x52)",
-    Feature.ERASE_64K: "64 KiB blocks can be erased (0xd8)",
+    Feature.ERASE_32K: "32 KiB blocks can be erased (0x52 or equivalent)",
+    Feature.ERASE_64K: "64 KiB blocks can be erased (0xd8 or equivalent)",
     Feature.SFDP: "answers SFDP (JESD216) queries",
     Feature.FAST_READ: "supports fast read (0x0b)",
     Feature.DUAL_READ: "supports dual-output/IO read",
