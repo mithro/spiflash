@@ -33,7 +33,13 @@ so its `lock` ([](../derived.md#registers)). The `FEATURE_WRSR*`, `CFGR` and
 `SCUR` bits say how it reads and writes the second and third registers
 ([RDSR2](../opcodes/RDSR2.md), [WRSR_16](../opcodes/WRSR_16.md), ...).
 `FEATURE_WRSR_EXT3` is the `FEATURE_WRSR_EXT2` bit and one of its own,
-with no name, so a record gives it by its own name.
+with no name, so a record gives it by its own name. `.decode_range` (how the
+BP, TB, SEC and CMP bits map to a protected range: `DECODE_RANGE_SPI25` and
+its `_64K_BLOCK`, `_BIT_CMP`, `_2X_BLOCK` and `_BP3_TO_1_16` variants) has no
+field: it is what a layout's bits mean, not where they are, and waits for a
+model of protected ranges. Nor do `FEATURE_ERASED_ZERO`,
+`FEATURE_STATUS_PER_DIE` and `FEATURE_ADDR_2BYTE` (a 2-byte address, which
+the address bytes do not cover).
 
 The `FEATURE_4BA_ENTER`, `_ENTER_WREN`, `_ENTER_EAR7`, `_EAR_C5C8` and
 `_EAR_1716` bits are the record's ways into 4-byte mode, `en4b`,
