@@ -146,9 +146,10 @@ A SPI NAND entry's `SpareSizeInByte` holds two spare sizes, one in each
 half: the high half, the whole spare area of a page, is the record's
 `oob_size`; the low half (the spare left free beside the part's own ECC) is
 not taken (the XT26Q01D's high half, 64 bytes, is wrong: its datasheet
-gives 128). Its `ReadCmd` and `ProgramCmd` words (`0x006B000B`,
-`0x00320002` on nearly every SPI NAND entry) are a template, and are not
-taken. Its `SupportLUT` is the bad block lookup table's swap and read
+gives 128). Its `ReadCmd`, `ProgramCmd` and `EraseCmd` words
+(`0x006B000B`, `0x00320002` on nearly every SPI NAND entry) are a
+template, and SPI NOR's opcodes besides: they are not taken as operations,
+and stay flags. Its `SupportLUT` is the bad block lookup table's swap and read
 ([NAND_BBM_SWAP](../opcodes/NAND_BBM_SWAP.md),
 [NAND_READ_BBM_LUT](../opcodes/NAND_READ_BBM_LUT.md)), and its read-id is
 SPI NAND's, from the id method.

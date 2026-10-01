@@ -20,7 +20,8 @@ are its driver's defaults, as are their 4-byte forms: they imply no
 capability. Its page size is not the part's either: `INFO` and `INFO6`
 write `.page_size = 256` for every entry, the driver's default, as
 {sfsrc}`linux`'s `SPI_NOR_DEFAULT_PAGE_SIZE`, so a record has a page size
-only where an `INFO_NAME` entry gives its own.
+only where an `INFO_NAME` entry gives its own. An `INFO_NAME` entry's
+`.addr_width = 2` (the MB85RS256TY FRAM) is a `2byte_addr` claim.
 
 `SPI_NOR_HAS_LOCK` gives the block-protection bits its
 {upstream}`spi-nor.h <u-boot:include/linux/mtd/spi-nor.h>` defines (BP0 to

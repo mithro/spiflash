@@ -939,7 +939,7 @@ class Record:
     def address_bytes(self) -> AddressBytes | None:
         """How many address bytes the part takes
         (:func:`spiflash.derive.address_bytes`): ``4byte_addr`` is in
-        :attr:`features` exactly when this is neither ``THREE`` nor ``None``."""
+        :attr:`features` exactly when this is neither ``TWO``, ``THREE`` nor ``None``."""
         return derive.address_bytes(self)
 
     @property
@@ -1726,16 +1726,21 @@ class Flash:
     @cached_property
     def address_bytes(self) -> AddressBytes | None:
         """How many address bytes the part takes (:attr:`Record.address_bytes`):
-        of the records saying more than 3, what most say; else ``THREE``
-        where any says so. Like :attr:`features`, a source saying the part
-        takes 4-byte addresses is not outvoted by those not saying it, so
-        ``4byte_addr`` is in :attr:`features` exactly when this is neither
-        ``THREE`` nor ``None``."""
+        of the records saying more than 3, what most say; else ``TWO`` where
+        any says so (a source stating it: the others' 3 is from the size
+        alone); else ``THREE`` where any says so. Like :attr:`features`, a
+        source saying the part takes 4-byte addresses is not outvoted by
+        those not saying it, so ``4byte_addr`` is in :attr:`features`
+        exactly when this is neither ``TWO``, ``THREE`` nor ``None``."""
         said = [(a, r.source) for r in self.part_records if (a := r.address_bytes) is not None]
-        more = _consensus((a, s) for a, s in said if a is not AddressBytes.THREE)
+        fewer = (AddressBytes.TWO, AddressBytes.THREE)
+        more = _consensus((a, s) for a, s in said if a not in fewer)
         if more is not None:
             return more
-        return AddressBytes.THREE if said else None
+        for a in fewer:
+            if any(given is a for given, _ in said):
+                return a
+        return None
 
     @cached_property
     def legacy_ids(self) -> dict[LegacyId, tuple[Source, ...]]:

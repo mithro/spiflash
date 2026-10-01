@@ -75,6 +75,8 @@ _FEATURES = [
     (re.compile(r"FEATURE_(QPI|QPI_35_F5|QPI_38_FF|FAST_READ_QPI4B)"), "qpi"),
     (re.compile(r"FEATURE_OTP"), "otp"),
     (re.compile(r"FEATURE_NO_ERASE"), "no_erase"),
+    # flash.h: "ST M95320 (chips up to 64 KiB in the M95XXX family)".
+    (re.compile(r"FEATURE_ADDR_2BYTE"), "2byte_addr"),
 ]
 
 #: The FEATURE_4BA_* bits giving a way into 4-byte mode (:upstream:`flashrom:include/flash.h`;
@@ -107,8 +109,9 @@ _OTP_REGIONS = re.compile(rf"(?P<n>\d+) x {_SIZE} Security Region \(OTP\)")
 #: The commands an OTP comment names, and the operation each is ("read
 #: 0x4b" only beside "write 0x42": :data:`OTP_READ`); ``None`` for one
 #: with no operation here, which the comment, the record's ``via``, keeps:
-#: ISSI's information row (0x68, 0x62, 0x64), Atmel's security register
-#: (0x77, 0x9b, 0x9a) and PMC's 0xb1 program.
+#: Atmel's security register (0x77, 0x9b, 0x9a) and PMC's 0xb1 program.
+#: ISSI's information row is read, programmed and erased with 0x68, 0x62
+#: and 0x64 (IRRD, IRP, IRER).
 OTP_COMMANDS: dict[str, str | None] = {
     "read 0x48": "RSECR",
     "write 0x42": "PSECR",
@@ -118,9 +121,9 @@ OTP_COMMANDS: dict[str, str | None] = {
     "exit 0xC1": "EXSO",
     "enter 0x3A": "ENTER_OTP_3A",
     "read 0x4B": None,
-    "read 0x68": None,
-    "write 0x62": None,
-    "erase 0x64": None,
+    "read 0x68": "IRRD",
+    "write 0x62": "IRP",
+    "erase 0x64": "IRER",
     "read 0x77": None,
     "read 0x77 (4 dummy bytes)": None,
     "write 0x9B": None,
@@ -183,19 +186,21 @@ OTP_SIZE_WRONG: dict[tuple[str, str], tuple[int, int | None, str]] = {
     ),
 }
 
-#: Makers (their JEDEC byte) whose OTP comments name the wrong commands,
-#: and the operations left out, with why: on ISSI's parts 0x48 and 0x42
-#: read and write the function register (as openFPGALoader's FUNCR TB is
-#: read, spiFlash.cpp), and the OTP area is the information row, read,
-#: programmed and erased with 0x68, 0x62 and 0x64 (IS25LP128 datasheet;
+#: Makers (their JEDEC byte) whose OTP comments name the wrong commands:
+#: the operations left out, why, and the ones the part has instead. On
+#: ISSI's parts 0x48 and 0x42 read and write the function register (as
+#: openFPGALoader's FUNCR TB is read, spiFlash.cpp), and the OTP area is
+#: the information row, read, programmed and erased with 0x68, 0x62 and
+#: 0x64 (IRRD, IRP, IRER: IS25LP256D datasheet, Rev. A15, 8.38-8.41;
 #: flashrom's own IS25LP256 comment).
-OTP_COMMANDS_WRONG: dict[int, tuple[frozenset[str], str]] = {
+OTP_COMMANDS_WRONG: dict[int, tuple[frozenset[str], str, tuple[str, ...]]] = {
     0x9D: (
         frozenset({"RSECR", "PSECR", "ESECR"}),
         (
             "0x48 and 0x42 are ISSI's function register read and write, not its OTP "
             "area, the information row (0x68, 0x62, 0x64)"
         ),
+        ("IRRD", "IRP", "IRER"),
     ),
 }
 
@@ -378,6 +383,70 @@ def otp(note: str) -> tuple[dict[str, int], list[str]] | None:
 
 _SKIP_IDS = {"GENERIC_MANUF_ID", "PROGMANUF_ID", "GENERIC_DEVICE_ID", "SFDP_DEVICE_ID"}
 
+#: The comments naming the 1-1-1 fast read: ``Fast read (0x0B) supported``,
+#: ``Fast read (0x0B) and multi I/O supported``, ``also fast read 0x0B``.
+_FAST_READ_COMMENT = re.compile(r"(?i)(fast read \(0x0b\)|also fast read 0x0b)")
+
+#: QPI comments, and the operations each names: the way into QPI mode and
+#: out of it.
+QPI_COMMENTS = {
+    "QPI enable 0x38, disable 0xFF": ("EQPI_38", "RSTQIO_FF"),
+    "QPI enable 0x35, disable 0xF5": ("EQPI_35", "RSTQIO_F5"),
+    "QPI enable 0x35, disable 0xF5 (0xFF et al. work too)": ("EQPI_35", "RSTQIO_F5"),
+    "QPI enable 0x38": ("EQPI_38",),
+}
+
+#: Comments saying where the quad enable bit is, on the status register
+#: line: status register 1's bit 6. Not a qualified one ("bit6:
+#: Continuously Program (CP) mode, for 73E is quad enable").
+QE_COMMENTS = frozenset({"bit6 is quad enable", "bit 6 is quad enable"})
+
+#: The makers (their JEDEC byte) whose QE comments are taken: Macronix's
+#: and ISSI's (and PMC's) QE is SR1 bit 6. Not Eon's: the EN25QH parts'
+#: SR6 is EBL, or WHDIS in OTP mode, and they have no QE bit (EN25QH128A
+#: datasheet, Table 7), nor XMC's, which is not checked.
+QE_COMMENT_MAKERS = frozenset({0xC2, 0x9D})
+
+
+def dummy_cycles(value: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """flashprog's ``.dummy_cycles`` (include/flash.h, ``union
+    dummy_cycles``): the QPI fast read quad I/O (0xeb in QPI mode,
+    ``READ_4_4_4``) with its dummy clocks, and flags for what has no field.
+    ``.qpi_fast_read_qio`` is its fixed count (0: flashprog does not use
+    the instruction); ``.qpi_read_params`` the counts a register setting
+    selects, setting 00 the one after reset, the part's, the others kept as
+    a flag. ``.qpi_fast_read`` (0x0b in QPI mode) has no operation here, and
+    stays a flag."""
+    given = cparse.designated(value.strip()[1:-1])
+    uses: list[dict[str, Any]] = []
+    flags: list[str] = []
+    if "qpi_read_params" in given:
+        clks = [
+            cparse.evaluate(c) for c in cparse.split_top(given["qpi_read_params"].strip()[1:-1])
+        ]
+        token = f".dummy_cycles.qpi_read_params = {{{', '.join(map(str, clks))}}}"
+        uses.append({"op": "READ_4_4_4", "via": token, "dummy_clocks": clks[0]})
+        flags.append(f"qpi_read_params.01-11={','.join(map(str, clks[1:]))}")
+    qio = cparse.evaluate(given["qpi_fast_read_qio"]) if "qpi_fast_read_qio" in given else 0
+    if qio:
+        token = f".dummy_cycles.qpi_fast_read_qio = {qio}"
+        uses.append({"op": "READ_4_4_4", "via": token, "dummy_clocks": qio})
+    if "qpi_fast_read" in given:
+        flags.append(f"dummy_cycles.qpi_fast_read={cparse.evaluate(given['qpi_fast_read'])}")
+    return uses, flags
+
+
+def comment_operations(note: str) -> tuple[str, ...]:
+    """The operations a comment says the whole entry has: the fast read
+    (0x0b) of ``"Fast read (0x0B) supported"`` (not one qualified to a model,
+    ``"... supported by SST25VF512A only"``), and QPI's way in and out of
+    ``"QPI enable 0x38, disable 0xFF"`` (:data:`QPI_COMMENTS`)."""
+    if note in QPI_COMMENTS:
+        return QPI_COMMENTS[note]
+    if _FAST_READ_COMMENT.match(note) and not re.search(r"\bonly\b", note):
+        return ("READ_1_1_1_FAST",)
+    return ()
+
 
 def chip_files(root: Path) -> list[Path]:
     """flashrom's per-vendor files, or flashprog's single table."""
@@ -553,11 +622,25 @@ def _record(
     features = {feat for feat, _ in claims}
     erasers = _erasers(f.get("block_erasers", "{}"), symbols)
     dies, die_via = _dies(erasers)
+    if "die_size" in f:
+        # .die_size, in KiB as .total_size: the dies are the one over the
+        # other (flashrom's W77Q12NW and W77T12NW, two 64 Mbit dies).
+        total = cparse.evaluate(f["total_size"], symbols)
+        die = cparse.evaluate(f["die_size"], symbols)
+        if total % die or (dies is not None and dies != total // die):
+            msg = f".die_size = {die} of .total_size = {total}, and {dies} dies"
+            raise ValueError(msg)
+        dies = total // die
+        die_via = {"dies": "; ".join(filter(None, (die_via.get("dies"), f".die_size = {die}")))}
     # Only a comment about the entry itself: "the latter supports SFDP", or
     # "F model supports SFDP", is about another part of a multi-part entry.
     # The RDSFDP operation's via holds the comment (and implies ``sfdp``).
     sfdp = [n for n in notes if _SUPPORTS_SFDP.fullmatch(n)]
     notes = [n for n in notes if n not in sfdp]
+    # Comments naming an operation of the whole entry (not "... supported by
+    # SST25VF512A only"): the operation's via holds the comment.
+    comment_ops = [(op, n) for n in notes for op in comment_operations(n)]
+    notes = [n for n in notes if n not in {c for _, c in comment_ops}]
     # An OTP comment about the whole entry is its OTP area (and the
     # operations it names): the comment leaves the notes, into the area's
     # via, with FEATURE_OTP, which the area implies.
@@ -576,16 +659,35 @@ def _record(
             size, regions, why = fixed
             notes.append(f"OTP area {size} B, not the comment's {given['size']} B: {why}")
             otp_area = {**given, "size": size} | ({"regions": regions} if regions else {})
-        wrong_ops, why = OTP_COMMANDS_WRONG.get(mfr & 0xFF, (frozenset(), ""))
+        wrong_ops, why, instead = OTP_COMMANDS_WRONG.get(mfr & 0xFF, (frozenset(), "", ()))
+        otp_ops = [(op, note) for op in named if op not in wrong_ops]
         if wrong_ops & set(named):
             left = sorted(wrong_ops & set(named))
             notes.append(f"OTP comment's {', '.join(left)} left out: {why}")
-        otp_ops = [(op, note) for op in named if op not in wrong_ops]
+            # The part's own commands for its OTP area, which the
+            # comment names wrongly.
+            otp_ops += [(op, f"{note} (its OTP area: {', '.join(instead)})") for op in instead]
         otp_via = {"otp": "; ".join([note, *(fl for fl in flags if fl == "FEATURE_OTP")])}
     modes = {fl: FOUR_BYTE_MODES[fl] for fl in flags if fl in FOUR_BYTE_MODES}
     mode_via = {f"four_byte_modes:{mode}": fl for fl, mode in modes.items()}
     bits = _reg_bits(f.get("reg_bits", ""))
     quad_enable = bits.pop("qe", None)
+    # "bit6 is quad enable", on the status register line: SR1 bit 6, of a
+    # maker whose QE bit is there (QE_COMMENT_MAKERS), where .reg_bits gives
+    # no QE bit and no role there.
+    qe_note = next((n for n in notes if n in QE_COMMENTS), None)
+    taken = {(b["register"], b["bit"]) for b in bits.values()}
+    readable = (mfr & 0xFF) in QE_COMMENT_MAKERS and ("sr1", 6) not in taken
+    if qe_note is not None and quad_enable is None and readable:
+        quad_enable = {"register": "sr1", "bit": 6}
+        mode_via["quad_enable"] = f"comment: {qe_note}"
+        notes.remove(qe_note)
+    # A .decode_range other than the usual spi25 one says how the part's
+    # protection bits map to a range (64 KiB blocks, CMP, ...): no field
+    # holds it, so it stays a flag.
+    decode = f.get("decode_range", "").strip()
+    if decode and decode.upper() != "DECODE_RANGE_SPI25":
+        flags = [*flags, f"decode_range={decode.upper()}"]
     # FEATURE_WRSR_EXT3 is the EXT2 bit and one of its own, which has no
     # name: the bit names alone would give EXT2.
     ext3 = cparse.evaluate("FEATURE_WRSR_EXT3", symbols)
@@ -600,6 +702,20 @@ def _record(
     eraser_via = {f"erasers:0x{e['opcode']:02x}": e.pop("via") for e in erasers if "via" in e}
     size, page, voltage = corrected(name, size, page, voltage, erasers, notes)
     tested = " ".join(f.get("tested", "").split()) or None
+    opcodes = _opcodes(
+        f,
+        method,
+        flags,
+        erasers,
+        symbols,
+        sfdp=bool(sfdp),
+        source=source,
+        otp_ops=[*otp_ops, *((op, f"comment: {n}") for op, n in comment_ops)],
+    )
+    if "dummy_cycles" in f:
+        uses, dc_flags = dummy_cycles(f["dummy_cycles"])
+        opcodes += uses
+        flags = [*flags, *dc_flags]
     return make(
         source,
         rel,
@@ -622,9 +738,7 @@ def _record(
         four_byte_modes=list(modes.values()),
         otp=otp_area,
         tested=tested,
-        opcodes=_opcodes(
-            f, method, flags, erasers, symbols, sfdp=bool(sfdp), source=source, otp_ops=otp_ops
-        ),
+        opcodes=opcodes,
         notes=notes,
     )
 
@@ -799,4 +913,12 @@ def _opcodes(
     for op, note in otp_ops:
         ops.add(op, note)
     _register_reads(ops, source, f.get("reg_bits", ""))
+    # .die_select (flash.h, enum dieselect_func): "Winbond 0xC2 Software Die
+    # Select" is the only one.
+    die_select = f.get("die_select", "").strip()
+    if die_select == "SPI_DIESELECT_C2":
+        ops.add("DIE_SELECT", f".die_select = {die_select}", value=0xC2)
+    elif die_select:
+        msg = f"unknown .die_select {die_select}"
+        raise ValueError(msg)
     return ops.to_json()

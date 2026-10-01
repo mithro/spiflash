@@ -11,8 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from spiflash.enums import Feature
-from spiflash.model import EraseBlock, Eraser, Record
+import spiflash
+from spiflash.enums import AddressBytes, Feature
+from spiflash.model import EraseBlock, Eraser, Otp, Record
 from spiflash.opcodes import OPERATIONS
 from spiflash_extract import (
     cparse,
@@ -797,6 +798,48 @@ def test_flashrom_errors(tmp_path: Path) -> None:
     write(tmp_path, {"flashchips.c": bad})
     with pytest.raises(ValueError, match="unknown probe 'SOMETHING_NEW'"):
         flashrom.extract(tmp_path, "flashprog")
+
+
+def test_flashrom_comment_operations() -> None:
+    assert flashrom.comment_operations("Fast read (0x0B) supported") == ("READ_1_1_1_FAST",)
+    assert flashrom.comment_operations("also fast read 0x0B") == ("READ_1_1_1_FAST",)
+    # One model's of a multi-part entry is not the entry's.
+    assert flashrom.comment_operations("Fast read (0x0B) supported by SST25VF512A only") == ()
+    assert flashrom.comment_operations("QPI enable 0x38, disable 0xFF") == ("EQPI_38", "RSTQIO_FF")
+    assert flashrom.comment_operations("bit6 is quad enable") == ()
+
+
+def test_flashprog_dummy_cycles() -> None:
+    uses, flags = flashrom.dummy_cycles("{ .qpi_read_params = { 10, 4, 6, 8 } }")
+    assert uses == [
+        {
+            "op": "READ_4_4_4",
+            "via": ".dummy_cycles.qpi_read_params = {10, 4, 6, 8}",
+            "dummy_clocks": 10,
+        }
+    ]
+    assert flags == ["qpi_read_params.01-11=4,6,8"]
+    uses, flags = flashrom.dummy_cycles("{ .qpi_fast_read = 4, .qpi_fast_read_qio = 6, }")
+    assert [(u["op"], u["dummy_clocks"]) for u in uses] == [("READ_4_4_4", 6)]
+    assert flags == ["dummy_cycles.qpi_fast_read=4"]
+
+
+def test_shipped_new_mappings() -> None:
+    # Each upstream fact with a home is in it (S11).
+    recs = {(r.source, r.name): r for r in spiflash.records()}
+    w77 = recs["flashrom", "W77Q12NW"]
+    assert (w77.dies, w77.via["dies"]) == (2, ".die_size = 8192")
+    assert "DIE_SELECT" in {u.op for u in w77.opcodes}
+    sst = [r for r in spiflash.records() if r.source == "linux" and "SST_WRITE" in str(r.opcodes)]
+    assert len(sst) == 9
+    assert all({"AAI_WP", "BP"} <= {u.op for u in r.opcodes} for r in sst)
+    mt = recs["linux", "MT29F2G01ABAGD"]
+    assert mt.otp == Otp(10 * 2048)
+    assert recs["linux", "MR25H128"].address_bytes is AddressBytes.TWO
+    assert recs["u-boot", "MB85RS256TY"].address_bytes is AddressBytes.TWO
+    issi = recs["flashrom", "IS25LP128"]
+    assert {"IRRD", "IRP", "IRER"} <= {u.op for u in issi.opcodes}
+    assert not {"RSECR", "PSECR"} & {u.op for u in issi.opcodes}
 
 
 def test_flashrom_wrong_values_are_corrected() -> None:

@@ -326,8 +326,8 @@ def encode(
     ``assume``, it writes JESD216's "not supported" encodings or the
     shortest times, and the ways out of 4-byte mode and the QPI sequences
     the operations suggest, each listed in ``assumed``. ``ValueError`` for
-    a SPI NAND part, a part of no known size, or a revision it cannot write
-    (:data:`REVISIONS`)."""
+    a SPI NAND part, a part of no known size or of 2-byte addresses (which
+    a BFPT cannot say), or a revision it cannot write (:data:`REVISIONS`)."""
     if revision not in REVISIONS:
         known = ", ".join(f"{a}.{b}" for a, b in REVISIONS)
         msg = f"encode writes SFDP {known}, not {revision[0]}.{revision[1]}"
@@ -385,6 +385,9 @@ def _bfpt_dwords(part: _Part, assumed: list[str], missing: list[str]) -> tuple[l
         dw1 |= 1 << 2
     assumed.append("DW1 bits 3-4: non-volatile status register block protection")
     address = part.address_bytes or AddressBytes.THREE
+    if address not in _ADDRESS_CODE:
+        msg = f"the part takes {address}-byte addresses, which a BFPT cannot say"
+        raise ValueError(msg)
     dw1 |= _ADDRESS_CODE[address] << 17
     dw[0] = dw1
     bits = size * 8

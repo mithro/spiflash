@@ -1019,6 +1019,40 @@ _ALL = [
         "Enter OTP mode (0x3a)",
         shape_source=(ShapeSource.PART,),
     ),
+    # ISSI: the OTP area is the information row, four rows of 256 bytes
+    # (IS25LP256D datasheet, Rev. A15, 8.38-8.41: IRRD's dummy clocks are
+    # configurable, 8 by default; IRP programs up to 256 bytes).
+    Operation(
+        "IRRD",
+        0x68,
+        OperationKind.REGISTER,
+        "Read the information row (ISSI's OTP area)",
+        "1-1-1",
+        3,
+        8,
+        READ,
+        shape_source=(ShapeSource.PART,),
+    ),
+    Operation(
+        "IRP",
+        0x62,
+        OperationKind.REGISTER,
+        "Program the information row (ISSI's OTP area)",
+        "1-1-1",
+        3,
+        0,
+        WRITE,
+        shape_source=(ShapeSource.PART,),
+    ),
+    Operation(
+        "IRER",
+        0x64,
+        OperationKind.REGISTER,
+        "Erase an information row (ISSI's OTP area)",
+        "1-1-0",
+        3,
+        shape_source=(ShapeSource.PART,),
+    ),
     Operation(
         "RDFSR",
         0x70,

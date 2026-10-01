@@ -378,6 +378,9 @@ def test_no_requirement_operation_stored() -> None:
 #: flashprog's are all its .reg_bits' .qe, so need no via.
 QUAD_ENABLE_FROM = {
     ("flashprog", None),
+    # "bit6 is quad enable", on the status register line.
+    ("flashrom", "comment: bit"),
+    ("flashprog", "comment: bit"),
     ("dediprog", "QEbitAddr="),
     ("rockchip", "QE_bits="),
     ("rockchip", "has_qe_bits="),
@@ -527,6 +530,7 @@ def test_a_die_is_selected_one_way() -> None:
 DIES_FROM = {
     ("flashrom", "spi_block_erase_c4"),
     ("flashprog", "spi_block_erase_c4"),
+    ("flashrom", ".die_size = "),
     ("dediprog", "DieSizeInKByte="),
     ("qemu", "die_cnt="),
     ("linux", None),
@@ -558,11 +562,12 @@ def test_only_the_known_sources_give_dies() -> None:
 
 
 def test_dummy_clocks_only_where_a_source_states_them() -> None:
-    # Linux's SPI NAND op variants (dummy bytes) and MediaTek's SNAND_OPs
-    # (dummy clocks) state them; no other source's entry does, and an SFDP
-    # read's are derived from its tables.
+    # Linux's SPI NAND op variants (dummy bytes), MediaTek's SNAND_OPs
+    # (dummy clocks) and flashprog's .dummy_cycles (its QPI quad I/O read's)
+    # state them; no other source's entry does, and an SFDP read's are
+    # derived from its tables.
     given = {(d["source"], d["type"]) for d in RECORDS for o in d["opcodes"] if "dummy_clocks" in o}
-    assert given == {("linux", "nand"), ("mediatek", "nand")}
+    assert given == {("linux", "nand"), ("mediatek", "nand"), ("flashprog", "nor")}
     reads = {
         OPERATIONS[o["op"]].kind
         for d in RECORDS

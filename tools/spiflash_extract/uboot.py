@@ -86,6 +86,7 @@ def _record(
     id_hex = ext = None
     sector = page = size = None
     flag_expr = "0"
+    address_width = 0
     for macro, ext_bytes in (("INFO6", 3), ("INFO", 2)):
         args = cparse.macro_call(body, macro)
         if args is None:
@@ -121,8 +122,14 @@ def _record(
         # Only a .page_size the entry gives is its own.
         page = cparse.evaluate(fields["page_size"], symbols) if "page_size" in fields else None
         flag_expr = fields.get("flags", "0")
+        address_width = cparse.evaluate(fields.get("addr_width", "0"), symbols)
     flags = cparse.flag_names(flag_expr)
     claims = [(_FEATURES[f], f) for f in flags if f in _FEATURES]
+    if address_width == 2:  # the Fujitsu MB85RS256TY FRAM's .addr_width
+        claims.append(("2byte_addr", ".addr_width = 2"))
+    elif address_width:
+        msg = f".addr_width = {address_width}: only 2 is known"
+        raise ValueError(msg)
     features = {feat for feat, _ in claims}
     if "4byte_opcodes" in features:
         features.add("4byte_addr")

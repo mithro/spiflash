@@ -293,7 +293,20 @@ def test_to_entry_claims_what_only_sfdp_says() -> None:
 
 
 def nor_chips() -> list[Flash]:
-    return [f for f in spiflash.flashes() if f.type == "nor" and f.size]
+    """The SPI NOR chips encode() writes: of a known size, and not of
+    2-byte addresses, which a BFPT cannot say."""
+    return [
+        f
+        for f in spiflash.flashes()
+        if f.type == "nor" and f.size and f.address_bytes is not AddressBytes.TWO
+    ]
+
+
+def test_encode_refuses_a_two_byte_part() -> None:
+    (fram,) = spiflash.lookup("047f25")
+    assert fram.address_bytes is AddressBytes.TWO
+    with pytest.raises(ValueError, match="2-byte addresses, which a BFPT cannot say"):
+        encode(fram)
 
 
 def encodable_page(f: Flash) -> int:

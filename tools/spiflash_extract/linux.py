@@ -318,6 +318,19 @@ def _nor_record(
         if key in fields:
             flags += cparse.flag_names(fields[key])
     claims = [(_NOR_FEATURES[f], f) for f in flags if f in _NOR_FEATURES]
+    # .addr_nbytes = 2: the part takes 2-byte addresses (Everspin's MR25H
+    # MRAM); spi_nor_set_addr_nbytes() takes it as given. No other value is
+    # in the table.
+    if "addr_nbytes" in fields:
+        nbytes = cparse.evaluate(fields["addr_nbytes"], symbols)
+        if nbytes != 2:
+            msg = f".addr_nbytes = {nbytes}: only 2 is known"
+            raise ValueError(msg)
+        claims.append(("2byte_addr", f".addr_nbytes = {nbytes}"))
+    # .n_banks: the banks its read-while-write reads one of while writing
+    # another (SPI_NOR_RWW); no field holds it.
+    if "n_banks" in fields:
+        flags.append(f"n_banks={cparse.evaluate(fields['n_banks'], symbols)}")
     otp, otp_via = _otp(fields, rel, symbols)
     features = {feat for feat, _ in claims}
     if "4byte_opcodes" in features:
@@ -456,9 +469,16 @@ _NO_SFDP_OPS = {
     "SECT_4K": "BE_4K",
 }
 
-# mfr_flags -> the operation micron-st.c (USE_FSR: micron_st_nor_ready) or
-# spansion.c (USE_CLSR, USE_CLPEF: spansion_nor_clear_sr) sends for it.
-_MFR_OPS = {"USE_FSR": "RDFSR", "USE_CLSR": "CLSR", "USE_CLPEF": "CLPEF"}
+# mfr_flags -> the operations micron-st.c (USE_FSR: micron_st_nor_ready),
+# spansion.c (USE_CLSR, USE_CLPEF: spansion_nor_clear_sr) or sst.c
+# (SST_WRITE: sst_nor_write, AAI words with a byte program at either end,
+# sst_nor_write_data) sends for it.
+_MFR_OPS = {
+    "USE_FSR": ("RDFSR",),
+    "USE_CLSR": ("CLSR",),
+    "USE_CLPEF": ("CLPEF",),
+    "SST_WRITE": ("AAI_WP", "BP"),
+}
 
 
 def _nor_opcodes(
@@ -507,11 +527,12 @@ def _nor_opcodes(
             add_spinor(ops, "SE", "sector erase (spi_nor_no_sfdp_init_params)", assumed=no_sector)
     if "no_erase" not in features:
         add_spinor(ops, "CHIP_ERASE", "default (spi_nor_erase)", assumed=True)
-    # The manufacturer flags micron-st.c and spansion.c read: the flag status
-    # register for ready, and clearing the error bits after a failure.
+    # The manufacturer flags micron-st.c, spansion.c and sst.c read: the flag
+    # status register for ready, clearing the error bits after a failure,
+    # and SST's word-at-a-time write.
     for flag in cparse.flag_names(fields.get("mfr_flags", "0")):
-        if flag in _MFR_OPS:
-            add_spinor(ops, _MFR_OPS[flag], flag)
+        for op in _MFR_OPS.get(flag, ()):
+            add_spinor(ops, op, flag)
     if "SPI_NOR_4B_OPCODES" in fixup:
         add_4b_variants(ops, "SPI_NOR_4B_OPCODES")
     return ops.to_json()
@@ -882,6 +903,19 @@ def _nand_fields(
                 raise ValueError(msg)
             op = _nand_operation(cparse.evaluate(shape.opcode), shape)
             opcodes.append({"op": op, "via": token})
+    otp = None
+    for a in args[6:]:
+        user = cparse.macro_call(a, "SPINAND_USER_OTP_INFO")
+        if user is None:
+            continue
+        npages = cparse.evaluate(user[0], symbols)
+        via["otp"] = f"SPINAND_USER_OTP_INFO({', '.join(u.strip() for u in user)})"
+        wrong = USER_OTP_WRONG.get(cparse.c_string(args[0]))
+        if wrong is not None:
+            notes.append(f"user OTP {wrong[0]} pages, not {npages}: {wrong[1]}")
+            npages = wrong[0]
+        # The user's OTP pages, each a page of data.
+        otp = {"size": npages * page}
     if (die_select_bit is not None or any(o["op"] == "NAND_DIE_SELECT" for o in opcodes)) != (
         targets > 1
     ):
@@ -904,9 +938,23 @@ def _nand_fields(
         "flags": flags,
         "via": via,
         "quad_enable": quad_enable,
+        "otp": otp,
         "opcodes": sorted(opcodes, key=lambda o: sort_key(str(o["op"]))),
         "notes": notes,
     }
+
+
+#: ``SPINAND_USER_OTP_INFO`` page counts that are wrong, by part: the
+#: datasheet's, and why. The record stores the datasheet's, with a note.
+USER_OTP_WRONG = {
+    "MT29F2G01ABAGD": (
+        10,
+        (
+            'its datasheet (M79A, Rev. G, "Security - One Time Programmable") gives "Ten '
+            'full pages per die", at page addresses 02h-0Bh'
+        ),
+    ),
+}
 
 
 def extract(root: Path) -> list[Record]:

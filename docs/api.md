@@ -518,3 +518,10 @@ Changes in data format 11 (the final verification pass):
   driver's for every part). {py:attr}`Flash.protection
   <spiflash.model.Flash.protection>` is partial where every record giving a
   BP bit is; {py:data}`~spiflash.registers.ROLES` is the fields but it;
+- {py:class}`~spiflash.enums.AddressBytes` gains `TWO` and
+  {py:class}`~spiflash.enums.Feature` `2byte_addr`, the claim that gives it
+  ({sfsrc}`linux`'s `.addr_nbytes = 2`, {sfsrc}`u-boot`'s `.addr_width = 2`,
+  {sfsrc}`flashrom`'s `FEATURE_ADDR_2BYTE`); {py:func}`~spiflash.sfdp_tools.encode`
+  refuses such a part, which a BFPT cannot describe;
+- new operations: [IRRD](opcodes/IRRD.md), [IRP](opcodes/IRP.md) and
+  [IRER](opcodes/IRER.md), ISSI's information row (its OTP area);
