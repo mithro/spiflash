@@ -33,8 +33,9 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 Two kinds follow from what any SPI NOR entry already says, so they are worked
 out when the data is loaded rather than stored ({py:mod}`spiflash.derive`):
 the id read of the way the entry reads its id ([`RDID`](opcodes/RDID.md),
-[`REMS`](opcodes/REMS.md), [`RES`](opcodes/RES.md), ...), and the erase each of
-its erase layouts sends. A chip page marks those *implied* in "Why each source
+[`REMS`](opcodes/REMS.md), [`RES`](opcodes/RES.md), ...), unless the entry
+names the command it reads the id with ({sfsrc}`dediprog`'s `RDIDCommand`), and
+the erase each of its erase layouts sends. A chip page marks those *implied* in "Why each source
 lists each opcode".
 
 The opcode values themselves are read from each upstream's own headers

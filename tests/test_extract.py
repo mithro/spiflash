@@ -365,7 +365,7 @@ def test_flashprog_single_file(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("comment", ["the latter supports SFDP", "F model supports SFDP"])
-def test_flashrom_sfdp_comment_about_another_part(tmp_path: Path, comment: str) -> None:
+def test_flashrom_sfdp_comment_qualified_to_one_model(tmp_path: Path, comment: str) -> None:
     eon = FLASHROM_EON.replace("/* supports SFDP */", f"/* {comment} */")
     write(tmp_path, {**FLASHROM_HEADERS, "flashchips/eon.c": eon, "flashchips.c": ""})
     e = by_name(flashrom.extract(tmp_path, "flashrom"))["EN25QH128"]
@@ -528,7 +528,8 @@ def test_rockchip_nor() -> None:
     # prog_cmd_4 is there, but no FEA_4BIT_PROG to use it.
     assert gd["features"] == ["erase_4k", "erase_64k", "quad_read"]
     assert gd["flags"] == ["QE_bits=9", "write_status=snor_write_status1"]
-    assert gd["via"] == {"feature:quad_read": "FEA_4BIT_READ"}
+    # READ_1_1_4's via, "read_cmd_4 (FEA_4BIT_READ)", holds the bit.
+    assert gd["via"] == {}
     assert set(ops(gd)) == {"RDID", "READ_1_1_1", "READ_1_1_4", "PP_1_1_1", "BE_4K", "SE"}
     assert ops(gd)["READ_1_1_4"] == (0x6B, "read_cmd_4 (FEA_4BIT_READ)")
 
@@ -710,8 +711,9 @@ def test_imsprog() -> None:
     # they are flags: no page or sector size, no erase layout.
     assert (s["page_size"], s["sector_size"], s["erasers"]) == (None, None, None)
     assert s["features"] == ["4byte_addr"]
+    # The 4-byte operations' via, "4-byte addressing (addr4bit=0x21)", holds it.
+    assert "addr4bit=0x21" not in s["flags"]
     assert s["flags"] == [
-        "addr4bit=0x21",
         "algorithmCode=0x00",
         "blockSize=64K",
         "chipVCC=3.3 V",
@@ -853,9 +855,35 @@ def test_record_make_validates() -> None:
     r = record.make("linux", "f", 1, "n", features=["otp", "lock", "otp"])
     assert list(r) == list(record.KEYS)
     assert r["features"] == ["lock", "otp"]
-    for bad in ({"colour": "x"}, {"feature:qpi": "x"}, {"size.x.y": "x"}, {"Size": "x"}):
+    erasers = [{"opcode": 0x20, "blocks": [[4096, 4096]]}]
+    bad_keys = [
+        "colour",  # no field
+        "Size",
+        "feature:qpi",  # a feature the record does not claim
+        "via",  # residue and provenance fields hold no value of their own
+        "notes",
+        "flags",
+        "opcodes",
+        "features",
+        "size.bogus",  # size has no components
+        "size.x.y",
+        "erasers:0x99",  # not one of its erasers
+        "page_size",  # a field the record leaves empty
+        "size:0x20",  # only erasers have members
+    ]
+    for key in bad_keys:
         with pytest.raises(ValueError, match="bad via key"):
-            record.make("linux", "f", 1, "n", via=bad)
+            record.make("linux", "f", 1, "n", size=1, erasers=erasers, via={key: "x"})
+    with pytest.raises(ValueError, match="bad via key"):
+        record.make("linux", "f", 1, "n", id_method=None, via={"id_method": "x"})
+    ok = {"size": "a", "erasers:0x20": "b", "erasers": "c", "id_method": "d"}
+    assert record.make("linux", "f", 1, "n", size=1, erasers=erasers, via=ok)["via"] == ok
+    # A token is stored once: not under two keys, nor in a note too.
+    twice = {"size": "t", "erasers": "t"}
+    with pytest.raises(ValueError, match="under erasers and size"):
+        record.make("linux", "f", 1, "n", size=1, erasers=erasers, via=twice)
+    with pytest.raises(ValueError, match="notes repeat via"):
+        record.make("linux", "f", 1, "n", size=1, via={"size": "t"}, notes=["t"])
 
 
 def test_record_make_keeps_each_token_once() -> None:
@@ -880,6 +908,60 @@ def test_record_make_keeps_each_token_once() -> None:
     # An operation is fast_read's provenance; ER_4K moves to its eraser's via.
     assert r["via"] == {"erasers:0x20": "ER_4K", "feature:otp": "FEATURE_OTP"}
     assert r["flags"] == ["OTHER"]
+
+
+def test_record_make_finds_a_token_in_an_operations_words() -> None:
+    # "read_cmd_4 (FEA_4BIT_READ)" holds FEA_4BIT_READ, but not FEA_4BIT.
+    r = record.make(
+        "rockchip",
+        "f",
+        1,
+        "n",
+        features=["quad_read", "4byte_addr"],
+        flags=["FEA_4BIT_READ", "FEA_4BIT"],
+        via=record.feature_via([("quad_read", "FEA_4BIT_READ"), ("4byte_addr", "FEA_4BIT")]),
+        opcodes=[{"op": "READ_1_1_4", "via": "read_cmd_4 (FEA_4BIT_READ)"}],
+    )
+    assert r["via"] == {"feature:4byte_addr": "FEA_4BIT"}
+    assert r["flags"] == []
+
+
+def test_record_make_puts_a_token_of_several_erasers_under_one_key() -> None:
+    erasers = [
+        {"opcode": 0x52, "blocks": [[32768, 16]]},
+        {"opcode": 0x60, "blocks": [[524288, 1]]},
+    ]
+    token = "EraseCmd=0x00005260"
+    r = record.make(
+        "dediprog",
+        "f",
+        1,
+        "n",
+        id="bf8d",
+        erasers=erasers,
+        flags=[token],
+        opcodes=[{"op": "BE_32K", "via": token}, {"op": "CHIP_ERASE_ALT", "via": token}],
+    )
+    assert (r["opcodes"], r["flags"], r["via"]) == ([], [], {"erasers": token})
+
+
+def test_record_make_will_not_lose_an_id_command() -> None:
+    # A flag only a derived id read holds has nowhere to go: the extractor
+    # must name the command (via["id_method"]), which keeps the operation.
+    rdid = [{"op": "RDID", "via": "CMD=0x9F"}]
+    with pytest.raises(ValueError, match="CMD=0x9F would be lost with RDID"):
+        record.make("dediprog", "f", 1, "n", id="ef4018", flags=["CMD=0x9F"], opcodes=rdid)
+    r = record.make(
+        "dediprog",
+        "f",
+        1,
+        "n",
+        id="ef4018",
+        flags=["CMD=0x9F"],
+        via={"id_method": "CMD=0x9F"},
+        opcodes=[{"op": "RDID", "via": "CMD=0x9F"}],
+    )
+    assert r["opcodes"] == [{"op": "RDID", "via": "CMD=0x9F"}]
 
 
 def test_opcodes_checks_values_against_the_table() -> None:
@@ -1408,8 +1490,9 @@ def test_dediprog(tmp_path: Path) -> None:
     # 0xaf answers the JEDEC id too, but is not RDID.
     mt = r["MT25QL01GB"]
     assert (mt["id"], mt["id_method"]) == ("20ba21", "rdid")
-    # id_method is rdid, which gives RDID; RDIDCommand says where it came from.
-    assert ops(mt)["RDID"] == (0x9F, "id read (rdid)")
+    # The entry names its id command, 0xaf, which is no operation here: it
+    # is the id method's provenance, and no RDID is derived for it.
+    assert "RDID" not in ops(mt)
     assert mt["via"]["id_method"] == "RDIDCommand=0xAF"
     assert "RDIDCommand=0xAF" not in mt["flags"]
     assert {"opcode": 0xC4, "blocks": [[64 << 20, 2]]} in mt["erasers"]
@@ -1482,10 +1565,14 @@ def test_dediprog_ids_under_the_wrong_command(tmp_path: Path) -> None:
     # A three-byte REMS id is the JEDEC id.
     wf = r["25WF512"]
     assert (wf["id"], wf["id_method"]) == ("bf2501", "rdid")
-    assert ops(wf)["RDID"] == (0x9F, "id read (rdid)")
+    # The id command the entry names stays the stated operation.
+    assert ops(wf)["RDID"] == (0x9F, "a JEDEC id under RDIDCommand=0x90")
+    assert wf["via"]["id_method"] == "RDIDCommand=0x90"
     # Sanyo's parts answer 0x9f with their two id bytes, repeated.
     assert (r["LE25FU106B"]["id"], r["LE25FU106B"]["id_method"]) == ("621d", "res2")
     assert (r["LE25FU406B"]["id"], r["LE25FU406B"]["id_method"]) == ("621e", "res2")
+    # Dediprog sends them 0x9f, which they store; RES is not derived for them.
+    assert set(ops(r["LE25FU106B"])) & {"RDID", "RES"} == {"RDID"}
     # UniqueID gives the id that JedecDeviceID leaves out, or cuts short.
     assert (r["M25P80"]["id"], r["TS25L10P"]["id"]) == ("202014", "202011")
 

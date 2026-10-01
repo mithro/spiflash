@@ -52,7 +52,8 @@ record is made ({py:mod}`spiflash.derive`), never stored:
 
 - {py:attr}`~spiflash.model.Record.opcodes` is the entry's
   {py:attr}`~spiflash.model.Record.opcode_claims` plus the id read its
-  `id_method` gives and the erase each of its erasers sends (SPI NOR only),
+  `id_method` gives (unless the entry names its own id command) and the
+  erase each of its erasers sends (SPI NOR only),
   each marked {py:attr}`~spiflash.opcodes.OpcodeUse.implied`;
 - {py:attr}`~spiflash.model.Record.features` is its
   {py:attr}`~spiflash.model.Record.feature_claims` (later releases add what

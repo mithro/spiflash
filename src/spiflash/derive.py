@@ -6,7 +6,9 @@ the record is made, and never written to the data. The rules read only what
 the record stores (:data:`~spiflash.model.CLAIMS`). They are:
 
 - how a SPI NOR record reads its id (:data:`ID_OPERATION`) gives the id
-  operation;
+  operation, unless the entry names the command it reads the id with
+  (``via["id_method"]``: Dediprog's ``RDIDCommand``) or stores another id
+  read, which is then what it states;
 - each of its erasers with an opcode (:data:`ERASE_BY_OPCODE`) gives that
   erase operation.
 
@@ -70,17 +72,30 @@ def layout(eraser: Eraser) -> str:
     return f"{block.count} x {block.size}"
 
 
+def _reads_id_by_method(record: Record) -> bool:
+    """Whether the id read follows from ``record``'s ``id_method``: not where
+    the entry names the command it reads the id with (``via["id_method"]``),
+    nor where it stores another id read (Dediprog sends 0x9f to its Sanyo
+    parts, whose answer is a RES id)."""
+    method = record.stored("id_method")
+    if method not in ID_OPERATION or "id_method" in record.stored("via"):
+        return False
+    reads = set(ID_OPERATION.values()) - {ID_OPERATION[method]}
+    return not any(u.op in reads for u in record.stored("opcodes"))
+
+
 def opcodes(record: Record) -> tuple[OpcodeUse, ...]:
     """The operations ``record``'s stored fields (:meth:`Record.stored
     <spiflash.model.Record.stored>`) imply, each ``implied``: the id read of
-    its ``id_method``, and the erase operation of each eraser with an opcode.
-    SPI NOR only: a SPI NAND read-id or block erase is another command, so a
+    its ``id_method`` (unless ``via`` names the command the entry reads the
+    id with), and the erase operation of each eraser with an opcode. SPI NOR
+    only: a SPI NAND read-id or block erase is another command, so a
     SPI NAND record derives none."""
     if record.type is not FlashType.NOR:
         return ()
     vias: dict[str, list[str]] = {}
     method = record.stored("id_method")
-    if method in ID_OPERATION:
+    if _reads_id_by_method(record):
         vias[ID_OPERATION[method]] = [f"id read ({method})"]
     for e in record.stored("erasers"):
         if e.opcode is not None:

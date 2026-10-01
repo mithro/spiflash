@@ -26,13 +26,16 @@ parser ignores; spiflash's reads the id with them:
 - [REMS](../opcodes/REMS.md) (0x90), [RES](../opcodes/RES.md) (0xab) or
   [AT25F](../opcodes/RDID_ATMEL.md) (0x15) for older parts.
 
-`RDIDCommand` is where a record's id method comes from, and the id method
-gives the id operation, so a record whose command is not 0x9f keeps it as
-the provenance of its id method (`via`, under `id_method`), not as a flag.
-0xaf is no operation of its own here: Micron's parts answer it in their dual
+`RDIDCommand` is where a record's id method comes from. Elsewhere the id
+method gives the id operation, but a record whose command is not 0x9f names
+the command it sends: the command is the provenance of its id method (`via`,
+under `id_method`), not a flag, and the record states that command's
+operation rather than deriving one. A 0x9f entry whose answer is a RES id
+(Sanyo's) states [`RDID`](../opcodes/RDID.md), and derives no RES. 0xaf (14
+MT25Q entries) is no operation here: Micron's parts answer it in their dual
 and quad I/O protocols with the bytes 0x9f answers in single-line SPI, and a
-spiflash operation has one shape on the bus. Those 14 MT25Q records read
-their id the JEDEC way, so they give [`RDID`](../opcodes/RDID.md).
+spiflash operation has one shape on the bus, so those records give no id
+operation at all.
 
 The number holds the bytes as they come. An SPI NAND id read with a dummy
 byte first starts with that byte, 00 (`0x00EFAA21`), which is not part of
