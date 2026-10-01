@@ -71,7 +71,7 @@ from source_pages import sources_table as sources_list
 from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE
 from spiflash.enums import Feature, FlashType, OperationKind, Source
-from spiflash.model import strip_continuation
+from spiflash.model import compared_value, strip_continuation
 from spiflash.opcodes import OPERATIONS
 from spiflash.registers import ROLES, RegisterBit
 from spiflash.sfdp_tools import diff as sfdp_diff
@@ -356,11 +356,18 @@ def _registers(f: Flash) -> list[str]:
         ),
     ]
     rows = []
+
+    def shown(value: Any, chip: Any) -> tuple[str, str]:
+        """A value as the sources give it (the chip's with how it is
+        written, where a source says), and the chip's mark."""
+        if value != compared_value(chip):
+            return str(value), ""
+        return str(chip), " {bdg-primary}`chip`"
+
     for value, who in qe.items():
-        what = str(value)
+        what, mine = shown(value, f.quad_enable)
         if isinstance(value, RegisterBit):
-            what += f" ({value.register.description})"
-        mine = " {bdg-primary}`chip`" if value == f.quad_enable else ""
+            what += f" (read with {value.register.read_with})"
         rows.append(["Quad enable bit", esc(what) + mine, _who(who)])
     for value, who in qer.items():
         mine = " {bdg-primary}`chip`" if value == f.quad_enable_requirement else ""
@@ -370,9 +377,9 @@ def _registers(f: Flash) -> list[str]:
     layout = f.protection.roles() if f.protection else {}
     for role, given in roles.items():
         for value, who in given.items():
-            mine = " {bdg-primary}`chip`" if layout.get(role) == value else ""
-            rows.append([f"Protection: {role}", esc(str(value)) + mine, _who(who)])
-    out.append(list_table(["", "Bit", "Sources"], rows, "sf-table sf-registers"))
+            what, mine = shown(value, layout.get(role))
+            rows.append([f"Protection: {role}", esc(what) + mine, _who(who)])
+    out.append(list_table(["Field", "Bit", "Sources"], rows, "sf-table sf-registers"))
     out.append("")
     out.append(
         "{bdg-primary}`chip` marks the value the chip is given: the one most sources "

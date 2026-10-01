@@ -70,8 +70,8 @@ _READ = {
 
 class Writability(StrEnum):
     """How a register bit is written, as flashrom's ``struct reg_bit_info``
-    says: read and write (the default), volatile (lost at power off),
-    one-time programmable, or read only (fixed)."""
+    says: read and write, volatile (lost at power off), one-time
+    programmable, or read only (fixed)."""
 
     RW = "rw"
     VOLATILE = "volatile"
@@ -81,11 +81,13 @@ class Writability(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class RegisterBit:
-    """One bit of one register, and how it is written."""
+    """One bit of one register, and how it is written: ``writability`` is
+    ``None`` where the source does not say (most do not; flashrom and
+    flashprog always do), which is not "read and write"."""
 
     register: Register
     bit: int
-    writability: Writability = Writability.RW
+    writability: Writability | None = None
 
     def __post_init__(self) -> None:
         if not 0 <= self.bit <= 7:
@@ -98,21 +100,30 @@ class RegisterBit:
         one place are one bit."""
         return self.register, self.bit
 
+    @property
+    def unqualified(self) -> RegisterBit:
+        """The bit without its writability: what the sources are compared
+        on, as a source that does not say how the bit is written does not
+        disagree with one that does."""
+        return RegisterBit(self.register, self.bit)
+
     def __str__(self) -> str:
-        """``SR2 bit 1``, and its writability where it is not read and write
-        (``SR3 bit 3, OTP``)."""
-        rw = "" if self.writability is Writability.RW else f", {self.writability.upper()}"
+        """``SR2 bit 1``, and its writability where it is said and is not
+        read and write (``SR3 bit 3, OTP``)."""
+        how = self.writability
+        rw = "" if how in (None, Writability.RW) else f", {how.upper()}"
         return f"{self.register.label} bit {self.bit}{rw}"
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> RegisterBit:
-        return cls(Register(d["register"]), d["bit"], Writability(d.get("writability", "rw")))
+        how = d.get("writability")
+        return cls(Register(d["register"]), d["bit"], Writability(how) if how else None)
 
     def to_json(self) -> dict[str, Any]:
         """``{"register": "sr2", "bit": 1}``, with ``"writability"`` where
-        it is not ``rw``."""
+        the source says it."""
         out: dict[str, Any] = {"register": str(self.register), "bit": self.bit}
-        if self.writability is not Writability.RW:
+        if self.writability is not None:
             out["writability"] = str(self.writability)
         return out
 
@@ -253,9 +264,9 @@ class Protection:
         return any(role in BLOCK_ROLES for role in self.roles())
 
     def compatible(self, other: Protection) -> bool:
-        """Whether the two agree on every role both give."""
+        """Whether the two put every role both give on the same bit."""
         mine, theirs = self.roles(), other.roles()
-        return all(mine[r] == theirs[r] for r in mine.keys() & theirs.keys())
+        return all(mine[r].place == theirs[r].place for r in mine.keys() & theirs.keys())
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> Protection:

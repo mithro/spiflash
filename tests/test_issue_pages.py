@@ -9,6 +9,7 @@ from page_markup import EM_SPACE, EN_DASH
 from spiflash import Database, Datasheet
 from spiflash.enums import Source
 from spiflash.model import COMPARED
+from spiflash.registers import Register, RegisterBit
 from test_db import rec
 from test_sfdp import MX25L25635E
 
@@ -73,6 +74,22 @@ def test_protection_is_compared_role_by_role() -> None:
     page = generate_all(db, {id(f): f.key for f in db.flashes})["value.md"]
     assert "## Block protection bits (1)" in page
     assert "**tb: SR1 bit 5**" in page
+
+
+def test_a_source_not_saying_how_a_bit_is_written_does_not_disagree() -> None:
+    # Linux's SST25 BP bits are volatile; openFPGALoader says nothing of it.
+    volatile = {"register": "sr1", "bit": 2, "writability": "volatile"}
+    db = Database(
+        [
+            rec(protection={"bp0": volatile}),
+            rec(source="openfpgaloader", protection={"bp0": bit(2)}),
+        ]
+    )
+    assert find(db) == []
+    (f,) = db.flashes
+    assert f.protection is not None
+    assert f.protection.to_json() == {"bp0": volatile}  # from the one saying it
+    assert list(f.values("protection.bp0")) == [RegisterBit(Register.SR1, 2)]
 
 
 def test_two_roles_on_one_bit() -> None:

@@ -74,7 +74,8 @@ def quad_enable(qe: RegisterBit | NoQuadEnable) -> str:
     """A quad enable bit as the detail line writes it: ``SR2[1]``, ``none``."""
     if isinstance(qe, NoQuadEnable):
         return str(qe)
-    rw = "" if qe.writability is Writability.RW else f" {qe.writability.upper()}"
+    how = qe.writability
+    rw = "" if how in (None, Writability.RW) else f" {how.upper()}"
     return f"{qe.register.label}[{qe.bit}]{rw}"
 
 

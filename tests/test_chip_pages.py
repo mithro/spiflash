@@ -109,8 +109,8 @@ def test_registers() -> None:
     text = nor_page("c84016")
     regs = text[text.index("## Registers") : text.index("## Opcodes")]
     # Each value, its register as read, and who gives it; the chip's marked.
-    assert "SR2 bit 1 (SR2, read with 0x35) {bdg-primary}`chip`" in regs
-    assert "SR1 bit 6 (SR1, read with 0x05)" in regs
+    assert "SR2 bit 1 (read with 0x35) {bdg-primary}`chip`" in regs
+    assert "SR1 bit 6 (read with 0x05)" in regs
     assert "Protection: tb" in regs
     # flashrom's tb is openFPGALoader's bp3: two roles on one bit.
     assert "put bp3 and tb on one bit, SR1 bit 5" in regs

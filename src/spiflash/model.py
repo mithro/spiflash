@@ -8,9 +8,9 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from functools import cached_property
+from functools import cached_property, partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 
 from . import derive
 from .enums import Feature, FlashType, IdFamily, IdMethod, Source
@@ -21,6 +21,7 @@ from .registers import (
     Protection,
     QuadEnableRequirement,
     RegisterBit,
+    Writability,
     quad_enable_from_json,
     quad_enable_to_json,
     shared_bits,
@@ -553,6 +554,12 @@ class Record:
             return getattr(self, name)
         return self.stored(name)
 
+    def compared(self, name: str) -> Any:
+        """:meth:`given`, as the sources are compared on it
+        (:func:`compared_value`): a register bit by its place, without how
+        it is written, which most sources do not say."""
+        return compared_value(self.given(name))
+
     def feature_reasons(self) -> dict[Feature, str]:
         """Each capability in :attr:`features`, and why the entry gives it
         (:func:`spiflash.derive.feature_reasons`)."""
@@ -677,6 +684,15 @@ def plain_value(value: Any) -> Any:
     if isinstance(value, StrEnum):
         return str(value)
     return value
+
+
+def compared_value(value: Any) -> Any:
+    """A value as the sources are compared on it: a register bit without
+    its writability (:attr:`RegisterBit.unqualified
+    <spiflash.registers.RegisterBit.unqualified>`), as one source not saying
+    how a bit is written does not disagree with one that does; anything
+    else as it is."""
+    return value.unqualified if isinstance(value, RegisterBit) else value
 
 
 def register_bits(
@@ -986,13 +1002,29 @@ class Flash:
     def voltage(self) -> Voltage | None:
         return self._value(lambda r: r.voltage)
 
+    def _bit(self, get: Callable[[Record], Any]) -> Any:
+        """A register bit (or ``QE_NONE``) the sources agree on: the place
+        most of the most specific records giving one say
+        (:func:`compared_value`), then how it is written as most of the
+        records putting it there say, where any does."""
+        place = self._value(lambda r: compared_value(get(r)))
+        if not isinstance(place, RegisterBit):
+            return place
+
+        def how(r: Record) -> Writability | None:
+            bit = get(r)
+            return bit.writability if compared_value(bit) == place else None
+
+        writability = self._value(how)
+        return replace(place, writability=writability) if writability else place
+
     @cached_property
     def quad_enable(self) -> RegisterBit | NoQuadEnable | None:
         """Where the quad enable bit is (:data:`~spiflash.registers.QE_NONE`:
         the part has none), as most sources say: each record's own, stated
         or from its quad enable requirement (:attr:`Record.quad_enable`)."""
-        # mypy joins the two types to object; the value is one of them.
-        return cast("RegisterBit | NoQuadEnable | None", self._value(lambda r: r.quad_enable))
+        found: RegisterBit | NoQuadEnable | None = self._bit(lambda r: r.quad_enable)
+        return found
 
     @cached_property
     def quad_enable_requirement(self) -> QuadEnableRequirement | None:
@@ -1000,9 +1032,11 @@ class Flash:
         of those that put the QE bit where :attr:`quad_enable` says: a
         requirement putting it elsewhere is not this part's (and the
         sources disagree on the bit; ``None`` where none agrees)."""
-        qe = self.quad_enable
+        qe = compared_value(self.quad_enable)
         return self._value(
-            lambda r: q if (q := r.quad_enable_requirement) and q.bit == qe else None
+            lambda r: (
+                q if (q := r.quad_enable_requirement) and compared_value(q.bit) == qe else None
+            )
         )
 
     @cached_property
@@ -1011,12 +1045,9 @@ class Flash:
         say (a source not giving a role does not vote on it)."""
         out = {}
         for role in ROLES:
-
-            def given(r: Record, role: str = role) -> RegisterBit | None:
-                bit: RegisterBit | None = r.given(f"protection.{role}")
-                return bit
-
-            if (bit := self._value(given)) is not None:
+            name = f"protection.{role}"
+            bit = self._bit(partial(Record.given, name=name))
+            if bit is not None:
                 out[role] = bit
         return out
 
@@ -1025,16 +1056,16 @@ class Flash:
         """Where the block-protection bits are: each role as most of the
         sources giving it say. Where that puts two roles on one bit
         (:meth:`shared_bits`), a layout no part has, the best source's own
-        layout instead."""
+        layout instead: of the most specific records giving one
+        (:attr:`layers`), as each value is."""
         roles = self._protection_roles
         if not roles:
             return None
         if shared_bits(roles):
-            best = min(
-                (r for r in self.records if r.protection),
-                key=lambda r: r.source.priority,
-            )
-            return best.protection
+            for layer in self.layers or (self.records,):
+                given = [r for r in layer if r.protection]
+                if given:
+                    return min(given, key=lambda r: r.source.priority).protection
         return Protection(**roles)
 
     def shared_bits(self) -> dict[str, tuple[str, ...]]:
@@ -1145,13 +1176,14 @@ class Flash:
         return tuple(found.values())
 
     def values(self, attribute: str) -> dict[Any, tuple[Source, ...]]:
-        """Each value the records give for an attribute
-        (:meth:`Record.given`: what they store, or for ``sector_size`` what
-        their erasers give), and the sources giving it:
+        """Each value the records give for an attribute, as they are
+        compared (:meth:`Record.compared`: what they store, or for
+        ``sector_size`` what their erasers give; a register bit without how
+        it is written), and the sources giving it:
         ``flash.values("size")`` → ``{16777216: ("flashrom", "linux", ...)}``."""
         out: dict[Any, set[Source]] = {}
         for r in self.records:
-            v = r.given(attribute)
+            v = r.compared(attribute)
             if v is not None:
                 out.setdefault(v, set()).add(r.source)
         return {k: tuple(sorted(v, key=lambda s: s.priority)) for k, v in out.items()}
@@ -1163,7 +1195,7 @@ class Flash:
         (:attr:`variants`) are not compared."""
         out = {}
         for attr in COMPARED_VALUES:
-            if any(len({r.given(attr) for r in v} - {None}) > 1 for v in self.variants):
+            if any(len({r.compared(attr) for r in v} - {None}) > 1 for v in self.variants):
                 out[attr] = self.values(attr)
         return out
 
@@ -1178,7 +1210,8 @@ class Flash:
         :meth:`Database.narrow <spiflash.db.Database.narrow>`, which only adds
         the maker and the datasheets to these values.)"""
         values = {e: self.with_ext_id(e).value(attribute) for e in self._part_ext_ids}
-        return values if len(set(values.values()) - {None}) > 1 else {}
+        compared = {compared_value(v) for v in values.values()}
+        return values if len(compared - {None}) > 1 else {}
 
     @cached_property
     def _part_ext_ids(self) -> tuple[bytes, ...]:
