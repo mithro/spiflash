@@ -35,7 +35,7 @@ from enum import StrEnum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from .enums import Feature, OperationKind
+from .enums import Feature, FlashType, OperationKind
 from .opcodes import OPERATIONS, OpcodeUse
 from .registers import QUAD_ENABLE_REQUIREMENTS, NoQuadEnable, QuadEnableRequirement, RegisterBit
 from .units import human_size, human_time
@@ -228,18 +228,16 @@ _FOUR_BYTE_GATE: dict[int, tuple[str | None, bool]] = {
 }
 
 # Operations by what SFDP gives: reads and programs by (kind, opcode,
-# protocol); erases and mode changes by opcode alone.
+# protocol); erases and mode changes by opcode alone. SFDP is SPI NOR's, so
+# only its operations.
+_NOR = [op for op in OPERATIONS.values() if op.flash_type is FlashType.NOR]
 _BY_SHAPE: dict[tuple[OperationKind, int, str], str] = {}
-for _op in OPERATIONS.values():
+for _op in _NOR:
     if _op.kind in (OperationKind.READ, OperationKind.PROGRAM):
         # The first of a shape is the usual one (PP_1_1_1, not BP, for 0x02).
         _BY_SHAPE.setdefault((_op.kind, _op.opcode, _op.protocol), _op.name)
-_ERASE_BY_OPCODE = {
-    op.opcode: op.name for op in OPERATIONS.values() if op.kind is OperationKind.ERASE
-}
-_MODE_BY_OPCODE = {
-    op.opcode: op.name for op in OPERATIONS.values() if op.kind is OperationKind.MODE
-}
+_ERASE_BY_OPCODE = {op.opcode: op.name for op in _NOR if op.kind is OperationKind.ERASE}
+_MODE_BY_OPCODE = {op.opcode: op.name for op in _NOR if op.kind is OperationKind.MODE}
 
 
 def revision_name(major: int | None, minor: int | None) -> str:
@@ -539,6 +537,9 @@ class SfdpFacts:
     #: The BFPT's quad enable requirement (DW15); ``None`` where the BFPT
     #: is too short to have one, or gives the reserved code 7.
     quad_enable_requirement: QuadEnableRequirement | None = None
+    #: The dies the SCCR multi-chip table describes (:attr:`Sfdp.dice`);
+    #: ``None`` without one.
+    dies: int | None = None
 
     @property
     def quad_enable(self) -> RegisterBit | NoQuadEnable | None:
@@ -821,6 +822,7 @@ class Sfdp:
             quad_enable_requirement=QuadEnableRequirement.from_code(
                 bfpt.quad_enable if bfpt else None
             ),
+            dies=self.dice,
         )
 
     def _dw1_erase(self) -> int | None:

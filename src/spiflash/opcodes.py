@@ -21,12 +21,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .enums import DataPhase, OperationKind, TimingSource
+from .enums import DataPhase, FlashType, OperationKind, TimingSource
 
 
 @dataclass(frozen=True, slots=True)
 class Operation:
-    """One SPI flash operation, and the transaction it is on the bus."""
+    """One SPI flash operation, and the transaction it is on the bus.
+
+    ``flash_type`` is the kind of flash it is an operation of: SPI NAND has
+    its own command set, some of whose opcodes are SPI NOR ones too (0x13
+    is SPI NOR's 4-byte read and SPI NAND's page read), so each SPI NAND
+    operation is its own, named ``NAND_...``."""
 
     name: str
     opcode: int
@@ -45,6 +50,7 @@ class Operation:
     #: or up to a page (a page program).
     data_bytes: int | None = None
     timing: tuple[TimingSource, ...] = ()
+    flash_type: FlashType = FlashType.NOR
 
     @property
     def lines(self) -> tuple[int, int, int]:
@@ -64,6 +70,227 @@ _LINUX_FAST = (TimingSource.LINUX_DEFAULT, TimingSource.FLASHPROG_FEATURES)
 _LINUX_WIDE = (TimingSource.LINUX_NO_SFDP, TimingSource.FLASHPROG_FEATURES)
 _LINUX_4B = (TimingSource.LINUX_4B,)
 _SIZES = (TimingSource.FLASHROM_SIZES,)
+
+_NAND = FlashType.NAND
+_SPINAND = (TimingSource.LINUX_SPINAND,)
+
+
+def _nand_read(name: str, opcode: int, what: str, protocol: str, dummy: int | None) -> Operation:
+    """A SPI NAND read from cache: a 2-byte column address into the page
+    the part has read into its cache, and the data from there on."""
+    return Operation(
+        name,
+        opcode,
+        OperationKind.READ,
+        what,
+        protocol,
+        2,
+        dummy,
+        READ,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    )
+
+
+def _nand_load(name: str, opcode: int, what: str, protocol: str) -> Operation:
+    """A SPI NAND program load: data into the cache, from a 2-byte column
+    address; program execute (0x10) then writes the cache to a page."""
+    return Operation(
+        name,
+        opcode,
+        OperationKind.PROGRAM,
+        what,
+        protocol,
+        2,
+        0,
+        WRITE,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    )
+
+
+#: SPI NAND's command set: the reads, loads and the rest that Linux's
+#: :upstream:`linux:include/linux/mtd/spinand.h` (``SPINAND_*_OP``) and
+#: MediaTek's mtk-snand driver send. Single transfer rate only: the double
+#: transfer rate forms some Winbond parts take (``1S_1D_4D``, ``8D_8D_8D``,
+#: ...) have no operation here yet. ``_3A`` is a read from cache sending a
+#: 3-byte address (GigaDevice's GD5F4GQ4xC and GD5F1GQ4UF).
+_NAND_OPERATIONS = [
+    # Identification: 0x9f, then the id straight away, after a dummy byte,
+    # or after an address byte, as the part answers.
+    Operation(
+        "NAND_RDID",
+        0x9F,
+        OperationKind.ID,
+        "Read JEDEC id (SPI NAND, straight after the opcode)",
+        "1-0-1",
+        0,
+        0,
+        READ,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    ),
+    Operation(
+        "NAND_RDID_DUMMY",
+        0x9F,
+        OperationKind.ID,
+        "Read JEDEC id (SPI NAND, after a dummy byte)",
+        "1-0-1",
+        0,
+        8,
+        READ,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    ),
+    Operation(
+        "NAND_RDID_ADDR",
+        0x9F,
+        OperationKind.ID,
+        "Read JEDEC id (SPI NAND, after an address byte)",
+        "1-1-1",
+        1,
+        0,
+        READ,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    ),
+    # Read: a page into the cache, then from the cache.
+    Operation(
+        "NAND_PAGE_READ",
+        0x13,
+        OperationKind.READ,
+        "Read a page into the cache",
+        "1-1-0",
+        3,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    ),
+    _nand_read("NAND_READ_CACHE_1_1_1", 0x03, "Read from cache", "1-1-1", 8),
+    _nand_read("NAND_READ_CACHE_1_1_1_FAST", 0x0B, "Fast read from cache", "1-1-1", 8),
+    _nand_read("NAND_READ_CACHE_1_1_2", 0x3B, "Read from cache, dual output", "1-1-2", 8),
+    _nand_read("NAND_READ_CACHE_1_2_2", 0xBB, "Read from cache, dual I/O", "1-2-2", 4),
+    _nand_read("NAND_READ_CACHE_1_1_4", 0x6B, "Read from cache, quad output", "1-1-4", 8),
+    _nand_read("NAND_READ_CACHE_1_4_4", 0xEB, "Read from cache, quad I/O", "1-4-4", 4),
+    _nand_read("NAND_READ_CACHE_1_1_8", 0x8B, "Read from cache, octal output", "1-1-8", 8),
+    _nand_read("NAND_READ_CACHE_1_8_8", 0xCB, "Read from cache, octal I/O", "1-8-8", None),
+    *(
+        Operation(
+            name,
+            opcode,
+            OperationKind.READ,
+            f"{what}, 3-byte address",
+            protocol,
+            3,
+            dummy,
+            READ,
+            timing=_SPINAND,
+            flash_type=_NAND,
+        )
+        for name, opcode, what, protocol, dummy in (
+            ("NAND_READ_CACHE_1_1_1_3A", 0x03, "Read from cache", "1-1-1", 0),
+            ("NAND_READ_CACHE_1_1_1_FAST_3A", 0x0B, "Fast read from cache", "1-1-1", 8),
+            ("NAND_READ_CACHE_1_1_2_3A", 0x3B, "Read from cache, dual output", "1-1-2", 8),
+            ("NAND_READ_CACHE_1_1_4_3A", 0x6B, "Read from cache, quad output", "1-1-4", 8),
+        )
+    ),
+    # Program: data into the cache (a load clears the rest of it, a random
+    # load keeps it), then the cache to a page.
+    _nand_load("NAND_PROGRAM_LOAD_1_1_1", 0x02, "Program load", "1-1-1"),
+    _nand_load("NAND_PROGRAM_LOAD_1_1_4", 0x32, "Program load, quad input", "1-1-4"),
+    _nand_load("NAND_PROGRAM_LOAD_1_1_8", 0x82, "Program load, octal input", "1-1-8"),
+    _nand_load("NAND_PROGRAM_LOAD_1_8_8", 0xC2, "Program load, octal I/O", "1-8-8"),
+    _nand_load("NAND_RANDOM_LOAD_1_1_1", 0x84, "Random program load", "1-1-1"),
+    _nand_load("NAND_RANDOM_LOAD_1_1_4", 0x34, "Random program load, quad input", "1-1-4"),
+    _nand_load("NAND_RANDOM_LOAD_1_8_8", 0xC4, "Random program load, octal I/O", "1-8-8"),
+    Operation(
+        "NAND_PROGRAM_EXECUTE",
+        0x10,
+        OperationKind.PROGRAM,
+        "Program the cache into a page",
+        "1-1-0",
+        3,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    ),
+    # Erase.
+    Operation(
+        "NAND_BLOCK_ERASE",
+        0xD8,
+        OperationKind.ERASE,
+        "Erase a block",
+        "1-1-0",
+        3,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    ),
+    # Features (registers), each read and written by its 1-byte address.
+    Operation(
+        "NAND_GET_FEATURE",
+        0x0F,
+        OperationKind.REGISTER,
+        "Get feature (read a register)",
+        "1-1-1",
+        1,
+        0,
+        READ,
+        1,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    ),
+    Operation(
+        "NAND_SET_FEATURE",
+        0x1F,
+        OperationKind.REGISTER,
+        "Set feature (write a register)",
+        "1-1-1",
+        1,
+        0,
+        WRITE,
+        1,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    ),
+    # The bad block lookup table some parts remap blocks with.
+    Operation(
+        "NAND_BBM_SWAP",
+        0xA1,
+        OperationKind.REGISTER,
+        "Swap a bad block for a good one (bad block lookup table)",
+        "1-0-1",
+        0,
+        0,
+        WRITE,
+        4,
+        timing=(TimingSource.PART,),
+        flash_type=_NAND,
+    ),
+    Operation(
+        "NAND_READ_BBM_LUT",
+        0xA5,
+        OperationKind.REGISTER,
+        "Read the bad block lookup table",
+        "1-0-1",
+        0,
+        8,
+        READ,
+        timing=(TimingSource.PART,),
+        flash_type=_NAND,
+    ),
+    # Modes. The data byte is the die to select.
+    Operation(
+        "NAND_DIE_SELECT",
+        0xC2,
+        OperationKind.MODE,
+        "Select a die (Winbond)",
+        "1-0-1",
+        0,
+        0,
+        WRITE,
+        1,
+        timing=_SPINAND,
+        flash_type=_NAND,
+    ),
+]
 
 _ALL = [
     # Read.
@@ -500,7 +727,19 @@ _ALL = [
     Operation(
         "CHIP_ERASE_ATMEL", 0x62, OperationKind.ERASE, "Erase the whole chip (Atmel)", timing=_SIZES
     ),
-    Operation("DIE_ERASE", 0xC4, OperationKind.ERASE, "Erase one die", "1-1-0", 3, timing=_SIZES),
+    Operation(
+        "DIE_ERASE", 0xC4, OperationKind.ERASE, "Erase one die (Micron)", "1-1-0", 3, timing=_SIZES
+    ),
+    # Linux's SPINOR_OP_CYPRESS_DIE_ERASE, on parts in 4-byte address mode.
+    Operation(
+        "DIE_ERASE_61",
+        0x61,
+        OperationKind.ERASE,
+        "Erase one die (Infineon S25H and S28H)",
+        "1-1-0",
+        4,
+        timing=(TimingSource.PART,),
+    ),
     # Identification.
     Operation(
         "RDID", 0x9F, OperationKind.ID, "Read JEDEC id", "1-0-1", 0, 0, READ, 3, timing=_SIZES
@@ -803,6 +1042,20 @@ _ALL = [
         "4-0-0",
         timing=(TimingSource.PART,),
     ),
+    # The data byte is the die to select (0, 1, ...).
+    Operation(
+        "DIE_SELECT",
+        0xC2,
+        OperationKind.MODE,
+        "Select a die (Winbond)",
+        "1-0-1",
+        0,
+        0,
+        WRITE,
+        1,
+        timing=(TimingSource.PART,),
+    ),
+    *_NAND_OPERATIONS,
 ]
 
 #: Every operation spiflash knows, by name.

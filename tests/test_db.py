@@ -954,9 +954,14 @@ def test_record_derives_id_and_erase_operations() -> None:
         ("BE_4K", False),
         ("BE_4K", True),
     ]
-    # SPI NAND reads its id and erases blocks with other commands.
-    nand = rec(type="nand", id_method="rdid_opcode_dummy", erasers=erasers)
-    assert nand.opcodes == ()
+    # SPI NAND reads its id and erases blocks with its own commands.
+    block = [{"opcode": 0xD8, "blocks": [[131072, 1024]]}]
+    nand = rec(type="nand", id_method="rdid_opcode_dummy", erasers=block)
+    assert [(u.op, u.via) for u in nand.opcodes] == [
+        ("NAND_RDID_DUMMY", "id read (rdid_opcode_dummy)"),
+        ("NAND_BLOCK_ERASE", "eraser: 1024 x 131072"),
+    ]
+    assert not nand.features
 
 
 def test_record_stored_fields() -> None:

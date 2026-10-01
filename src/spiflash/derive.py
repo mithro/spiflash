@@ -52,8 +52,8 @@ if TYPE_CHECKING:
     from .registers import NoQuadEnable, Protection
     from .sfdp import Sfdp, SfdpFacts
 
-#: The operation behind each way of reading an id. Only SPI NOR records
-#: derive it: a SPI NAND read-id is a different shape of command.
+#: The operation behind each way of reading an id, for a SPI NOR record
+#: (:data:`NAND_ID_OPERATION` for SPI NAND).
 ID_OPERATION: dict[IdMethod, str] = {
     IdMethod.RDID: "RDID",
     IdMethod.RDID_OPCODE: "RDID",
@@ -66,9 +66,18 @@ ID_OPERATION: dict[IdMethod, str] = {
     IdMethod.ST95: "RDID_M95",
 }
 
+#: The SPI NAND read-id behind each way of reading an id: 0x9f, then the
+#: id straight away, after a dummy byte, or after an address byte.
+NAND_ID_OPERATION: dict[IdMethod, str] = {
+    IdMethod.RDID_OPCODE: "NAND_RDID",
+    IdMethod.RDID_OPCODE_DUMMY: "NAND_RDID_DUMMY",
+    IdMethod.RDID_OPCODE_ADDR: "NAND_RDID_ADDR",
+}
+
 #: The erase operation each erase opcode is: flashrom's
 #: ``spi_block_erase_<xx>`` sends 0x<xx>, and OpenOCD's ``erase_cmd`` and
-#: ``chip_erase_cmd`` hold the byte.
+#: ``chip_erase_cmd`` hold the byte (SPI NOR; :data:`NAND_ERASE_BY_OPCODE`
+#: for SPI NAND).
 ERASE_BY_OPCODE: dict[int, str] = {
     0x20: "BE_4K",
     0x21: "BE_4K_4B",
@@ -78,6 +87,7 @@ ERASE_BY_OPCODE: dict[int, str] = {
     0x53: "BE_53",
     0x5C: "BE_32K_4B",
     0x60: "CHIP_ERASE_ALT",
+    0x61: "DIE_ERASE_61",
     0x62: "CHIP_ERASE_ATMEL",
     0x81: "BE_ALT2",
     0xC4: "DIE_ERASE",
@@ -87,6 +97,30 @@ ERASE_BY_OPCODE: dict[int, str] = {
     0xDB: "BE_256",
     0xDC: "SE_4B",
 }
+
+#: A SPI NAND part's one erase, of a block.
+NAND_ERASE_BY_OPCODE: dict[int, str] = {0xD8: "NAND_BLOCK_ERASE"}
+
+#: The die erases: each erases one die, the address choosing it (Micron's
+#: 0xc4, Infineon's 0x61).
+DIE_ERASES = frozenset({"DIE_ERASE", "DIE_ERASE_61"})
+
+
+def die_erasers(record: Record) -> tuple[Eraser, ...]:
+    """The die erase layout of each die erase ``record`` states
+    (:data:`DIE_ERASES`), over its :attr:`~spiflash.model.Record.dies`
+    dies of its size: the layout is never stored, as the dies and the
+    operation say it. None for a part of one die, or without a size, or
+    whose size the dies do not divide."""
+    from .model import EraseBlock, Eraser  # noqa: PLC0415 - model imports this module
+
+    dies, size = record.dies, record.size
+    if dies is None or dies < 2 or size is None or size % dies:
+        return ()
+    stated = {u.op for u in record.stored("opcodes")} & DIE_ERASES
+    return tuple(
+        Eraser(OPERATIONS[op].opcode, (EraseBlock(size // dies, dies),)) for op in sorted(stated)
+    )
 
 
 def layout(eraser: Eraser) -> str:
@@ -98,15 +132,21 @@ def layout(eraser: Eraser) -> str:
     return f"{block.count} x {block.size}"
 
 
+def _id_operations(record: Record) -> dict[IdMethod, str]:
+    """The id reads of ``record``'s kind of flash, by id method."""
+    return ID_OPERATION if record.type is FlashType.NOR else NAND_ID_OPERATION
+
+
 def _reads_id_by_method(record: Record) -> bool:
     """Whether the id read follows from ``record``'s ``id_method``: not where
     the entry names the command it reads the id with (``via["id_method"]``),
     nor where it stores another id read (Dediprog sends 0x9f to its Sanyo
     parts, whose answer is a RES id)."""
     method = record.stored("id_method")
-    if method not in ID_OPERATION or "id_method" in record.stored("via"):
+    by_method = _id_operations(record)
+    if method not in by_method or "id_method" in record.stored("via"):
         return False
-    reads = set(ID_OPERATION.values()) - {ID_OPERATION[method]}
+    reads = set(by_method.values()) - {by_method[method]}
     return not any(u.op in reads for u in record.stored("opcodes"))
 
 
@@ -118,10 +158,11 @@ def opcodes(record: Record) -> tuple[OpcodeUse, ...]:
     and the operations its SFDP tables give (:attr:`SfdpFacts.opcodes
     <spiflash.sfdp.SfdpFacts.opcodes>`, with their dummy clocks), and those
     its quad enable requirement, stated or from its tables, gives
-    (:data:`REQUIREMENT_OPERATIONS`). SPI NOR only: a SPI NAND read-id or
-    block erase is another command, so a SPI NAND record derives none."""
+    (:data:`REQUIREMENT_OPERATIONS`). A SPI NAND record's are its own
+    command set's: its read-id (:data:`NAND_ID_OPERATION`) and its block
+    erase (:data:`NAND_ERASE_BY_OPCODE`)."""
     if record.type is not FlashType.NOR:
-        return ()
+        return _stored_opcodes(record)
     facts = record.sfdp_facts
     return _stored_opcodes(record) + (facts.opcodes if facts else ()) + _requirement_opcodes(record)
 
@@ -157,11 +198,14 @@ def _stored_opcodes(record: Record) -> tuple[OpcodeUse, ...]:
     stated: set[str] = set()
     method = record.stored("id_method")
     if _reads_id_by_method(record):
-        vias[ID_OPERATION[method]] = [f"id read ({method})"]
-        stated.add(ID_OPERATION[method])
+        op = _id_operations(record)[method]
+        vias[op] = [f"id read ({method})"]
+        stated.add(op)
+    nor = record.type is FlashType.NOR
     for e in record.stored("erasers"):
-        if e.opcode is not None:
-            op = ERASE_BY_OPCODE[e.opcode]
+        # A SPI NAND part's one erase is its block erase.
+        if e.opcode is not None and (nor or e.opcode in NAND_ERASE_BY_OPCODE):
+            op = (ERASE_BY_OPCODE if nor else NAND_ERASE_BY_OPCODE)[e.opcode]
             via = f"eraser: {layout(e)}" + (", a driver default" if e.assumed else "")
             ops = vias.setdefault(op, [])
             if via not in ops:
@@ -176,7 +220,7 @@ def _stored_opcodes(record: Record) -> tuple[OpcodeUse, ...]:
 
 #: The erase opcodes that erase the whole chip (or a whole die), not a
 #: block: an eraser sending one implies no block erase.
-WHOLE_CHIP_ERASES = frozenset({0x60, 0x62, 0xC4, 0xC7})
+WHOLE_CHIP_ERASES = frozenset({0x60, 0x61, 0x62, 0xC4, 0xC7})
 
 #: The capability a uniform block eraser of each size gives (SPI NOR).
 ERASE_FEATURE: dict[int, Feature] = {
@@ -188,16 +232,29 @@ ERASE_FEATURE: dict[int, Feature] = {
 _FOUR_BYTE_OPS = tuple(op for op in OPERATIONS if op.endswith("_4B"))
 
 #: The operations that imply each capability, where the entry states the
-#: operation (an ``assumed`` one implies nothing). SPI NOR only: the SPI NAND
-#: records have no operations yet. ``4byte_addr`` is :func:`address_bytes`'s.
+#: operation (an ``assumed`` one implies nothing), SPI NOR's and SPI
+#: NAND's. ``4byte_addr`` is :func:`address_bytes`'s.
 #:
 #: No erase operation is here: an opcode does not fix the block it erases
 #: (flashrom's MX25L1605 erases 64 KiB with 0x20, its AT25F2048 64 KiB with
 #: 0x52, its LE25FW106 2 KiB with 0xd7), so only an eraser's layout gives
 #: ``erase_4k``, ``erase_32k`` or ``erase_64k`` (:data:`ERASE_FEATURE`).
 FEATURE_IMPLIED_BY: dict[Feature, tuple[str, ...]] = {
-    Feature.FAST_READ: ("READ_1_1_1_FAST", "READ_1_1_1_FAST_4B"),
-    Feature.DUAL_READ: ("READ_1_1_2", "READ_1_2_2", "READ_1_1_2_4B", "READ_1_2_2_4B"),
+    Feature.FAST_READ: (
+        "READ_1_1_1_FAST",
+        "READ_1_1_1_FAST_4B",
+        "NAND_READ_CACHE_1_1_1_FAST",
+        "NAND_READ_CACHE_1_1_1_FAST_3A",
+    ),
+    Feature.DUAL_READ: (
+        "READ_1_1_2",
+        "READ_1_2_2",
+        "READ_1_1_2_4B",
+        "READ_1_2_2_4B",
+        "NAND_READ_CACHE_1_1_2",
+        "NAND_READ_CACHE_1_2_2",
+        "NAND_READ_CACHE_1_1_2_3A",
+    ),
     Feature.QUAD_READ: (
         "READ_1_1_4",
         "READ_1_4_4",
@@ -205,9 +262,26 @@ FEATURE_IMPLIED_BY: dict[Feature, tuple[str, ...]] = {
         "READ_1_4_4_4B",
         "READ_4_4_4",
         "READ_4_4_4_4B",
+        "NAND_READ_CACHE_1_1_4",
+        "NAND_READ_CACHE_1_4_4",
+        "NAND_READ_CACHE_1_1_4_3A",
     ),
-    Feature.QUAD_PP: ("PP_1_1_4", "PP_1_4_4", "PP_1_1_4_4B", "PP_1_4_4_4B"),
-    Feature.OCTAL_READ: ("READ_1_1_8", "READ_1_8_8", "READ_1_1_8_4B", "READ_1_8_8_4B"),
+    Feature.QUAD_PP: (
+        "PP_1_1_4",
+        "PP_1_4_4",
+        "PP_1_1_4_4B",
+        "PP_1_4_4_4B",
+        "NAND_PROGRAM_LOAD_1_1_4",
+        "NAND_RANDOM_LOAD_1_1_4",
+    ),
+    Feature.OCTAL_READ: (
+        "READ_1_1_8",
+        "READ_1_8_8",
+        "READ_1_1_8_4B",
+        "READ_1_8_8_4B",
+        "NAND_READ_CACHE_1_1_8",
+        "NAND_READ_CACHE_1_8_8",
+    ),
     Feature.OCTAL_DTR_READ: ("READ_8D_8D_8D",),
     Feature.OCTAL_DTR_PP: ("PP_8D_8D_8D",),
     Feature.QPI: ("READ_4_4_4", "READ_4_4_4_4B", "EQPI_38", "EQPI_35", "RSTQIO_FF", "RSTQIO_F5"),
@@ -329,6 +403,9 @@ def address_bytes(record: Record) -> AddressBytes | None:
 def _implied(g: _Given) -> dict[Feature, str]:
     """What :func:`features` gives, each with the first thing implying it."""
     out: dict[Feature, str] = {}
+    for u in g.ops:
+        for f in _IMPLIES.get(u.op, ()):
+            out.setdefault(f, f"{u.op} ({u.via})")
     if g.nor:
         _nor_implied(g, out)
     if isinstance(g.quad_enable, RegisterBit):
@@ -340,11 +417,8 @@ def _implied(g: _Given) -> dict[Feature, str]:
 
 
 def _nor_implied(g: _Given, out: dict[Feature, str]) -> None:
-    """What :func:`_implied` gives a SPI NOR record from its operations,
-    erasers, size and SFDP tables."""
-    for u in g.ops:
-        for f in _IMPLIES.get(u.op, ()):
-            out.setdefault(f, f"{u.op} ({u.via})")
+    """What :func:`_implied` gives a SPI NOR record from its erasers, size
+    and SFDP tables."""
     for e in g.erasers:
         block = _block(e)
         if e.opcode is not None and block in ERASE_FEATURE:
@@ -392,7 +466,8 @@ def features(record: Record) -> frozenset[Feature]:
       <spiflash.registers.Protection.blocks>`: a BP bit, or TB, SEC or CMP,
       which only change what the BP bits protect).
 
-    The last two hold for SPI NAND too."""
+    A SPI NAND record has the first (its own operations: a read from
+    cache, a program load) and the last two."""
     return frozenset(_implied(_given(record)))
 
 

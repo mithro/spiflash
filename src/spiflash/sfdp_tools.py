@@ -530,7 +530,7 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
     """A record in the data's shape
     (:repo:`records.json <src/spiflash/data/records.json>`, this format) holding
     what ``sfdp`` says as stored values, so a dump can be read as one more
-    source: its size, page size, quad enable requirement and erasers, its
+    source: its size, page size, quad enable requirement, dies and erasers, its
     operations with their dummy clocks (not the erases its erasers give), and
     the capabilities only
     SFDP says (:func:`spiflash.derive.sfdp_claims`), with their reasons in
@@ -561,6 +561,12 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
         if facts.quad_enable_requirement is None
         else str(facts.quad_enable_requirement),
         "protection": None,
+        "oob_size": None,
+        "planes": None,
+        "dies": facts.dies,
+        "die_select_bit": None,
+        "max_bad_blocks": None,
+        "ecc": None,
         "opcodes": [
             {
                 "op": u.op,

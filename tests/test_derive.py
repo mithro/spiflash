@@ -58,7 +58,8 @@ def eraser(opcode: int | None, *blocks: tuple[int, int]) -> dict[str, Any]:
 def test_each_operation_implies_its_feature(feature: Feature, ops: tuple[str, ...]) -> None:
     for op in ops:
         assert op in OPERATIONS
-        r = rec(size=None, opcodes=uses(op))
+        kind = OPERATIONS[op].flash_type
+        r = rec(size=None, opcodes=uses(op), type=kind, id_method="rdid_opcode_dummy")
         assert feature in derive.features(r), op
         assert feature in r.features
         assert derive.feature_reasons(r)[feature] == f"implied by {op} (v)"
@@ -70,6 +71,43 @@ def test_a_driver_default_implies_nothing() -> None:
     assert derive.features(r) == frozenset()
     assert r.features == frozenset()
     assert derive.address_bytes(r) is None
+
+
+def test_spi_nand_operations_imply_its_capabilities() -> None:
+    nand = {"type": "nand", "id_method": "rdid_opcode_dummy", "size": 128 * MIB}
+    r = rec(**nand, opcodes=uses("NAND_READ_CACHE_1_1_1_FAST", "NAND_READ_CACHE_1_4_4"))
+    assert r.features == {Feature.FAST_READ, Feature.QUAD_READ}
+    r = rec(**nand, opcodes=uses("NAND_PROGRAM_LOAD_1_1_4", "NAND_READ_CACHE_1_1_2_3A"))
+    assert r.features == {Feature.QUAD_PP, Feature.DUAL_READ}
+    # A driver default, the page read or a feature read imply nothing.
+    r = rec(**nand, opcodes=uses("NAND_PAGE_READ", "NAND_GET_FEATURE"))
+    assert r.features == frozenset()
+    assert not rec(**nand, opcodes=uses("NAND_READ_CACHE_1_1_4", assumed=True)).features
+
+
+def test_the_die_erase_layout_is_derived_from_the_dies() -> None:
+    r = rec(size=128 * MIB, dies=2, opcodes=uses("DIE_ERASE"))
+    die = Eraser(0xC4, (EraseBlock(64 * MIB, 2),))
+    assert derive.die_erasers(r) == (die,)
+    assert die in r.erasers
+    assert r.eraser_claims == ()
+    # Stored once, as the dies and the operation; the operation is the
+    # stated one, not also implied by the layout.
+    assert r.to_json()["erasers"] is None
+    assert r.to_json()["dies"] == 2
+    assert [(u.op, u.implied) for u in r.opcodes if u.op == "DIE_ERASE"] == [("DIE_ERASE", False)]
+    # A die erase is no block erase, nor the sector size.
+    assert r.sector_size is None
+    assert not {Feature.ERASE_4K, Feature.ERASE_32K, Feature.ERASE_64K} & r.features
+    # Infineon's 0x61.
+    r = rec(size=256 * MIB, dies=2, opcodes=uses("DIE_ERASE_61"))
+    assert derive.die_erasers(r) == (Eraser(0x61, (EraseBlock(128 * MIB, 2),)),)
+    # None for one die, without a die erase, or without a size.
+    assert derive.die_erasers(rec(dies=1, opcodes=uses("DIE_ERASE"))) == ()
+    assert derive.die_erasers(rec(dies=2)) == ()
+    assert derive.die_erasers(rec(size=None, dies=2, opcodes=uses("DIE_ERASE"))) == ()
+    # Derived, so replace() recomputes it.
+    assert replace(r, dies_claim=4).erasers == (Eraser(0x61, (EraseBlock(64 * MIB, 4),)),)
 
 
 def test_no_erase_operation_implies_a_size() -> None:
@@ -99,14 +137,16 @@ def test_block_erasers_imply_their_size() -> None:
         eraser(0x60, (65536, 1)),
         eraser(0x62, (65536, 1)),
         eraser(0xC4, (65536, 2)),
+        eraser(0x61, (65536, 2)),
         eraser(0xD8, (4096, 2), (65536, 1)),
         {**eraser(None, (65536, 1)), "function": "spi_block_erase_emulation"},
     ):
         assert not derive.features(rec(size=65536, erasers=[e])), e
-    # A SPI NAND block erase implies no erase_*, nor any operation.
+    # A SPI NAND block erase implies no erase_*, nor a SPI NOR operation:
+    # it is SPI NAND's own block erase.
     nand = rec(type="nand", id_method="rdid_opcode_dummy", erasers=[eraser(0xD8, (65536, 256))])
     assert derive.features(nand) == frozenset()
-    assert derive.opcodes(nand) == ()
+    assert [u.op for u in derive.opcodes(nand)] == ["NAND_RDID_DUMMY", "NAND_BLOCK_ERASE"]
 
 
 def test_four_byte_addresses() -> None:

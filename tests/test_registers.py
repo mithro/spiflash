@@ -28,9 +28,11 @@ SR1, SR2 = Register.SR1, Register.SR2
 
 
 def test_a_register_is_named_by_the_command_reading_it() -> None:
-    assert [r.read_opcode for r in Register] == [0x05, 0x35, 0x15, 0x48, 0x2B, 0x0F]
+    assert [r.read_opcode for r in Register] == [0x05, 0x35, 0x15, 0x48, 0x2B, 0x0F, 0x0F]
     assert Register.SR3.description == "SR3, read with 0x15"
     assert Register.NAND_CONFIG.description.endswith(", read with GET FEATURE (0x0f) at 0xb0")
+    die = "die select feature, read with GET FEATURE (0x0f) at 0xd0"
+    assert Register.NAND_DIE.description == die
 
 
 def test_register_bit() -> None:
@@ -142,9 +144,45 @@ def test_compared_values() -> None:
         "quad_enable",
         "quad_enable_requirement",
     )
-    assert COMPARED_VALUES[6:] == tuple(f"protection.{r}" for r in ROLES)
+    roles = tuple(f"protection.{r}" for r in ROLES)
+    assert COMPARED_VALUES[6 : 6 + len(roles)] == roles
+    assert COMPARED_VALUES[6 + len(roles) :] == (
+        "oob_size",
+        "planes",
+        "dies",
+        "die_select_bit",
+        "max_bad_blocks",
+        "ecc.strength_bits",
+        "ecc.step_bytes",
+    )
     # Every one is a value a record gives and a chip has.
     r = Record.from_json(rec().to_json())
     for name in COMPARED_VALUES:
         r.given(name)
         Database([r]).flashes[0].value(name)
+    with pytest.raises(KeyError, match="no such value"):
+        r.given("ecc.bits")
+
+
+def test_an_ecc_requirement_is_compared_by_its_components() -> None:
+    def nand(ecc: dict[str, int], source: str = "linux") -> Record:
+        d = {**rec().to_json(), "type": "nand", "id_method": "rdid_opcode_dummy"}
+        return Record.from_json({**d, "source": source, "ecc": ecc})
+
+    eight = {"strength_bits": 8, "step_bytes": 512}
+    linux, rockchip = nand(eight), nand({"strength_bits": 8}, "rockchip")
+    assert str(linux.ecc) == "8 bits per 512 B"
+    assert str(rockchip.ecc) == "8 bits"
+    assert linux.ecc is not None
+    assert rockchip.ecc is not None
+    assert linux.ecc.compatible(rockchip.ecc)
+    assert linux.given("ecc.step_bytes") == 512
+    assert rockchip.given("ecc.step_bytes") is None
+    (chip,) = Database([linux, rockchip]).flashes
+    assert not chip.conflicts  # a source giving no step does not vote on it
+    assert chip.ecc == linux.ecc
+    four = nand({"strength_bits": 4}, "rockchip")
+    assert four.ecc is not None
+    assert not four.ecc.compatible(linux.ecc)
+    (chip,) = Database([linux, four]).flashes
+    assert set(chip.conflicts) == {"ecc.strength_bits"}
