@@ -104,16 +104,25 @@ def opcodes(record: Record) -> tuple[OpcodeUse, ...]:
     if record.type is not FlashType.NOR:
         return ()
     vias: dict[str, list[str]] = {}
+    # The operations only a driver-default eraser gives are defaults too.
+    stated: set[str] = set()
     method = record.stored("id_method")
     if _reads_id_by_method(record):
         vias[ID_OPERATION[method]] = [f"id read ({method})"]
+        stated.add(ID_OPERATION[method])
     for e in record.stored("erasers"):
         if e.opcode is not None:
-            via = f"eraser: {layout(e)}"
-            ops = vias.setdefault(ERASE_BY_OPCODE[e.opcode], [])
+            op = ERASE_BY_OPCODE[e.opcode]
+            via = f"eraser: {layout(e)}" + (", a driver default" if e.assumed else "")
+            ops = vias.setdefault(op, [])
             if via not in ops:
                 ops.append(via)
-    return tuple(OpcodeUse(op, "; ".join(v), implied=True) for op, v in vias.items())
+            if not e.assumed:
+                stated.add(op)
+    return tuple(
+        OpcodeUse(op, "; ".join(v), implied=True, assumed=op not in stated)
+        for op, v in vias.items()
+    )
 
 
 #: The erase opcodes that erase the whole chip (or a whole die), not a
@@ -177,8 +186,11 @@ def _stated(record: Record) -> list[OpcodeUse]:
 
 def _block(eraser: Eraser) -> int | None:
     """The block size of a uniform block eraser: one with an opcode that is
-    not a whole-chip erase, and one size of block; else ``None``."""
+    not a whole-chip erase, and one size of block, and not a driver default;
+    else ``None``."""
     if eraser.opcode is None or eraser.opcode in WHOLE_CHIP_ERASES or len(eraser.blocks) != 1:
+        return None
+    if eraser.assumed:
         return None
     return eraser.blocks[0].size
 
@@ -245,7 +257,8 @@ def features(record: Record) -> frozenset[Feature]:
       driver default (:attr:`OpcodeUse.assumed
       <spiflash.opcodes.OpcodeUse.assumed>`) implies nothing;
     - each uniform block eraser of 4, 32 or 64 KiB (:data:`ERASE_FEATURE`;
-      SPI NOR), not a whole-chip erase however small the chip;
+      SPI NOR), not a whole-chip erase however small the chip, nor a driver
+      default (:attr:`Eraser.assumed <spiflash.model.Eraser.assumed>`);
     - ``4byte_addr`` where :func:`address_bytes` is neither ``THREE`` nor
       ``None``;
     - everything its SFDP tables support (:meth:`Sfdp.features
@@ -279,26 +292,29 @@ def sector_size(record: Record) -> int | None:
     (0xd8's 4-byte-address form), else of a uniform 0x52 (the blocks of the
     AT25F and SST25LF parts, which have no 0xd8: 32 KiB, or 64 KiB on the
     AT25F2048 and AT25F4096). ``None`` where the part needs no erase
-    (it claims ``no_erase``) or has none of those erasers."""
+    (it claims ``no_erase``) or has none of those erasers. A driver
+    default eraser (:attr:`Eraser.assumed <spiflash.model.Eraser.assumed>`)
+    gives none."""
     if Feature.NO_ERASE in record.stored("features"):
         return None
     order = (0xD8,) if record.type is FlashType.NAND else (0xD8, 0xDC, 0x52)
     erasers: tuple[Eraser, ...] = record.stored("erasers")
     for opcode in order:
         for e in erasers:
-            if e.opcode == opcode and len(e.blocks) == 1:
+            if e.opcode == opcode and len(e.blocks) == 1 and not e.assumed:
                 return e.blocks[0].size
     return None
 
 
-def block_eraser(opcode: int, block: int, size: int) -> Eraser:
+def block_eraser(opcode: int, block: int, size: int, *, assumed: bool = False) -> Eraser:
     """An eraser of ``opcode`` over the whole of a ``size``-byte part, in
     ``block``-byte blocks: what an extractor stores for an upstream that
     gives an erase block size and no layout (Linux's and U-Boot's sector
-    size, openFPGALoader's ``sector_erase``, a SPI NAND block)."""
+    size, openFPGALoader's ``sector_erase``, a SPI NAND block); ``assumed``
+    for a driver's default."""
     from .model import EraseBlock, Eraser  # noqa: PLC0415 - model imports this module
 
     if block <= 0 or size % block:
         msg = f"a {size}-byte part is not a whole number of {block}-byte blocks"
         raise ValueError(msg)
-    return Eraser(opcode, (EraseBlock(block, size // block),))
+    return Eraser(opcode, (EraseBlock(block, size // block),), assumed=assumed)

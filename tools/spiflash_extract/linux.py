@@ -142,7 +142,9 @@ def _nor_record(
     size = cparse.evaluate(fields["size"], symbols) if "size" in fields else None
     if size == 0:
         size = None
-    page = cparse.evaluate(fields.get("page_size", "256"), symbols)
+    # SPI_NOR_DEFAULT_PAGE_SIZE (256) where the entry gives none is the
+    # driver's, for every part: no page size of the part's own.
+    page = cparse.evaluate(fields["page_size"], symbols) if "page_size" in fields else None
     # "non-legacy flash entries in flash_info will have a size of zero iff
     # SFDP should be used" (struct flash_info, core.h): such a part's
     # erasers come from its SFDP tables at run time (its RDSFDP says so).
@@ -179,17 +181,20 @@ def _nor_erasers(
     part with a size: 0x20 over 4 KiB sectors for ``SECT_4K``, and 0xd8 over
     the entry's ``.sector_size``.
 
-    The sector size is ``SPI_NOR_DEFAULT_SECTOR_SIZE`` (64 KiB) where the
-    entry gives none, which is most of them. It is taken as the entry's
-    claim, not a driver default: Linux erases every such part with it, an
-    entry for a part with other blocks gives its own (``SZ_256K`` for the
-    S25FL512S), and U-Boot's ``INFO()`` table, which Linux's was, states the
-    64 KiB in every entry."""
+    Where the entry gives no ``.sector_size``, which is most of them, the
+    kernel takes ``SPI_NOR_DEFAULT_SECTOR_SIZE`` (64 KiB) whatever the part:
+    that eraser is a driver default (assumed), so gives no sector size and
+    no ``erase_64k``. An entry's own ``.sector_size`` (``SZ_256K`` for the
+    S25FL512S) and ``SECT_4K`` are its claims."""
     out = []
     if "SECT_4K" in cparse.flag_names(fields.get("no_sfdp_flags", "0")):
         out.append(derive.block_eraser(0x20, 4096, size).to_json())
-    sector = cparse.evaluate(fields.get("sector_size", "SPI_NOR_DEFAULT_SECTOR_SIZE"), symbols)
-    out.append(derive.block_eraser(0xD8, sector, size).to_json())
+    if "sector_size" in fields:
+        sector = cparse.evaluate(fields["sector_size"], symbols)
+        out.append(derive.block_eraser(0xD8, sector, size).to_json())
+    else:
+        sector = cparse.evaluate("SPI_NOR_DEFAULT_SECTOR_SIZE", symbols)
+        out.append(derive.block_eraser(0xD8, sector, size, assumed=True).to_json())
     return out
 
 
@@ -244,8 +249,10 @@ def _nor_opcodes(
             if flag in _NO_SFDP_OPS:
                 add_spinor(ops, _NO_SFDP_OPS[flag], flag)
         if "no_erase" not in features:
-            # The eraser gives it (_nor_erasers); added for its 4-byte form.
-            add_spinor(ops, "SE", "sector erase (spi_nor_no_sfdp_init_params)")
+            # The eraser gives it (_nor_erasers); added for its 4-byte form,
+            # a default where the sector size is.
+            no_sector = "sector_size" not in fields
+            add_spinor(ops, "SE", "sector erase (spi_nor_no_sfdp_init_params)", assumed=no_sector)
     if "no_erase" not in features:
         add_spinor(ops, "CHIP_ERASE", "default (spi_nor_erase)", assumed=True)
     if "SPI_NOR_4B_OPCODES" in fixup:

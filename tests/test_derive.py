@@ -173,6 +173,21 @@ def test_sector_size() -> None:
     assert replace(r, erasers=(Eraser(0xD8, blocks),)).sector_size == 262144
 
 
+def test_a_driver_default_eraser_gives_nothing_of_the_part() -> None:
+    default = {**eraser(0xD8, (65536, 256)), "assumed": True}
+    r = rec(erasers=[default])
+    assert r.sector_size is None
+    assert Feature.ERASE_64K not in r.features
+    (se,) = (u for u in r.opcodes if u.op == "SE")
+    assert (se.implied, se.assumed, se.via) == (True, True, "eraser: 256 x 65536, a driver default")
+    assert Eraser.from_json(default).to_json() == default
+    # An eraser of the entry's own gives the same operation for the part.
+    both = rec(erasers=[default, eraser(0xD8, (65536, 256))])
+    (se,) = (u for u in both.opcodes if u.op == "SE")
+    assert not se.assumed
+    assert both.sector_size == 65536
+
+
 def test_block_eraser() -> None:
     e = derive.block_eraser(0xD8, 65536, 16 * MIB)
     assert e == Eraser(0xD8, (EraseBlock(65536, 256),))

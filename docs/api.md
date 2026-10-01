@@ -126,7 +126,11 @@ Changes in data format 5:
   has {py:attr}`~spiflash.model.SupportedOperation.assumed_by`;
 - the records lose `"sector_size"`, an implied capability is not stored in
   their `"features"`, Linux's, U-Boot's, openFPGALoader's and the SPI NAND
-  records gain erasers, and an operation that is a driver default has
-  `"assumed": true`;
+  records gain erasers, and an operation or eraser that is a driver default
+  has `"assumed": true` ({py:attr}`Eraser.assumed
+  <spiflash.model.Eraser.assumed>`: Linux's 64 KiB sector for an entry that
+  gives none, which gives no sector size); a Linux entry without
+  `.page_size` has no page size (the driver's 256-byte default is not the
+  part's);
 - {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>` (the command's
   `--json`) gains `"feature_sources"` and each operation's `"assumed_by"`.

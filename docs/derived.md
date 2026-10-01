@@ -38,7 +38,10 @@ source states the operation for the part, {sfyes}`✓`), and they imply no
 capability:
 
 - {sfsrc}`linux`: read, fast read (a board's devicetree choice,
-  `m25p,fast-read`), page program and chip erase;
+  `m25p,fast-read`), page program and chip erase, and the 64 KiB 0xd8 sector
+  (and 256-byte page) it takes for an entry that gives none: that erase
+  layout is marked a default too ({py:attr}`Eraser.assumed
+  <spiflash.model.Eraser.assumed>`), and the page size is left out;
 - {sfsrc}`u-boot`: read, fast read (unless `SPI_NOR_NO_FR`), page program
   and chip erase (unless `NO_CHIP_ERASE`), and the quad page program
   (0x32) it adds for every `SPI_NOR_QUAD_READ` part;
@@ -64,9 +67,9 @@ block. A part that needs no erase (FRAM, MRAM: `no_erase`) has none, and
 none is made up for it.
 
 Sources that give a sector size and no layout give the layout instead:
-{sfsrc}`linux` (0xd8 over its `.sector_size`, 64 KiB where the entry gives
-none, which is taken as the entry's own: an entry for a part with other
-blocks gives its own; and 0x20 over 4 KiB for `SECT_4K`), {sfsrc}`u-boot`
+{sfsrc}`linux` (0xd8 over its `.sector_size`, and 0x20 over 4 KiB for
+`SECT_4K`; where the entry gives no `.sector_size`, the driver's 64 KiB
+default is a layout marked a default, which gives no sector size), {sfsrc}`u-boot`
 (the same from its `INFO()` sectors), {sfsrc}`openfpgaloader`
 (`sector_erase` and `subsector_erase`), and every SPI NAND source (the
 erase block). A Linux part read from SFDP has no layout, as the kernel

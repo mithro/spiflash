@@ -48,16 +48,22 @@ class Eraser:
     """One way to erase a chip: the opcode, and the blocks it erases
     (non-uniform when there is more than one kind). ``opcode`` is ``None``
     for an eraser that is a routine rather than one command (``function``
-    names it: flashrom's ``spi_block_erase_emulation``, ...)."""
+    names it: flashrom's ``spi_block_erase_emulation``, ...).
+
+    ``assumed`` marks a driver default, as :attr:`OpcodeUse.assumed
+    <spiflash.opcodes.OpcodeUse.assumed>` does an operation: Linux's 64 KiB
+    0xd8 sector for an entry that gives no ``.sector_size``. It gives no
+    capability and no sector size (:mod:`spiflash.derive`)."""
 
     opcode: int | None
     blocks: tuple[EraseBlock, ...]
     function: str | None = None
+    assumed: bool = False
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> Eraser:
         blocks = tuple(EraseBlock(size, count) for size, count in d["blocks"])
-        return cls(d["opcode"], blocks, d.get("function"))
+        return cls(d["opcode"], blocks, d.get("function"), d.get("assumed", False))
 
     def to_json(self) -> dict[str, Any]:
         """The eraser as the data stores it (:meth:`from_json` reads it back)."""
@@ -67,6 +73,8 @@ class Eraser:
         }
         if self.function is not None:
             out["function"] = self.function
+        if self.assumed:
+            out["assumed"] = True
         return out
 
 

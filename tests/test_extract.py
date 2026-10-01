@@ -127,15 +127,17 @@ def test_linux_nor(linux_tree: Path) -> None:
     assert w["ext_id"] is None
     assert w["vendor"] == "winbond"
     assert w["size"] == 16 << 20
-    assert w["page_size"] == 256
-    # SECT_4K and the default 64 KiB sector are erasers, which give the
-    # sector size, the erase operations and the erase capabilities.
+    # No .page_size: the driver's 256 B default is not the part's.
+    assert w["page_size"] is None
+    # SECT_4K is an eraser. No .sector_size: the driver's default 64 KiB
+    # sector is an eraser too, but an assumed one, which gives no sector
+    # size and no erase_64k.
     assert w["erasers"] == [
         {"opcode": 0x20, "blocks": [[4096, 4096]]},
-        {"opcode": 0xD8, "blocks": [[65536, 256]]},
+        {"opcode": 0xD8, "blocks": [[65536, 256]], "assumed": True},
     ]
-    assert sector(w) == 65536
-    assert features(w) == ["dual_read", "erase_4k", "erase_64k", "lock", "quad_read"]
+    assert sector(w) is None
+    assert features(w) == ["dual_read", "erase_4k", "lock", "quad_read"]
     assert w["features"] == ["lock"]  # the rest are implied
     # core.c's defaults, plus what the no_sfdp_flags set up.
     assert ops(w) == {
@@ -146,9 +148,15 @@ def test_linux_nor(linux_tree: Path) -> None:
         "READ_1_1_4": (0x6B, "SPI_NOR_QUAD_READ"),
         "PP_1_1_1": (0x02, "default (spi_nor_init_default_params)"),
         "BE_4K": (0x20, "eraser: 4096 x 4096"),
-        "SE": (0xD8, "eraser: 256 x 65536"),
+        "SE": (0xD8, "eraser: 256 x 65536, a driver default"),
         "CHIP_ERASE": (0xC7, "default (spi_nor_erase)"),
     }
+    se = next(u for u in Record.from_json(w).opcodes if u.op == "SE")
+    assert (se.implied, se.assumed) == (True, True)
+    # An entry's own .sector_size is its claim.
+    s0 = r["S25FL128S0"]
+    assert s0["erasers"] == [{"opcode": 0xD8, "blocks": [[256 << 10, 64]]}]
+    assert sector(s0) == 256 << 10
     # The driver's defaults imply no capability: no fast_read.
     assert assumed(w) == {"READ_1_1_1", "READ_1_1_1_FAST", "PP_1_1_1", "CHIP_ERASE"}
     # The id read is derived, not stored; then read, ...
@@ -177,6 +185,7 @@ def test_linux_nor(linux_tree: Path) -> None:
     assert big["via"]["feature:otp"] == ".otp"
     assert ops(big)["READ_1_1_1_4B"] == (0x13, "SPI_NOR_4B_OPCODES")
     assert ops(big)["SE_4B"] == (0xDC, "SPI_NOR_4B_OPCODES")
+    assert "SE_4B" in assumed(big)  # the 4-byte form of the default sector erase
     assert ops(big)["PP_1_1_1_4B"] == (0x12, "SPI_NOR_4B_OPCODES")
 
     # Neither a name nor a comment: named by vendor and id.

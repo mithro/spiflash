@@ -150,6 +150,7 @@ DEFAULTS = {
     ("linux", "READ_1_1_1_4B", "SPI_NOR_4B_OPCODES"),
     ("linux", "READ_1_1_1_FAST_4B", "SPI_NOR_4B_OPCODES"),
     ("linux", "PP_1_1_1_4B", "SPI_NOR_4B_OPCODES"),
+    ("linux", "SE_4B", "SPI_NOR_4B_OPCODES"),  # of the default 64 KiB sector
     ("u-boot", "READ_1_1_1", "default (spi_nor_init_params)"),
     ("u-boot", "READ_1_1_1_FAST", "default unless SPI_NOR_NO_FR"),
     ("u-boot", "PP_1_1_1", "default (spi_nor_init_params)"),

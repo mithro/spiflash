@@ -471,6 +471,8 @@ def _erase_layouts(f: Flash) -> list[str]:
                 operation = "block erase"
             else:
                 operation = f"[`{opname}`](../opcodes/{opname}.md)" if opname else EM_DASH
+            if e.assumed:
+                operation += " *(driver default)*"
             rows.append(
                 [
                     source_badge(r.source),
