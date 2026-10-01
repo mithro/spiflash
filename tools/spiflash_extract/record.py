@@ -117,6 +117,18 @@ Fields (``None`` / empty when the upstream does not say):
 ``legacy_ids``
     The ids the part also answers to legacy commands, besides its own:
     ``[["res1", "15"], ["rems", "ef12"]]``; never its own id.
+``max_clock_hz``
+    The fastest SPI clock, in hertz, the entry gives the part (Dediprog's
+    ``Clock``), where it is one clock: not a board's or a driver's setting.
+``timings``
+    The part's durations the entry states, in nanoseconds, by event and
+    bound (:class:`spiflash.timings.Timings`): ``{"chip_erase":
+    {"unspecified": 200000000000}, "dpd_exit": {"maximum": 35000}}``, ``{}``
+    without; each bound one its event can have
+    (:data:`spiflash.timings.BOUNDS`), a minimum, typical and maximum in
+    order, and a block erase's key (``block_erase:0x20``) an eraser the
+    record has. Not one its SFDP tables give the same, nor a wait a driver
+    or a board sets for every part.
 ``opcodes``
     The operations the entry states (a record's ``opcode_claims``):
     ``[{"op": "READ_1_1_4", "via": "SPI_NOR_QUAD_READ"}, ...]``, ``op`` a name
@@ -153,11 +165,20 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from spiflash import derive
-from spiflash.enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
+from spiflash.enums import (
+    Feature,
+    FlashType,
+    IdFamily,
+    IdMethod,
+    OperationKind,
+    Source,
+    TimedEvent,
+)
 from spiflash.model import SFDP_VALUES
 from spiflash.model import Record as Model
 from spiflash.opcodes import OPERATIONS, OpcodeUse
 from spiflash.registers import ROLES
+from spiflash.timings import TimingKey, Timings
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -194,6 +215,8 @@ KEYS = (
     "four_byte_modes",
     "otp",
     "legacy_ids",
+    "max_clock_hz",
+    "timings",
     "opcodes",
     "sfdp",
     "sfdp_tables",
@@ -250,8 +273,13 @@ VIA_FIELDS = frozenset(KEYS) - {
 
 #: The components a ``<field>.<component>`` key may name, by field: a role
 #: of ``protection`` (``protection.tb``), where the roles come from
-#: different tokens; a token giving several is under ``protection``.
-VIA_COMPONENTS: dict[str, frozenset[str]] = {"protection": frozenset(ROLES)}
+#: different tokens, and an event of ``timings`` (``timings.dpd_exit``,
+#: ``timings.block_erase:0x20``); a token giving several is under the
+#: field (``protection``, ``timings``).
+VIA_COMPONENTS: dict[str, frozenset[str]] = {
+    "protection": frozenset(ROLES),
+    "timings": frozenset(TimedEvent),
+}
 
 # A via key: feature:<feature>, <field>, <field>.<component> or <field>:<member>.
 _VIA_KEY = re.compile(r"feature:([a-z0-9_]+)|([a-z_]+)(?:\.([a-z0-9_]+))?(?::([a-z0-9_]+))?")
@@ -297,6 +325,9 @@ def check_via(rec: Record) -> None:
             field, component, member = m[2], m[3], m[4]
             if field not in VIA_FIELDS:
                 ok = False
+            elif field == "timings":
+                ok = _timing_via(rec, key)
+                component = member = None
             elif field in _MEMBERS:
                 ok = bool(_MEMBERS[field](rec))
             elif field in SFDP_VALUES and rec[field] is None:
@@ -313,6 +344,29 @@ def check_via(rec: Record) -> None:
         if not ok:
             msg = f"bad via key {key!r}"
             raise ValueError(msg)
+
+
+def _timings(rec: Record) -> Timings:
+    """The times ``rec`` has: those it states, and those its own SFDP
+    tables give it (which an upstream token can state too: Zephyr's
+    ``t-exit-dpd``, equal to its BFPT's DW14)."""
+    stated = Timings.from_json(rec["timings"])
+    if rec.get("sfdp") or rec.get("sfdp_tables"):
+        return Model.from_json(rec).timings
+    return stated
+
+
+def _timing_via(rec: Record, key: str) -> bool:
+    """Whether a ``timings`` or ``timings.<key>`` via key names times the
+    record has (stated, or from its own SFDP tables)."""
+    have = _timings(rec)
+    if key == "timings":
+        return bool(have)
+    try:
+        wanted = TimingKey.parse(key.removeprefix("timings."))
+    except ValueError:
+        return False
+    return wanted in have.keys
 
 
 def tokens(via: str) -> list[str]:
@@ -399,6 +453,7 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         sfdp_tables={},
         four_byte_modes=[],
         legacy_ids=[],
+        timings={},
     )
     rec.update(fields)
     if rec["sfdp"] and rec["sfdp_tables"]:
@@ -407,6 +462,7 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     rec["features"] = sorted(set(rec["features"]))
     rec["four_byte_modes"] = sorted(set(rec["four_byte_modes"]))
     _check_legacy_ids(rec)
+    _check_timings(rec)
     check_via(rec)
     _check_kind(rec)
     _drop_sfdp(rec)
@@ -449,6 +505,28 @@ def _check_legacy_ids(rec: Record) -> None:
             msg = f"{rec['source']} {rec['name']}: legacy id {method} {ident} twice"
             raise ValueError(msg)
         seen.add((method, ident))
+
+
+def _check_timings(rec: Record) -> None:
+    """Raise for a time that is not one (a key or bound its event cannot
+    have, not a whole number of nanoseconds above 0), a key's bounds out of
+    order, or a block erase's time for an eraser the record does not have
+    (stored, or from its SFDP tables); write the times in order."""
+    where = f"{rec['source']} {rec['name']}"
+    try:
+        times = Timings.from_json(rec["timings"])
+    except (ValueError, TypeError) as e:
+        msg = f"{where}: {e}"
+        raise ValueError(msg) from e
+    if times.disorder():
+        msg = f"{where}: times out of order: {times.disorder()}"
+        raise ValueError(msg)
+    blocks = {k.opcode for k in times.keys if k.opcode is not None}
+    erasers = {int(m, 16) for m in _eraser_members(rec)}
+    if blocks - erasers:
+        msg = f"{where}: block erase times for erasers it has not: {sorted(blocks - erasers)}"
+        raise ValueError(msg)
+    rec["timings"] = times.to_json()
 
 
 #: The fields only a SPI NAND part has.
@@ -515,6 +593,9 @@ def _drop_sfdp(rec: Record) -> None:
     kept = [e for e in rec["erasers"] or () if e not in given]
     rec["erasers"] = kept or None
     rec["four_byte_modes"] = [m for m in rec["four_byte_modes"] if m not in facts.four_byte_modes]
+    # A time exactly the tables'; one they give only at their resolution
+    # (a stated 35 µs, a table's 40 µs) is more precise, so stays.
+    rec["timings"] = Timings.from_json(rec["timings"]).without(facts.timings).to_json()
 
 
 def _same_use(stored: dict[str, Any], derived: OpcodeUse) -> bool:

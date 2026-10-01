@@ -49,7 +49,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn
 
 from spiflash.derive import ERASE_FEATURE
+from spiflash.enums import Bound, TimedEvent
 from spiflash.sfdp import BFPT_ID, FOUR_BYTE_ID, PROFILE1_ID
+from spiflash.timings import TimingKey
 
 from . import cparse, dts
 from .ops import Opcodes
@@ -193,11 +195,105 @@ ENTER_4B = {
     30: "always_4b",
 }
 
+#: Where the bindings are, which declare the properties the times are read
+#: from (:func:`check_bindings`).
+BINDINGS_DIR = "dts/bindings/mtd"
+
+_MAX, _MIN = Bound.MAXIMUM, Bound.MINIMUM
+
+#: The properties giving one of the part's times, each a whole number of
+#: some unit: (its binding, the event, the bound, nanoseconds per unit).
+#: The binding's words decide the bound: "Duration required to complete
+#: the DPD command" (``t-enter-dpd``) and "... the RDPD command"
+#: (``t-exit-dpd``) are the part's tDP and tRES1, which datasheets give as
+#: maxima; ``t-reset-recovery``'s "Minimum time ... the chip needs to
+#: recover after reset" is the host's least wait, so the part's own
+#: maximum; ``t-reset-pulse``'s "Minimum duration ... of an active pulse on
+#: the RESET line" a minimum; the AT45's "Time, in nanoseconds, needed by
+#: the chip to enter (exit) the Deep Power-Down mode" maxima; SPI NAND's
+#: ``*-duration-max`` maxima, in microseconds. 0 is "not given": the
+#: drivers then wait for nothing. Not ``reset-duration-max``'s default,
+#: 2000 µs, which is the binding's, not the part's.
+TIMES: dict[str, tuple[str, TimingKey, Bound, int]] = {
+    "t-enter-dpd": ("jedec,spi-nor-common.yaml", TimingKey(TimedEvent.DPD_ENTER), _MAX, 1),
+    "t-exit-dpd": ("jedec,spi-nor-common.yaml", TimingKey(TimedEvent.DPD_EXIT), _MAX, 1),
+    "t-reset-recovery": (
+        "jedec,spi-nor-common.yaml",
+        TimingKey(TimedEvent.RESET_RECOVERY),
+        _MAX,
+        1,
+    ),
+    "t-reset-pulse": ("jedec,nor-mspi.yaml", TimingKey(TimedEvent.RESET_PULSE), _MIN, 1),
+    "enter-dpd-delay": ("atmel,at45.yaml", TimingKey(TimedEvent.DPD_ENTER), _MAX, 1),
+    "exit-dpd-delay": ("atmel,at45.yaml", TimingKey(TimedEvent.DPD_EXIT), _MAX, 1),
+    "block-erase-duration-max": (
+        "jedec,spi-nand.yaml",
+        TimingKey(TimedEvent.BLOCK_ERASE, 0xD8),
+        _MAX,
+        1000,
+    ),
+    "page-program-duration-max": (
+        "jedec,spi-nand.yaml",
+        TimingKey(TimedEvent.PAGE_PROGRAM),
+        _MAX,
+        1000,
+    ),
+    "page-read-duration-max": ("jedec,spi-nand.yaml", TimingKey(TimedEvent.PAGE_READ), _MAX, 1000),
+    "reset-duration-max": (
+        "jedec,spi-nand.yaml",
+        TimingKey(TimedEvent.RESET_RECOVERY),
+        _MAX,
+        1000,
+    ),
+}
+
+#: ``dpd-wakeup-sequence``: three times in nanoseconds, "(1) tDPDD (Delay
+#: Time for Release from Deep Power-Down Mode) (2) tCDRP (CSn Toggling Time
+#: before Release from Deep Power-Down Mode) (3) tRDP (Recovery Time for
+#: Release from Deep Power-Down Mode)" (jedec,spi-nor-common.yaml). The
+#: binding gives no bound; the MX25R datasheets, the parts it is for, give
+#: them as a minimum, a minimum and a maximum. Its presence means the part
+#: wakes by the chip select pulse, not by RDPD.
+WAKEUP = "dpd-wakeup-sequence"
+WAKEUP_TIMES = (
+    (TimingKey(TimedEvent.DPD_MIN_TIME), _MIN),
+    (TimingKey(TimedEvent.DPD_WAKE_PULSE), _MIN),
+    (TimingKey(TimedEvent.DPD_EXIT), _MAX),
+)
+
+#: ``has-dpd``: "the device supports the DPD (0xB9) command ... implies
+#: that the RDPD (0xAB) Release from Deep Power Down command is also
+#: supported" (jedec,spi-nor-common.yaml), but for a part waking by a
+#: ``dpd-wakeup-sequence``.
+HAS_DPD = "has-dpd"
+
+#: Each property read for the times and deep power-down, the binding
+#: declaring it and the type it must have there.
+DECLARED = {
+    **{prop: (binding, "int") for prop, (binding, *_) in TIMES.items()},
+    WAKEUP: ("jedec,spi-nor-common.yaml", "array"),
+    HAS_DPD: ("jedec,spi-nor-common.yaml", "boolean"),
+}
+
+
+def check_bindings(root: Path) -> None:
+    """Raise unless each property :data:`DECLARED` lists is declared, with
+    the type it expects, in its binding under :data:`BINDINGS_DIR`: a
+    renamed property then stops the build instead of giving nothing."""
+    for prop, (binding, kind) in DECLARED.items():
+        path = root / BINDINGS_DIR / binding
+        if not path.is_file():
+            msg = f"{BINDINGS_DIR}/{binding}: not fetched (tools/sources.toml)"
+            raise ValueError(msg)
+        found = re.search(rf"^  {re.escape(prop)}:\n    type: (\S+)$", path.read_text(), re.M)
+        if found is None or found[1] != kind:
+            msg = f"{binding}: no {prop} of type {kind}"
+            raise ValueError(msg)
+
+
 #: Properties kept in a record's ``flags`` as ``name`` or ``name=value``:
 #: what the chip is or needs, not how the board wires or clocks it.
 FLAGS = (
-    "has-dpd",
-    "dpd-wakeup-sequence",
     "requires-ulbpr",
     "has-lock",
     "use-4b-addr-opcodes",
@@ -228,6 +324,7 @@ FLAGS = (
 
 
 def extract(root: Path) -> list[Record]:
+    check_bindings(root)
     parsed = []
     for d in DIRS:
         for path in sorted((root / d).rglob("*")):
@@ -366,6 +463,8 @@ class _Node:
                 self.ops.add("RDSFDP", "use-sfdp")
         self.modes()
         self.capabilities(binding)
+        times, time_via = self.times()
+        via |= time_via
         qer = self.string("quad-enable-requirements")
         if qer is not None and binding_name not in QER_IGNORED_BY:
             via["quad_enable_requirement"] = f"quad-enable-requirements={qer}"
@@ -387,6 +486,7 @@ class _Node:
             via=via | self.claim_via | member_via("four_byte_modes", self.four_byte),
             quad_enable_requirement=qer,
             four_byte_modes=list(self.four_byte),
+            timings=times,
             opcodes=self.ops.to_json() if binding.type == "nor" else [],
             sfdp_tables=tables,
             notes=self.notes,
@@ -456,6 +556,42 @@ class _Node:
         erase = self.cell("erase-block-size")
         if binding.type == "nor" and erase in ERASE_FEATURE:
             self.features.add(ERASE_FEATURE[erase].value)
+
+    def times(self) -> tuple[dict[str, dict[str, int]], dict[str, str]]:
+        """The part's times (:data:`TIMES`, :data:`WAKEUP`), as a record's
+        ``timings``, and their ``via``: ``timings.<key>`` for a property
+        giving one, ``timings`` for the wake-up sequence, which gives
+        three. ``has-dpd`` gives the ``DP`` and ``RDPD`` operations (not
+        ``RDPD`` with a wake-up sequence). A value of 0 is not given."""
+        out: dict[str, dict[str, int]] = {}
+        via: dict[str, list[str]] = {}
+        for prop, (_binding, key, bound, unit) in TIMES.items():
+            n = self.cell(prop)
+            if n and prop.endswith("-dpd-delay") and "use-udpd" in self.props:
+                # The AT45's times are then Ultra-Deep Power-Down's.
+                self.notes.append(f"{prop}={n} not read: use-udpd, so ultra-deep power-down's")
+                continue
+            if n:
+                out.setdefault(str(key), {})[str(bound)] = n * unit
+                token = f"{prop}={_flag_value(self.props[prop] or '')}"
+                via.setdefault(f"timings.{key}", []).append(token)
+        wakeup = self.props.get(WAKEUP)
+        if wakeup is not None:
+            cells = [c for part in cparse.split_top(wakeup) for c in dts.cells(part)]
+            if len(cells) != len(WAKEUP_TIMES):
+                self.fail(f"{WAKEUP} = {wakeup}: not three times")
+            for (key, bound), n in zip(WAKEUP_TIMES, cells, strict=True):
+                if n:
+                    given = out.setdefault(str(key), {})
+                    if str(bound) in given and given[str(bound)] != n:
+                        self.fail(f"{WAKEUP} and another property give {key} otherwise")
+                    given[str(bound)] = n
+            via.setdefault("timings", []).append(f"{WAKEUP}={_flag_value(wakeup)}")
+        if HAS_DPD in self.props:
+            self.ops.add("DP", HAS_DPD)
+            if wakeup is None:
+                self.ops.add("RDPD", HAS_DPD)
+        return out, {key: "; ".join(tokens) for key, tokens in via.items()}
 
     def four_byte_modes(self) -> None:
         """The ways into 4-byte mode: ``enter-4byte-addr``, BFPT DW16[31:24]

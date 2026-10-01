@@ -109,6 +109,18 @@ license = "GPL-2.0-or-later"
 url = "https://github.com/zephyrproject-rtos/zephyr"
 branch = "main"
 commit = "9f0253dcc66ccecc92a699dd81cb1034c3f6875b"
-# Only the devicetree files: boards/ is mostly photographs.
-paths = ["boards/**/*.dts", "boards/**/*.dtsi", "boards/**/*.overlay", "dts/**/*.dtsi"]
+# Only the devicetree files: boards/ is mostly photographs. The bindings
+# declare the timing properties the extractor reads (zephyr.py checks each
+# is declared, with the type it expects).
+paths = [
+    "boards/**/*.dts",
+    "boards/**/*.dtsi",
+    "boards/**/*.overlay",
+    "dts/**/*.dtsi",
+    "dts/bindings/mtd/jedec,spi-nor-common.yaml",
+    "dts/bindings/mtd/jedec,jesd216.yaml",
+    "dts/bindings/mtd/jedec,nor-mspi.yaml",
+    "dts/bindings/mtd/atmel,at45.yaml",
+    "dts/bindings/mtd/jedec,spi-nand.yaml",
+]
 license = "Apache-2.0"
