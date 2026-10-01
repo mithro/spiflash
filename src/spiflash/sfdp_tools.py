@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from . import derive
-from .enums import AddressBytes, Bound, FlashType, FourByteMethod, TimedEvent
+from .enums import AddressBytes, Bound, Feature, FlashType, FourByteMethod, TimedEvent
 from .model import Eraser, Flash, Record
 from .opcodes import OPERATIONS
 from .registers import QE_NONE, QuadEnableRequirement, Register
@@ -348,6 +348,10 @@ def encode(
     assumed: list[str] = []
     missing: list[str] = []
     bfpt, reads = _bfpt_dwords(part, assumed, missing)
+    wrong = _contradictions(source.features, part, reads)
+    if wrong:
+        msg = f"{part.name}: no SFDP 1.0 BFPT agrees with the database: " + "; ".join(wrong)
+        raise ValueError(msg)
 
     later = _later_dwords(part, assume=assume)
     if revision >= (1, 5):
@@ -407,12 +411,10 @@ def _bfpt_dwords(part: _Part, assumed: list[str], missing: list[str]) -> tuple[l
         if clocks is None:
             clocks = OPERATIONS[name].dummy_clocks
             if clocks is None:
-                missing.append(f"{name}: no dummy clocks known, so not in the BFPT")
-                continue
+                continue  # no BFPT can write it: encode refuses (_contradictions)
             assumed.append(f"{name}: {clocks} dummy clocks, the operation's usual number")
         if clocks > 31:
-            missing.append(f"{name}: {clocks} dummy clocks do not fit the BFPT")
-            continue
+            continue  # likewise
         if dw1_bit is not None:
             dw[0] |= 1 << dw1_bit
         if dw5_bit is not None:
@@ -440,6 +442,40 @@ def _bfpt_dwords(part: _Part, assumed: list[str], missing: list[str]) -> tuple[l
     return dw, written
 
 
+#: What a capability the database gives a part needs of the BFPT's first
+#: nine dwords, which every revision has: a read of these (DW1's and DW5's
+#: support bits), or a uniform 4 KiB erase (DW1[1:0]).
+_CLAIMED_READS = {
+    Feature.DUAL_READ: ("READ_1_1_2", "READ_1_2_2"),
+    Feature.QUAD_READ: ("READ_1_1_4", "READ_1_4_4"),
+    Feature.QPI: ("READ_4_4_4",),
+}
+
+
+def _contradictions(features: frozenset[Feature], part: _Part, reads: set[str]) -> list[str]:
+    """What the first nine dwords, as written, would deny that the database
+    says: a BFPT read the part has, or a capability, left out for want of
+    what the BFPT needs to write it (a 4-4-4 read's dummy clocks, a 3-byte
+    4 KiB erase). They are in every revision, so no lowering leaves them
+    out, and "not supported" would be wrong: :func:`encode` refuses."""
+    out = []
+    for name, protocol, *_ in _BFPT_READS:
+        if name in part.ops and name not in reads:
+            out.append(f"it has {name}, which the BFPT cannot write (DW1/DW5: no {protocol} read)")
+    for feature, needs in _CLAIMED_READS.items():
+        if feature in features and not reads & set(needs):
+            out.append(
+                f"it has {feature}, but no {' or '.join(needs)} the BFPT can write "
+                f"(DW1/DW5: no such read)"
+            )
+    if Feature.ERASE_4K in features and not any(b == 4096 for _, b in _erase_types(part)):
+        out.append(
+            "it has erase_4k, but no uniform 3-byte 4 KiB eraser "
+            "(DW1[1:0]: no 4 KiB erase throughout the part)"
+        )
+    return out
+
+
 @dataclass
 class _Later:
     dwords: list[int] = field(default_factory=list)
@@ -460,26 +496,45 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
     """DW10 to DW16 (JESD216A and B), and what in them the database does
     not hold, or holds and only they can give."""
     out = _Later()
+    # The times: written where the database holds exactly what the dword
+    # says; the shortest only where it holds none of them, as a time it
+    # holds in another form (a chip erase of unspecified bound, Dediprog's,
+    # which is the typical or the maximum by turns) would otherwise be
+    # contradicted, so the dword cannot be written.
+    erase_opcodes = {op for op, _ in _erase_types(part)}
+    chip_maximum = derive.CHIP_ERASE_MULTIPLIER == "DW10" and (
+        part.time(TimedEvent.CHIP_ERASE, Bound.MAXIMUM) is not None
+    )
     dw10 = _dw10(part)
-    if dw10 is None:
-        out.unknown.append(("DW10", "erase type times", "written as typically 1 ms"))
-    else:
+    if dw10 is not None:
         out.lost.append(("DW10", "the erase types' times"))
+    elif chip_maximum or any(
+        key.event is TimedEvent.BLOCK_ERASE and key.opcode in erase_opcodes
+        for key, _ in part.timings
+    ):
+        out.unwritable.append(
+            ("DW10", "the erase types' times: known, but not as DW10 writes them")
+        )
+    else:
+        out.unknown.append(("DW10", "erase type times", "written as typically 1 ms"))
     page = part.page_size
     if page is None:
         out.unknown.append(("DW11", "the page size", "written as 256 bytes"))
         page = 256
     elif page & (page - 1) or page > 1 << 15:
         # DW11 gives a power of two: an AT45's 528-byte page has none.
-        out.unknown.append(("DW11", f"a page size for {page}-byte pages", "written as 256 bytes"))
-        page = 256
+        out.unwritable.append(("DW11", f"the page size: {page} bytes is not a power of two"))
     else:
         out.lost.append(("DW11", f"the page size, {page} bytes"))
     dw11 = _dw11_times(part)
-    if dw11 is None:
-        out.unknown.append(("DW11", "program and chip erase times", "written as the shortest"))
-    else:
+    if dw11 is not None:
         out.lost.append(("DW11", "the program and chip erase times"))
+    elif any(key.event in _DW11_EVENTS for key, _ in part.timings):
+        out.unwritable.append(
+            ("DW11", "the program and chip erase times: known, but not as DW11 writes them")
+        )
+    else:
+        out.unknown.append(("DW11", "program and chip erase times", "written as the shortest"))
     dw12 = _dw12_13(part, out)
     dw14 = _dw14(part, out)
     qer = _requirement(part, out)
@@ -593,6 +648,7 @@ _DW11_TIMES = (
     (TimedEvent.BYTE_PROGRAM_ADDITIONAL, derive.BYTE_PROGRAM_UNITS_NS, 16, 19, 23),
     (TimedEvent.CHIP_ERASE, derive.CHIP_ERASE_UNITS_NS, 32, 24, 29),
 )
+_DW11_EVENTS = frozenset(event for event, *_ in _DW11_TIMES)
 
 
 def _dw11_times(part: _Part) -> int | None:
