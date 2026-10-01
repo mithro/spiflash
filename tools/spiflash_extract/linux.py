@@ -826,6 +826,11 @@ def extract_nand(root: Path) -> list[Record]:
             if mfr_id is None:
                 msg = f"{rel}: no manufacturer for {name}"
                 raise ValueError(msg)
+            # A comment that is only the supply class ("1.8V" beside the
+            # W25N01GW) is the name's (W: 1.8 V, V: 3.3 V): no note.
+            comments = [
+                c for c in cparse.comments(raw[start:end]) if not re.fullmatch(r"\d\.\dV", c)
+            ]
             records.append(
                 make(
                     "linux",
@@ -834,7 +839,7 @@ def extract_nand(root: Path) -> list[Record]:
                     name,
                     vendor=vendor,
                     id=bytes([mfr_id, *fields.pop("device")]).hex(),
-                    **{**fields, "notes": [*cparse.comments(raw[start:end]), *fields["notes"]]},
+                    **{**fields, "notes": [*comments, *fields["notes"]]},
                 )
             )
     return records

@@ -333,7 +333,8 @@ def test_linux_nand(linux_tree: Path) -> None:
     }
     assert n["via"] == {}
     assert n["flags"] == []
-    assert n["notes"] == ["3.3V"]  # no "1 bit(s) per cell, 64 B OOB per page"
+    # No "1 bit(s) per cell, 64 B OOB per page", nor its "3.3V" (its name says so).
+    assert n["notes"] == []
     # The double transfer rate variants have no operation; of an
     # operation's several variants, the most dummy clocks (the one with no
     # clock limit: 1S_4S_4S(0, 4, ...), not (0, 2, ..., 104 MHz)).

@@ -106,6 +106,11 @@ datasheet's, with a note (`ENTRY_WRONG`, both sources):
 - the W25Q128JW is a 1.7 V to 1.95 V part ("W25Q128.JW.DTR"), and
   "W25Q128.W" covers it and the 1.65 V W25Q128FW: the range they share.
 
+The IS25WP256's `FEATURE_4BA_EAR_C5C8` (`wrear`) is the part's, though its
+SFDP tables ({sfsrc}`qemu`'s dump) give only `en4b` and `brwr`: ISSI's bank
+address register is written with 17h or C5h and read with 16h or C8h (the
+IS25LP256D datasheet, 8.47 and 8.48), and DW16 lists one way of each.
+
 An SST entry written a byte or a word (AAI) at a time (`spi_chip_write1`,
 `spi_aai_write`) has no page size: the part has no page program, and its
 `.page_size` is no page (the SST25VF010A has Byte-Program and AAI only).
