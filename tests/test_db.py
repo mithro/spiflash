@@ -342,6 +342,11 @@ def test_find() -> None:
     assert "ef4018" in [f.id_hex for f in spiflash.find("W25Q128JVSIQ")]
     assert spiflash.find("") == []
     assert spiflash.find("NOT-A-PART-XYZ") == []
+    # exact: no prefix matches.
+    db = spiflash.database()
+    assert len(db.find("W25Q512J")) == 2
+    assert db.find("W25Q512J", exact=True) == []
+    assert [f.key for f in db.find("W25Q512JV", exact=True)] == ["ef4020", "ef7020"]
 
 
 def test_by_manufacturer_uses_any_spelling() -> None:

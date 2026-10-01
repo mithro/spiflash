@@ -422,20 +422,21 @@ class Database:
                 chips.append(replace(f, answers_legacy=legacy))
         return chips
 
-    def find(self, name: str) -> list[Flash]:
+    def find(self, name: str, *, exact: bool = False) -> list[Flash]:
         """The chips whose part names match ``name``, best first.
 
         Exact names (and flashrom wildcards: ``W25Q128.V`` matches
         ``W25Q128JV``) come first, then parts whose name starts with ``name``
         (``w25q128`` finds the FV and the JV), then parts named by a prefix of
-        ``name`` (Linux's generic ``w25q128`` for ``W25Q128JVSIQ``)."""
+        ``name`` (Linux's generic ``w25q128`` for ``W25Q128JVSIQ``). With
+        ``exact``, only the first."""
         q = name.strip().upper()
         if not q:
             return []
         ranked: list[tuple[int, Flash]] = []
         for f in self.flashes:
             ranks = [r for part in f.names if (r := _rank(part, q)) is not None]
-            if ranks:
+            if ranks and not (exact and min(ranks)):
                 ranked.append((min(ranks), f))
         ranked.sort(key=lambda t: t[0])  # stable: equal ranks keep database order
         return [f for _, f in ranked]

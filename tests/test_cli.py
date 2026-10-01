@@ -415,8 +415,14 @@ def test_sfdp_encode(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None
     assert bfpt is not None
     assert bfpt.quad_enable == 4
     # A query naming several chips, or none, or a revision it cannot write.
-    assert cli.main(["sfdp-encode", "W25Q512JV"]) == 2
+    assert cli.main(["sfdp-encode", "W25Q512J"]) == 2
     assert "names 2 SPI NOR chips, not one: ef4020 (W25Q512JV), ef7020" in (capsys.readouterr().err)
+    # A name two chips have, but one's own part: that one (the documented
+    # example), as an exact name beats the prefix matches.
+    assert cli.main(["sfdp-encode", "W25Q512JV"]) == 0
+    assert capsys.readouterr().err.startswith("ef4020 W25Q512JV: SFDP 1.0")
+    assert cli.main(["sfdp-encode", "S25FL512S"]) == 2  # refused: QPI, no 4-4-4 read
+    assert "it has qpi, but no READ_4_4_4" in capsys.readouterr().err
     assert cli.main(["sfdp-encode", "nothing-like-it"]) == 2
     assert "no chip nothing-like-it: give a JEDEC id or a part name" in capsys.readouterr().err
     assert cli.main(["sfdp-encode", "efaa21"]) == 2  # the W25N01GV

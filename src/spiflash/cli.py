@@ -326,9 +326,16 @@ def _sfdp_input(db: Database, source: str) -> list[_SfdpShown]:
 def _one_chip(db: Database, query: str) -> Flash:
     """The one SPI NOR chip ``query`` (an id or a part name) names (SFDP is
     SPI NOR's: ``c22019`` is not also the SPI NAND ``c220``); ``ValueError``
-    listing them where it names none or several."""
+    listing them where it names none or several. Of several, the one chip
+    with the name exactly, or failing that the one whose own part it is
+    (:attr:`Flash.name <spiflash.model.Flash.name>`): ``W25Q512JV`` is
+    ef4020's part, and a name of ef7020's too (W25Q512JV_M)."""
     named = _resolve(db, query)
     found = [f for f in named if f.type is FlashType.NOR]
+    if len(found) > 1:
+        exact = [f for f in db.find(query, exact=True) if f.type is FlashType.NOR]
+        own = [f for f in exact if f.name.upper() == query.strip().upper()]
+        found = next((x for x in (exact, own) if len(x) == 1), found)
     if len(found) == 1:
         return found[0]
     if found:
