@@ -184,7 +184,7 @@
     "dts/bindings/mtd/atmel,at45.yaml",
     "dts/bindings/mtd/jedec,spi-nand.yaml"
    ],
-   "records": 101,
+   "records": 100,
    "url": "https://github.com/zephyrproject-rtos/zephyr"
   }
  }
