@@ -413,7 +413,7 @@ Changes in data format 9 (4-byte addressing, supply, OTP, legacy ids):
   the site a 4-byte addressing section, legacy ids and the OTP area on the
   chip pages, and the SUPPLY data issues.
 
-Changes in data format 10 (the timing model, and the maximum clock):
+Changes in data format 10 (the timing model, and the listed clock):
 
 - **`Operation.timing` is {py:attr}`Operation.shape_source
   <spiflash.opcodes.Operation.shape_source>`**, and its enum
@@ -446,9 +446,9 @@ Changes in data format 10 (the timing model, and the maximum clock):
   {py:data}`~spiflash.derive.CHIP_ERASE_MULTIPLIER` and
   {py:func}`~spiflash.derive.compared_time`;
 - the records gain `"timings"` (`{"chip_erase": {"unspecified":
-  200000000000}}`, `{}` without) and `"max_clock_hz"` (`null` without); a
+  200000000000}}`, `{}` without) and `"listed_clock_hz"` (`null` without); a
   `"via"` key may name a time (`"timings.dpd_exit"`, or `"timings"` for one
-  token giving several) and `max_clock_hz`. {sfsrc}`zephyr`'s `has-dpd` and
+  token giving several) and `listed_clock_hz`. {sfsrc}`zephyr`'s `has-dpd` and
   `dpd-wakeup-sequence` flags go: the first is the new
   [DP](opcodes/DP.md) and [RDPD](opcodes/RDPD.md) operations (a release by
   0xab alone, not [RES](opcodes/RES.md)'s signature read), the second three
@@ -456,7 +456,7 @@ Changes in data format 10 (the timing model, and the maximum clock):
 - {py:class}`~spiflash.model.Record` has
   {py:attr}`~spiflash.model.Record.timing_claims` (stored, JSON
   `"timings"`), {py:attr}`~spiflash.model.Record.timings` (them, over what
-  its SFDP tables give) and {py:attr}`~spiflash.model.Record.max_clock_hz`;
+  its SFDP tables give) and {py:attr}`~spiflash.model.Record.listed_clock_hz`;
   {py:meth}`~spiflash.model.Record.given` reads a time as
   `"timings.chip_erase.maximum"`, and
   {py:meth}`~spiflash.model.Record.sfdp_disagreements` gives a stated time
@@ -465,18 +465,26 @@ Changes in data format 10 (the timing model, and the maximum clock):
   {py:meth}`~spiflash.model.Flash.timing`,
   {py:attr}`~spiflash.model.Flash.timings`,
   {py:meth}`~spiflash.model.Flash.timing_order` and
-  {py:attr}`~spiflash.model.Flash.max_clock_hz`, and
+  {py:attr}`~spiflash.model.Flash.listed_clock_hz`, and
   {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>` gains
-  `"timings"` and `"max_clock_hz"`;
+  `"timings"` and `"listed_clock_hz"`;
 - {py:data}`~spiflash.model.COMPARED` gains `timings`, compared per
   component, each (event, bound) its own
   ({py:data}`~spiflash.model.TIMING_COMPONENTS`: `"timings.chip_erase.unspecified"`,
-  ...), at SFDP resolution where a BFPT writes the time directly, and
-  `max_clock_hz`; {py:func}`~spiflash.model.compared_value` takes the
-  value's name;
-- {py:func}`~spiflash.sfdp_tools.encode` writes DW10, DW11 and DW14 where
-  the database holds exactly what they say, and
-  {py:func}`~spiflash.sfdp_tools.to_entry` stores the tables' times;
+  ...), at SFDP resolution where a BFPT writes the time directly; not
+  `listed_clock_hz`, the clock Dediprog lists, a catalogue figure of
+  unspecified meaning and no safe maximum;
+  {py:func}`~spiflash.model.compared_value` takes the value's name;
+- {py:func}`~spiflash.sfdp_tools.encode` writes DW10, DW11, DW12 and DW14
+  where the database holds exactly what they say (DW13's suspend opcodes
+  assumed), and {py:func}`~spiflash.sfdp_tools.to_entry` stores the tables'
+  times;
+- {py:attr}`Operation.description <spiflash.opcodes.Operation.description>`
+  of [RES](opcodes/RES.md) is "Read electronic signature";
+- the data issues compare one source's entries with each other only within
+  one part (source, extended id and part number: the EN25Q32 and EN25Q32C
+  are two parts, W25Q512JV and W25Q512JV-IQ one), so SAME_SOURCE goes from
+  73 issues to 4 before the new fields;
 - the command's description gains a `timing:` line, and with `-v` every
-  time and the clock; the site a Timing section on the chip pages, and a
-  TIMING kind of data issue.
+  time and the clock Dediprog lists; the site a Timing section on the chip
+  pages, and a TIMING kind of data issue.

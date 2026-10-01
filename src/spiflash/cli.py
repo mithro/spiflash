@@ -108,8 +108,6 @@ def shown(attribute: str, value: Any) -> str:
         return human_size(value)
     if attribute.startswith("timings."):
         return human_duration(value)
-    if attribute == "max_clock_hz":
-        return human_frequency(value)
     return str(value)
 
 
@@ -228,10 +226,10 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    quad enable requirement: {qer} ({qer.description})")
         if f.protection is not None:
             lines.append(f"    protection: {f.protection}")
-        for hz, clocked_by in sorted(f.values("max_clock_hz").items()):
-            # Dediprog's, which is often a slower mode's limit than the
-            # part's fastest (docs/_source_notes/dediprog.md).
-            lines.append(f"    clock: up to {human_frequency(hz)} ({', '.join(clocked_by)})")
+        for hz, clocked_by in sorted(f.values("listed_clock_hz").items()):
+            # A catalogue figure of unspecified meaning, often below the
+            # part's fastest (docs/_source_notes/dediprog.md): not a maximum.
+            lines.extend(f"    clock: {s.label} lists {human_frequency(hz)}" for s in clocked_by)
         for legacy, listing in f.legacy_ids.items():
             lines.append(f"    legacy id: {legacy.key} ({', '.join(listing)})")
         for mv, records in f.supply_outside().items():

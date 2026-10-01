@@ -94,7 +94,7 @@ class SourceInfo:
 #: notes and ``otp`` claims dropped); new OTP operations.
 #: 10: records gain ``timings`` (Dediprog's chip erase time, Zephyr's deep
 #: power-down and reset times; those their SFDP tables give derived) and
-#: ``max_clock_hz`` (Dediprog's ``Clock``); Zephyr's ``has-dpd`` is the new
+#: ``listed_clock_hz`` (the clock Dediprog lists); Zephyr's ``has-dpd`` is the new
 #: ``DP`` and ``RDPD`` operations, its DPD flags gone.
 FORMAT = 10
 

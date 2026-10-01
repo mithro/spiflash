@@ -828,7 +828,9 @@ def test_no_timing_residue() -> None:
     tokens = ("has-dpd", "dpd-wakeup-sequence", "t-enter-dpd", "t-exit-dpd", "t-reset-")
     tokens += ("ChipEraseTime", "enter-dpd-delay", "exit-dpd-delay")
     assert not [(_where(d), f) for d in RECORDS for f in d["flags"] if f.startswith(tokens)]
-    assert not [(_where(d), n) for d in RECORDS for n in d["notes"] if n.startswith(tokens)]
+    noted = [(_where(d), n) for d in RECORDS for n in d["notes"] if n.startswith(tokens)]
+    # A note saying why a value was not read is no residue.
+    assert not [(w, n) for w, n in noted if " not read: " not in n]
 
 
 def test_dpd_release_is_not_a_signature_read() -> None:
@@ -854,9 +856,9 @@ def test_every_stored_timing_has_its_token() -> None:
 
 
 def test_a_clock_only_where_dediprog_gives_one() -> None:
-    clocked = [d for d in RECORDS if d["max_clock_hz"] is not None]
+    clocked = [d for d in RECORDS if d["listed_clock_hz"] is not None]
     assert {d["source"] for d in clocked} == {"dediprog"}
     for d in clocked:
-        assert d["max_clock_hz"] % 10**6 == 0, _where(d)
-        via = d["via"]["max_clock_hz"]
+        assert d["listed_clock_hz"] % 10**6 == 0, _where(d)
+        via = d["via"]["listed_clock_hz"]
         assert re.fullmatch(r"(Clock|clock|CLOCK)=\d+ ?MHz", via, re.IGNORECASE), _where(d)

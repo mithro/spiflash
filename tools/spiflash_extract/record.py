@@ -117,9 +117,11 @@ Fields (``None`` / empty when the upstream does not say):
 ``legacy_ids``
     The ids the part also answers to legacy commands, besides its own:
     ``[["res1", "15"], ["rems", "ef12"]]``; never its own id.
-``max_clock_hz``
-    The fastest SPI clock, in hertz, the entry gives the part (Dediprog's
-    ``Clock``), where it is one clock: not a board's or a driver's setting.
+``listed_clock_hz``
+    The SPI clock, in hertz, the entry lists for the part (Dediprog's
+    ``Clock``), where it is one clock: a catalogue figure whose meaning the
+    source does not give, not a safe maximum; never a board's or a
+    driver's setting.
 ``timings``
     The part's durations the entry states, in nanoseconds, by event and
     bound (:class:`spiflash.timings.Timings`): ``{"chip_erase":
@@ -215,7 +217,7 @@ KEYS = (
     "four_byte_modes",
     "otp",
     "legacy_ids",
-    "max_clock_hz",
+    "listed_clock_hz",
     "timings",
     "opcodes",
     "sfdp",

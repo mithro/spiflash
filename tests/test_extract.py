@@ -1861,6 +1861,30 @@ def test_zephyr_times(tmp_path: Path) -> None:
     assert u["timings"] == {"reset_pulse": {"minimum": 10000}, "reset_recovery": {"maximum": 35000}}
 
 
+def test_zephyr_board_margins_are_not_the_parts(tmp_path: Path) -> None:
+    # The b_m2mem shield's reset line powers the module: its reset times
+    # are the rail's, not read, and a note says why.
+    bindings = ZEPHYR / zephyr.BINDINGS_DIR
+    node = """/dts-v1/;
+&spi0 { flash@0 {
+    compatible = "jedec,nor";
+    jedec-id = [c2 85 3a];  /* mx25lm51245 */
+    t-reset-pulse = <5000000>;
+    t-reset-recovery = <10000000>;
+}; };
+"""
+    write(
+        tmp_path,
+        {
+            "boards/shields/st_b_m2mem_pack1/x.overlay": node,
+            **{f"{zephyr.BINDINGS_DIR}/{p.name}": p.read_text() for p in bindings.iterdir()},
+        },
+    )
+    (r,) = zephyr.extract(tmp_path)
+    assert r["timings"] == {}
+    assert any(n.startswith("t-reset-pulse=5000000 not read: ") for n in r["notes"])
+
+
 def test_zephyr_reads_the_bindings(tmp_path: Path) -> None:
     # A property the extractor maps that its binding no longer declares
     # stops the build.
@@ -2497,12 +2521,12 @@ def test_dediprog_clock(
     tmp_path: Path, attrs: dict[str, str | None], hz: int | None, note: str | None
 ) -> None:
     (w,) = dediprog_chip(tmp_path, **attrs)
-    assert w["max_clock_hz"] == hz
+    assert w["listed_clock_hz"] == hz
     if note is None:
         assert not [n for n in w["notes"] if "not read" in n]
     else:
         assert any(n.startswith(note) for n in w["notes"])
-        assert "max_clock_hz" not in w["via"]
+        assert "listed_clock_hz" not in w["via"]
 
 
 def test_dediprog_protect_mask_is_no_layout(tmp_path: Path) -> None:
@@ -2533,12 +2557,12 @@ def test_dediprog(tmp_path: Path) -> None:
     assert w["via"] == {
         "feature:lock": "ProtectBlockMask=0x9C",
         "feature:qpi": "QPIEnable",
-        "max_clock_hz": "Clock=75MHz",
+        "listed_clock_hz": "Clock=75MHz",
         "timings.chip_erase": "ChipEraseTime=200",
     }
     # ChipEraseTime is seconds, its bound not said; Clock one clock.
     assert w["timings"] == {"chip_erase": {"unspecified": 200 * 10**9}}
-    assert w["max_clock_hz"] == 75_000_000
+    assert w["listed_clock_hz"] == 75_000_000
     assert w["notes"][0].startswith("128 Mbit")
     # Legacy ids: REMS, AT25F, and RES read with its dummy bytes (0xff), or
     # answering the manufacturer too (with its continuation code).

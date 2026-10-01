@@ -512,8 +512,8 @@ class Compared(StrEnum):
 #: part at two voltages in its range, so a supply setting is checked
 #: against the range (:meth:`Flash.supply_outside`) rather than the
 #: other settings. The times are compared each (event, bound) on its own
-#: (:data:`TIMING_COMPONENTS`), and ``max_clock_hz`` for equality, though
-#: only Dediprog gives it: its entries sharing an id are compared.
+#: (:data:`TIMING_COMPONENTS`). Not ``listed_clock_hz``: a catalogue
+#: figure whose meaning its one source does not say.
 COMPARED: dict[str, Compared] = {
     "size": Compared.EQUAL,
     "page_size": Compared.EQUAL,
@@ -530,7 +530,6 @@ COMPARED: dict[str, Compared] = {
     "ecc": Compared.PER_COMPONENT,
     "otp": Compared.PER_COMPONENT,
     "timings": Compared.PER_COMPONENT,
-    "max_clock_hz": Compared.EQUAL,
 }
 
 #: The block erases a time can be given for: each 3-byte block erase
@@ -681,9 +680,10 @@ class Record:
     #: The times the entry states (:class:`~spiflash.timings.Timings`), but
     #: those its SFDP tables give the same.
     timing_claims: Timings = field(default_factory=Timings)
-    #: The fastest SPI clock, in hertz, the entry gives the part (Dediprog's
-    #: ``Clock``).
-    max_clock_hz: int | None = None
+    #: The SPI clock, in hertz, the entry lists for the part (Dediprog's
+    #: ``Clock``), its meaning not given: a catalogue figure, often a slower
+    #: mode's than the part's fastest, and not a safe maximum.
+    listed_clock_hz: int | None = None
     #: The size: :attr:`size_claim`, or failing that its SFDP tables' density.
     size: int | None = field(init=False, compare=False, repr=False)
     #: The page size: :attr:`page_size_claim`, or failing that its SFDP tables'.
@@ -736,8 +736,8 @@ class Record:
         if self.voltage is not None and self.supply_mv is not None:
             msg = f"{where}: a supply voltage range and a supply setting, not one"
             raise ValueError(msg)
-        if self.max_clock_hz is not None and self.max_clock_hz <= 0:
-            msg = f"{where}: a clock of {self.max_clock_hz} Hz"
+        if self.listed_clock_hz is not None and self.listed_clock_hz <= 0:
+            msg = f"{where}: a clock of {self.listed_clock_hz} Hz"
             raise ValueError(msg)
         facts = self.sfdp_facts
         modes = self.four_byte_mode_claims | (facts.four_byte_modes if facts else frozenset())
@@ -835,7 +835,7 @@ class Record:
                 LegacyId(IdMethod(m), bytes.fromhex(i)) for m, i in d.get("legacy_ids") or ()
             ),
             timing_claims=Timings.from_json(d.get("timings")),
-            max_clock_hz=d.get("max_clock_hz"),
+            listed_clock_hz=d.get("listed_clock_hz"),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -872,7 +872,7 @@ class Record:
             "four_byte_modes": sorted(self.stored("four_byte_modes")),
             "otp": self.otp.to_json() if self.otp else None,
             "legacy_ids": [i.to_json() for i in self.legacy_ids],
-            "max_clock_hz": self.max_clock_hz,
+            "listed_clock_hz": self.listed_clock_hz,
             "timings": self.stored("timings").to_json(),
             "opcodes": [
                 {
@@ -1632,10 +1632,12 @@ class Flash:
         return {k: tuple(v) for k, v in sorted(out.items())}
 
     @cached_property
-    def max_clock_hz(self) -> int | None:
-        """The fastest SPI clock, in hertz, the sources give the part
-        (:attr:`Record.max_clock_hz`), as most say."""
-        return self._value(lambda r: r.max_clock_hz)
+    def listed_clock_hz(self) -> int | None:
+        """The SPI clock, in hertz, the sources list for the part
+        (:attr:`Record.listed_clock_hz`: Dediprog's ``Clock``, its meaning
+        not given), as most of their entries say. Not compared, and not a
+        safe maximum."""
+        return self._value(lambda r: r.listed_clock_hz)
 
     def timing(
         self, event: TimedEvent | str, bound: Bound | str, opcode: int | None = None
@@ -1946,7 +1948,7 @@ class Flash:
             "ecc": self.ecc.to_json() if self.ecc else None,
             "supply_mv": self.supply_mv,
             "otp": self.otp.to_json() if self.otp else None,
-            "max_clock_hz": self.max_clock_hz,
+            "listed_clock_hz": self.listed_clock_hz,
             "timings": self._timings_json(),
             "address_bytes": _str_or_none(self.address_bytes),
             "four_byte_modes": {

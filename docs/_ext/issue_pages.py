@@ -31,7 +31,7 @@ from page_markup import (
 from spiflash.enums import IdFamily, Source
 from spiflash.model import Eraser
 from spiflash.registers import NoQuadEnable, QuadEnableRequirement, RegisterBit
-from spiflash.units import human_duration, human_frequency
+from spiflash.units import human_duration
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -127,7 +127,6 @@ VALUE_TITLES = {
     "ecc": "ECC requirement",
     "otp": "OTP area",
     "timings": "Times",
-    "max_clock_hz": "Maximum clock",
 }
 
 #: The compared values that are counts, not sizes in bytes.
@@ -230,8 +229,6 @@ class _Render:
             # value stands for; an SFDP one, a time.
             times = v if isinstance(v, tuple) else (v,)
             return esc(", ".join(human_duration(ns) for ns in times))
-        if issue.attribute == "max_clock_hz":
-            return esc(human_frequency(v))
         if issue.attribute == "ecc.strength_bits":
             return esc(f"{v} bit{'s' if v != 1 else ''}")
         if issue.attribute in COUNTS:

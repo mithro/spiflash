@@ -157,7 +157,6 @@ def test_compared_values() -> None:
         "otp.size",
         "otp.regions",
         *(f"timings.{c}" for c in TIMING_COMPONENTS),
-        "max_clock_hz",
     )
     # Each time's bounds are their own components, never compared together.
     assert "timings.chip_erase.unspecified" in COMPARED_VALUES

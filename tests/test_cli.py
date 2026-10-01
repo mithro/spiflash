@@ -42,13 +42,13 @@ def test_id_timing(capsys: pytest.CaptureFixture[str]) -> None:
     _, out = run(capsys, "id", "c22817", "-v")
     assert "    time: dpd_exit maximum: 5 µs (zephyr); 35 µs (zephyr)" in out
     assert "    time: block_erase:0x20 maximum: 384 ms (zephyr (SFDP))" in out
-    assert "    clock: up to 70 MHz (dediprog)" in out
+    assert "    clock: Dediprog lists 70 MHz" in out
     # Compared at SFDP resolution, shown as given.
     assert "sources disagree on timings.dpd_exit.maximum: 5 µs (zephyr); 35 µs (zephyr)" in out
     _, js = run(capsys, "id", "c22817", "--json")
     (chip,) = json.loads(js)
     assert chip["timings"]["dpd_exit"]["maximum"]["value"] == 35_000
-    assert chip["max_clock_hz"] == 70_000_000
+    assert chip["listed_clock_hz"] == 70_000_000
 
 
 def test_id_registers(capsys: pytest.CaptureFixture[str]) -> None:

@@ -777,8 +777,8 @@ def _timing(f: Flash) -> list[str]:
     """The part's times: a row per event (a block erase per opcode), a
     column per bound, each time with the sources giving it, stated
     ({sfyes}`✓`) or from their SFDP tables ({sfhollow}`○`); and the
-    fastest clock the sources give."""
-    clocks = f.values("max_clock_hz")
+    clock the sources list."""
+    clocks = f.values("listed_clock_hz")
     if not f.timings and not clocks:
         return []
     out = ["## Timing\n"]
@@ -821,9 +821,15 @@ def _timing(f: Flash) -> list[str]:
         ]
     if clocks:
         said = "; ".join(
-            f"{num(human_frequency(hz))} {_who(sources)}" for hz, sources in sorted(clocks.items())
+            f"{source_badge(s)} lists {num(human_frequency(hz))}"
+            for hz, sources in sorted(clocks.items())
+            for s in sources
         )
-        out.append(f"Fastest SPI clock the sources give: {said}.\n")
+        out.append(
+            f"Clock: {said}, a catalogue figure whose meaning it does not give, often "
+            "below the part's fastest; not a safe maximum "
+            "([](../derived.md#times)).\n"
+        )
     return out
 
 
@@ -1484,7 +1490,7 @@ class NumberRole(SphinxRole):
             if sep:
                 part(sep, "sf-n-sep")
             part(whole, "sf-n-int")
-            if kind == "volt":
+            if kind == "volt" or frac:
                 part(f".{frac}" if frac else "", "sf-n-frac")
         if unit:
             # A missing value keeps the unit's room but not its text.

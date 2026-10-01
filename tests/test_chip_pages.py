@@ -128,11 +128,15 @@ def test_timing_section() -> None:
     assert "Block erase ({sfop}`0x20`)" in timing
     assert "{sfimplied}`its SFDP tables (BFPT DW10)`" in timing
     assert "{sfclaimed}`t-exit-dpd=35000`" in timing
-    assert "Fastest SPI clock the sources give" in timing
+    assert "{sfsrc}`dediprog` lists {sfnum}`70 MHz`, a catalogue figure" in timing
     # Dediprog's chip erase time is its own column, the bound not given.
     assert "Unspecified" in nor_page("ef4018")
     # The DPD operations, derived from DW14 or has-dpd.
     assert "[`RDPD`](../opcodes/RDPD.md)" in text
+    # Fractional times keep their fraction (the markup's, and the site's
+    # number role: tests/sites/test_page_nodes.py).
+    mx66 = nor_page("c2201b")
+    assert "{sfnum}`2.24 s`" in mx66[mx66.index("## Timing") :]
 
 
 def test_phase_6_sections() -> None:

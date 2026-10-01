@@ -483,7 +483,12 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         via["timings.chip_erase"] = f"ChipEraseTime={chip['ChipEraseTime']}"
     clock, clock_notes = _clock(chip)
     if clock is not None:
-        via["max_clock_hz"] = f"{_clock_attribute(chip)}={_clock_value(chip)}"
+        via["listed_clock_hz"] = f"{_clock_attribute(chip)}={_clock_value(chip)}"
+        described = [int(n) for n in _DESCRIBED_CLOCK.findall(description)]
+        if described and clock // 10**6 not in described:
+            mhz = " / ".join(f"{n} MHz" for n in described)
+            token = via["listed_clock_hz"]
+            clock_notes.append(f"{token} is not the {mhz} its Description gives")
     voltage = chip.get("Voltage", "")
     if voltage not in VOLTAGES:
         msg = f"Voltage={voltage!r}: not one of {sorted(VOLTAGES)}"
@@ -507,7 +512,7 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         quad_enable=quad_enable,
         supply_mv=VOLTAGES[voltage],
         legacy_ids=legacy,
-        max_clock_hz=clock,
+        listed_clock_hz=clock,
         timings=timings,
         opcodes=ops.to_json(),
         notes=([description] if description else []) + qe_notes + legacy_notes + clock_notes,
@@ -521,6 +526,9 @@ CLOCK_ATTRIBUTES = ("Clock", "clock", "CLOCK")
 
 # One clock: "104MHz", "133 MHz", "104Mhz".
 _ONE_CLOCK = re.compile(r"(\d+) ?MHz", re.IGNORECASE)
+# The clocks a Description names: "... With 104MHz SPI Bus Interface",
+# "... With 33 MHz / 100 MHz SPI ...", "104-MHz".
+_DESCRIBED_CLOCK = re.compile(r"(\d+)[ -]?MHz", re.IGNORECASE)
 # Two: a read's and a fast read's, "33/100MHz".
 _TWO_CLOCKS = re.compile(r"(\d+)/(\d+) ?MHz", re.IGNORECASE)
 

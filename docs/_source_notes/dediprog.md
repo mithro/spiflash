@@ -165,16 +165,19 @@ value in 28 of 41 templates, and never filled by dpcmd), not a time of the
 part, and is not taken.
 
 `Clock` (`clock` on 40 entries, `CLOCK` on one) is the record's
-`max_clock_hz` where it is one clock in MHz. It is a poor guide to the
-part's fastest clock: against twelve datasheets it was that three times
+`listed_clock_hz` where it is one clock in MHz: the clock Dediprog lists,
+a catalogue figure whose meaning it does not give (not read by dpcmd), and
+not a safe maximum, so it is shown as "Dediprog lists 104 MHz" and not
+compared. It is a poor guide to the part's fastest clock: against twelve
+datasheets it was that three times
 (GD25WB256E 104 MHz, MX66L1G45G 166 MHz, W25Q512JV 133 MHz), a slower clock
 seven times (AT25SF128A 104 against 133 MHz, GD25LB256E 133 against 166,
 MX25L12833F 104 against 133, MX25R6435F 70 against 80, MX25R8035F 70
 against 108, MX25U25645G 104 against 166, MX25U6432F 85 against 133), above
 it once (W25Q80BL 75 MHz, against 50 MHz in its datasheet, Rev. G1), and
 once no clock (the IS25WP256D's `166Mbit`). Its `Description`'s "With
-NN MHz SPI Bus" disagrees with it on 190 entries and is a template too, so
-is not taken either. Left out, each with a note: two clocks, a read's and a
+NN MHz SPI Bus" is a template too, so is not taken either; where it names
+other clocks than `Clock`, a note on the record says so. Left out, each with a note: two clocks, a read's and a
 fast read's (`33/100MHz` and the like, 55 entries: not one fact), a value
 in no unit or the wrong one (`166`, `166Mbit`, `A13112`), and `416MHz` (the
 A25LQ64's and the W25Q64FW's 104 MHz quad read, as 416 Mbit/s).
