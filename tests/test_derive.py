@@ -134,7 +134,9 @@ def test_sfdp_tables_imply_their_features() -> None:
     assert {Feature.SFDP, Feature.QUAD_READ, Feature.ERASE_4K} <= r.features
     # SFDP gives no sign of 1-1-1 fast read (0x0b).
     assert Feature.FAST_READ not in r.features
-    assert derive.feature_reasons(r)[Feature.QUAD_READ] == "implied by its SFDP tables"
+    assert derive.feature_reasons(r)[Feature.QUAD_READ] == (
+        "implied by READ_1_1_4 (SFDP BFPT 1-1-4 fast read: 0 mode + 8 wait clocks)"
+    )
 
 
 def test_claims_come_first_in_the_reasons() -> None:
@@ -172,7 +174,7 @@ def test_sector_size() -> None:
     assert r.sector_size == 65536
     # Derived, so replace() recomputes it.
     blocks = (EraseBlock(262144, 64),)
-    assert replace(r, erasers=(Eraser(0xD8, blocks),)).sector_size == 262144
+    assert replace(r, eraser_claims=(Eraser(0xD8, blocks),)).sector_size == 262144
 
 
 def test_a_driver_default_eraser_gives_nothing_of_the_part() -> None:

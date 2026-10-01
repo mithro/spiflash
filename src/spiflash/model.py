@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 from . import derive
 from .enums import Feature, FlashType, IdFamily, IdMethod, Source
 from .opcodes import OPERATIONS, OpcodeUse, Operation, sort_key
-from .sfdp import Sfdp
+from .sfdp import Sfdp, SfdpFacts, from_tables
 from .sfdp import parse as parse_sfdp
 from .vendors import canonical
 
@@ -91,6 +91,16 @@ class Claim(NamedTuple):
     assumed: bool = False
 
 
+class SfdpDisagreement(NamedTuple):
+    """A value a record states that its own SFDP tables give otherwise
+    (:meth:`Record.sfdp_disagreements`): the field, what the entry states
+    (the record's value), and what its tables say."""
+
+    field: str
+    stored: Any
+    sfdp: Any
+
+
 class FeatureSource(NamedTuple):
     """A source saying a chip has a capability: ``implied`` when its entry
     does not claim the capability but its other fields imply it
@@ -105,10 +115,18 @@ class FeatureSource(NamedTuple):
 
 class SfdpDump(NamedTuple):
     """One SFDP area the sources carry for a chip id, decoded, and the
-    records carrying it, the best source first."""
+    records carrying it, the best source first: a whole dump
+    (:attr:`Record.sfdp`), or tables a source copies without the area
+    around them (:attr:`Record.sfdp_tables`; :attr:`Sfdp.partial
+    <spiflash.sfdp.Sfdp.partial>`)."""
 
-    tables: Sfdp
+    sfdp: Sfdp
     records: tuple[Record, ...]
+
+    @property
+    def tables(self) -> Sfdp:
+        """:attr:`sfdp`, by its old name."""
+        return self.sfdp
 
     @property
     def source(self) -> Source:
@@ -230,11 +248,25 @@ class SupportedOperation:
 
 #: The fields a record both stores and derives, and the attribute holding
 #: what it stores: ``features`` is ``feature_claims`` and what the other
-#: fields imply. A field joins when a rule in :mod:`spiflash.derive` starts
-#: adding to it, its stored part taking a ``*_claims`` name; its JSON key
-#: stays the field's name. :meth:`Record.stored`, :meth:`Record.to_json`
-#: and the rules themselves read only the stored part.
-CLAIMS = {"features": "feature_claims", "opcodes": "opcode_claims"}
+#: fields imply; ``size`` is ``size_claim``, or where the entry states
+#: none, what its SFDP tables say. A field joins when a rule in
+#: :mod:`spiflash.derive` starts adding to it, its stored part taking a
+#: ``*_claims`` name (``*_claim`` for a single value); its JSON key stays
+#: the field's name. :meth:`Record.stored`, :meth:`Record.to_json` and the
+#: rules themselves read only the stored part.
+CLAIMS = {
+    "size": "size_claim",
+    "page_size": "page_size_claim",
+    "erasers": "eraser_claims",
+    "features": "feature_claims",
+    "opcodes": "opcode_claims",
+}
+
+#: The single values a record gives from its SFDP tables where it states
+#: none: :meth:`Record.given` reads the whole value, and
+#: :meth:`Record.sfdp_disagreements` compares the stated one with the
+#: tables'.
+SFDP_VALUES = ("size", "page_size")
 
 #: The fields a record only derives, never stores: ``sector_size`` is
 #: worked out from its erasers (:func:`spiflash.derive.sector_size`).
@@ -247,8 +279,9 @@ class Record:
     """One entry of one upstream's flash table, as that upstream has it.
 
     The fields made from arguments are what the entry states, as the data
-    stores them; :attr:`features`, :attr:`opcodes` and :attr:`sector_size`
-    are worked out from them (:mod:`spiflash.derive`). See
+    stores them; :attr:`size`, :attr:`page_size`, :attr:`erasers`,
+    :attr:`features`, :attr:`opcodes` and :attr:`sector_size` are worked
+    out from them and from its SFDP tables (:mod:`spiflash.derive`). See
     :mod:`spiflash_extract.record` for what each field means."""
 
     source: Source
@@ -260,9 +293,13 @@ class Record:
     id: bytes | None
     ext_id: bytes | None
     id_method: IdMethod | None
-    size: int | None
-    page_size: int | None
-    erasers: tuple[Eraser, ...]
+    #: The size the entry states, where it differs from its SFDP tables'
+    #: (or it has none).
+    size_claim: int | None
+    #: The page size the entry states, likewise.
+    page_size_claim: int | None
+    #: The erasers the entry states, but those its SFDP tables give.
+    eraser_claims: tuple[Eraser, ...]
     #: The capabilities the entry states.
     feature_claims: frozenset[Feature]
     flags: tuple[str, ...]
@@ -277,6 +314,16 @@ class Record:
     #: provenance: ``{"feature:qpi": "QPIEnable"}`` (see
     #: :mod:`spiflash_extract.record` for the keys).
     via: Mapping[str, str] = field(default_factory=dict, hash=False, repr=False)
+    #: The part's SFDP parameter tables by id (``0xff00``, the BFPT), where
+    #: the upstream copies them without the area around them (Zephyr's
+    #: ``sfdp-bfp``). A record has this or :attr:`sfdp`, not both.
+    sfdp_tables: Mapping[int, bytes] = field(default_factory=dict, hash=False, repr=False)
+    #: The size: :attr:`size_claim`, or failing that its SFDP tables' density.
+    size: int | None = field(init=False, compare=False, repr=False)
+    #: The page size: :attr:`page_size_claim`, or failing that its SFDP tables'.
+    page_size: int | None = field(init=False, compare=False, repr=False)
+    #: Every eraser: :attr:`eraser_claims`, and those its SFDP tables give.
+    erasers: tuple[Eraser, ...] = field(init=False, compare=False, repr=False)
     #: Every capability: :attr:`feature_claims`, and what the other fields
     #: imply (:func:`spiflash.derive.features`): its operations other than
     #: driver defaults, its block erasers, its size and its SFDP tables.
@@ -292,6 +339,17 @@ class Record:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "via", MappingProxyType(dict(self.via)))
+        object.__setattr__(self, "sfdp_tables", MappingProxyType(dict(self.sfdp_tables)))
+        facts = self.sfdp_facts
+        size, page = self.size_claim, self.page_size_claim
+        erasers = self.eraser_claims
+        if facts is not None:
+            size = facts.size if size is None else size
+            page = facts.page_size if page is None else page
+            erasers += tuple(e for e in facts.erasers if e not in erasers)
+        object.__setattr__(self, "size", size)
+        object.__setattr__(self, "page_size", page)
+        object.__setattr__(self, "erasers", erasers)
         features = self.feature_claims | derive.features(self)
         object.__setattr__(self, "features", features)
         uses = (*self.opcode_claims, *derive.opcodes(self))
@@ -300,10 +358,14 @@ class Record:
 
     def __getstate__(self) -> dict[str, Any]:
         # A mapping proxy does not pickle; the dict it wraps does.
-        return {**self.__dict__, "via": dict(self.via)}
+        return {**self.__dict__, "via": dict(self.via), "sfdp_tables": dict(self.sfdp_tables)}
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        self.__dict__.update(state, via=MappingProxyType(state["via"]))
+        self.__dict__.update(
+            state,
+            via=MappingProxyType(state["via"]),
+            sfdp_tables=MappingProxyType(state["sfdp_tables"]),
+        )
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> Record:
@@ -317,19 +379,28 @@ class Record:
             id=bytes.fromhex(d["id"]) if d["id"] else None,
             ext_id=bytes.fromhex(d["ext_id"]) if d["ext_id"] else None,
             id_method=IdMethod(d["id_method"]) if d["id_method"] else None,
-            size=d["size"],
-            page_size=d["page_size"],
-            erasers=tuple(Eraser.from_json(e) for e in d["erasers"] or ()),
+            size_claim=d["size"],
+            page_size_claim=d["page_size"],
+            eraser_claims=tuple(Eraser.from_json(e) for e in d["erasers"] or ()),
             feature_claims=frozenset(Feature(f) for f in d["features"]),
             flags=tuple(d["flags"]),
             voltage=Voltage(*d["voltage"]) if d["voltage"] else None,
             opcode_claims=tuple(
-                OpcodeUse(o["op"], o["via"], assumed=o.get("assumed", False)) for o in d["opcodes"]
+                OpcodeUse(
+                    o["op"],
+                    o["via"],
+                    assumed=o.get("assumed", False),
+                    dummy_clocks=o.get("dummy_clocks"),
+                )
+                for o in d["opcodes"]
             ),
             tested=d["tested"],
             notes=tuple(d["notes"]),
             sfdp=bytes.fromhex(d["sfdp"]) if d.get("sfdp") else None,
             via=d.get("via") or {},
+            sfdp_tables={
+                int(k, 16): bytes.fromhex(v) for k, v in (d.get("sfdp_tables") or {}).items()
+            },
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -346,18 +417,24 @@ class Record:
             "id": self.id.hex() if self.id else None,
             "ext_id": self.ext_id.hex() if self.ext_id else None,
             "id_method": str(self.id_method) if self.id_method else None,
-            "size": self.size,
-            "page_size": self.page_size,
+            "size": self.stored("size"),
+            "page_size": self.stored("page_size"),
             "erasers": [e.to_json() for e in self.stored("erasers")] or None,
             "features": sorted(self.stored("features")),
             "flags": list(self.flags),
             "via": dict(self.via),
             "voltage": list(self.voltage) if self.voltage else None,
             "opcodes": [
-                {"op": u.op, "via": u.via, **({"assumed": True} if u.assumed else {})}
+                {
+                    "op": u.op,
+                    "via": u.via,
+                    **({"assumed": True} if u.assumed else {}),
+                    **({"dummy_clocks": u.dummy_clocks} if u.dummy_clocks is not None else {}),
+                }
                 for u in self.stored("opcodes")
             ],
             "sfdp": self.sfdp.hex() if self.sfdp else None,
+            "sfdp_tables": {f"{k:04x}": v.hex() for k, v in sorted(self.sfdp_tables.items())},
             "tested": self.tested,
             "notes": list(self.notes),
         }
@@ -374,10 +451,13 @@ class Record:
 
     def given(self, name: str) -> Any:
         """The record's own value for field ``name``, as the sources are
-        compared on it: what it stores (:meth:`stored`), or for a field it
+        compared on it: what it stores (:meth:`stored`); for a field it
         only derives (:data:`DERIVED`: ``sector_size``), what its stored
-        fields give."""
-        return getattr(self, name) if name in DERIVED else self.stored(name)
+        fields give; for ``size`` and ``page_size`` (:data:`SFDP_VALUES`),
+        what it states or, where it states none, what its SFDP tables say."""
+        if name in DERIVED or name in SFDP_VALUES:
+            return getattr(self, name)
+        return self.stored(name)
 
     def feature_reasons(self) -> dict[Feature, str]:
         """Each capability in :attr:`features`, and why the entry gives it
@@ -391,10 +471,45 @@ class Record:
             out[use.op] = (*out.get(use.op, ()), use)
         return out
 
-    def sfdp_tables(self) -> Sfdp | None:
-        """The entry's SFDP dump, decoded (see :mod:`spiflash.sfdp`); ``None``
-        when the upstream has none for it."""
-        return parse_sfdp(self.sfdp) if self.sfdp else None
+    @cached_property
+    def parsed_sfdp(self) -> Sfdp | None:
+        """The entry's SFDP dump (:attr:`sfdp`) or tables
+        (:attr:`sfdp_tables`, a :attr:`~spiflash.sfdp.Sfdp.partial` one),
+        decoded (see :mod:`spiflash.sfdp`); ``None`` when the upstream has
+        neither for it."""
+        if self.sfdp:
+            return parse_sfdp(self.sfdp)
+        if self.sfdp_tables:
+            return from_tables(self.sfdp_tables)
+        return None
+
+    @cached_property
+    def sfdp_facts(self) -> SfdpFacts | None:
+        """What its SFDP tables say, in a record's terms
+        (:meth:`Sfdp.facts <spiflash.sfdp.Sfdp.facts>`); ``None`` without."""
+        parsed = self.parsed_sfdp
+        return parsed.facts() if parsed is not None else None
+
+    def sfdp_disagreements(self) -> tuple[SfdpDisagreement, ...]:
+        """The values the entry states that its own SFDP tables give
+        otherwise: its size or page size (the stated one is the record's
+        value, as the upstream's own code uses it), or an eraser whose
+        opcode the tables give with other blocks."""
+        facts = self.sfdp_facts
+        if facts is None:
+            return ()
+        out = []
+        for name in SFDP_VALUES:
+            stated, said = self.stored(name), getattr(facts, name)
+            if stated is not None and said is not None and stated != said:
+                out.append(SfdpDisagreement(name, stated, said))
+        out.extend(
+            SfdpDisagreement("erasers", e, f)
+            for e in self.stored("erasers")
+            for f in facts.erasers
+            if e.opcode is not None and f.opcode == e.opcode and f.blocks != e.blocks
+        )
+        return tuple(out)
 
     @property
     def manufacturer(self) -> str | None:
@@ -761,22 +876,31 @@ class Flash:
     @cached_property
     def sfdp_dumps(self) -> tuple[SfdpDump, ...]:
         """Every distinct SFDP dump the sources carry for this id, decoded,
-        each with the records carrying it; the best source's first. What a
-        dump says is what one part answered, and parts sharing an id can
-        answer differently: QEMU has one dump for the MX25L25635E and
-        another for the MX25L25635F, both ``c22019``."""
-        carrying: dict[bytes, list[Record]] = {}
-        for r in sorted(self.records, key=lambda r: r.source.priority):
+        each with the records carrying it: the whole dumps
+        (:attr:`Record.sfdp`), then the tables copied without the area around
+        them (:attr:`Record.sfdp_tables`), each by the best source carrying
+        it. What a dump says is what one part answered, and parts sharing
+        an id can answer differently: QEMU has one dump for the MX25L25635E
+        and another for the MX25L25635F, both ``c22019``."""
+        carrying: dict[Any, list[Record]] = {}
+        for r in sorted(self.records, key=lambda r: (not r.sfdp, r.source.priority)):
             if r.sfdp:
                 carrying.setdefault(r.sfdp, []).append(r)
-        return tuple(SfdpDump(parse_sfdp(d), tuple(rs)) for d, rs in carrying.items())
+            elif r.sfdp_tables:
+                carrying.setdefault(tuple(sorted(r.sfdp_tables.items())), []).append(r)
+        return tuple(
+            SfdpDump(parsed, tuple(rs))
+            for rs in carrying.values()
+            if (parsed := rs[0].parsed_sfdp) is not None
+        )
 
     @property
     def sfdp(self) -> Sfdp | None:
         """The chip's SFDP tables, decoded: the first of :attr:`sfdp_dumps`,
-        from the highest-priority source that carries one
-        (:attr:`sfdp_source`); ``None`` when no source does."""
-        return self.sfdp_dumps[0].tables if self.sfdp_dumps else None
+        a whole dump from the highest-priority source that carries one, else
+        the first partial one (:attr:`sfdp_source`); ``None`` when no source
+        carries any."""
+        return self.sfdp_dumps[0].sfdp if self.sfdp_dumps else None
 
     @property
     def sfdp_source(self) -> Source | None:
@@ -966,7 +1090,7 @@ class Flash:
                 for r in self.records
             ],
             "sfdp": [
-                {"source": d.source, "parts": list(d.parts), **d.tables.to_json()}
+                {"source": d.source, "parts": list(d.parts), **d.sfdp.to_json()}
                 for d in self.sfdp_dumps
             ],
         }

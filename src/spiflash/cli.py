@@ -94,7 +94,7 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     else:
         lines.append("    from: " + ", ".join(f.sources))
     lines.extend(
-        f"    sfdp: {sfdp_summary(d.tables)}  [{d.source}: {', '.join(d.parts)}]"
+        f"    sfdp: {sfdp_summary(d.sfdp)}  [{d.source}: {', '.join(d.parts)}]"
         for d in f.sfdp_dumps
     )
     # The best datasheet, or all of them with -v.
@@ -115,18 +115,18 @@ class _SfdpShown(NamedTuple):
     """A dump ``spiflash sfdp`` prints, and the chip it was shipped for
     (``None`` for a dump given directly)."""
 
-    tables: Sfdp
+    sfdp: Sfdp
     chip: Flash | None = None
     dump: SfdpDump | None = None
 
     def to_json(self) -> dict[str, Any]:
         if self.chip is None or self.dump is None:
-            return self.tables.to_json()
+            return self.sfdp.to_json()
         return {
             "chip": self.chip.key,
             "source": self.dump.source,
             "parts": list(self.dump.parts),
-            **self.tables.to_json(),
+            **self.sfdp.to_json(),
         }
 
 
@@ -154,7 +154,7 @@ def _sfdp_input(db: Database, source: str) -> list[_SfdpShown]:
     for f in _resolve(db, source):
         dumps = f.sfdp_dumps
         named = [d for d in dumps if part in d.parts]
-        out.extend(_SfdpShown(d.tables, f, d) for d in named or dumps)
+        out.extend(_SfdpShown(d.sfdp, f, d) for d in named or dumps)
     return out
 
 
@@ -316,7 +316,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if d.chip is not None and d.dump is not None:
                     print(header(d.chip))
                     print(f"    from {d.dump.source}: {', '.join(d.dump.parts)}")
-                print(d.tables.describe(verbose=args.verbose))
+                print(d.sfdp.describe(verbose=args.verbose))
                 print()
             return 0
         if args.command == "jep106":

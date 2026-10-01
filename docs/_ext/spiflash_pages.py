@@ -353,7 +353,7 @@ def _sfdp(f: Flash) -> list[str]:
 def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
     """One dump's table: whose it is, then what it says. Parts sharing an id
     can carry different dumps, so each names its parts."""
-    s = d.tables
+    s = d.sfdp
     tables = ", ".join(f"{esc(h.name)} {h.revision}" for h in s.headers)
     rows = [
         ["Dump of", f"{source_badge(d.source)} {esc(', '.join(d.parts))}"],

@@ -36,11 +36,13 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from .enums import Feature, OperationKind
-from .opcodes import OPERATIONS
+from .opcodes import OPERATIONS, OpcodeUse
 from .units import human_size, human_time
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
+
+    from .model import Eraser
 
 SIGNATURE = b"SFDP"
 
@@ -246,23 +248,32 @@ _MODE_BY_OPCODE = {
 }
 
 
-def revision_name(major: int, minor: int) -> str:
-    """``JESD216B`` for 1.6; ``JESD216 rev 1.9`` for one this module has no name for."""
+def revision_name(major: int | None, minor: int | None) -> str:
+    """``JESD216B`` for 1.6; ``JESD216 rev 1.9`` for one this module has no
+    name for; ``"unknown revision"`` where it is not known (``None``)."""
+    if major is None or minor is None:
+        return "unknown revision"
     return REVISIONS.get((major, minor), f"JESD216 rev {major}.{minor}")
 
 
 @dataclass(frozen=True, slots=True)
 class ParameterHeader:
-    """One 8-byte parameter header: which table, its revision, and where it is."""
+    """One 8-byte parameter header: which table, its revision, and where it is.
+
+    A header :func:`from_tables` makes up for a table given without its
+    SFDP area is ``synthetic``: its revision is unknown (``major`` and
+    ``minor`` are ``None``), its ``length`` is the table's, and its
+    ``pointer`` is 0."""
 
     index: int
     id: int
-    major: int
-    minor: int
+    major: int | None
+    minor: int | None
     #: In dwords.
     length: int
     #: Byte offset of the table in the SFDP area.
     pointer: int
+    synthetic: bool = False
 
     @property
     def id_lsb(self) -> int:
@@ -301,7 +312,8 @@ class ParameterHeader:
 
     @property
     def revision(self) -> str:
-        return f"{self.major}.{self.minor}"
+        """``"1.6"``; ``"?"`` for a synthetic header."""
+        return "?" if self.major is None else f"{self.major}.{self.minor}"
 
     @property
     def end(self) -> int:
@@ -368,8 +380,10 @@ class Bfpt:
     table has only the first nine dwords."""
 
     dwords: tuple[int, ...]
-    major: int
-    minor: int
+    #: The table's revision; ``None`` when given without its header
+    #: (:func:`from_tables`).
+    major: int | None
+    minor: int | None
     length: int
     density_bits: int | None
     #: The 4 KiB erase opcode of DW1, ``None`` when the table says there is none.
@@ -505,17 +519,48 @@ class SfdpOperation:
 
 
 @dataclass(frozen=True)
+class SfdpFacts:
+    """What an SFDP area says in the database's own terms: what a record's
+    other fields would hold if the area were its only source
+    (:meth:`Sfdp.facts`). A record carrying the area derives these at load
+    (:mod:`spiflash.derive`) and does not store them again.
+
+    ``erasers`` has an eraser per BFPT erase type, over the whole density
+    (and one per 4-byte erase opcode the 4BAIT gives), and the 4 KiB erase of
+    BFPT DW1 where no erase type has it. ``opcodes`` are the named
+    operations the tables describe (:meth:`Sfdp.operations`), each
+    ``implied``, its ``via`` saying where in the tables it is, and a read
+    with the dummy clocks the tables give it. The rest is what the
+    capability rules read: the BFPT's address bytes, its ways into 4-byte
+    address mode (DW16), and whether there is an xSPI profile 1.0 table
+    (octal DTR)."""
+
+    size: int | None
+    page_size: int | None
+    address_bytes: AddressBytes | None
+    erasers: tuple[Eraser, ...]
+    opcodes: tuple[OpcodeUse, ...]
+    four_byte_enter: frozenset[FourByteMethod] = frozenset()
+    octal_dtr: bool = False
+
+
+@dataclass(frozen=True)
 class Sfdp:
     """A decoded SFDP area: its headers and tables, and what they say.
 
     ``warnings`` lists what did not decode cleanly: a table past the end of
     the dump, a header revision this module does not know, a 4BAIT bit the
-    BFPT contradicts. None of them stops the rest from decoding."""
+    BFPT contradicts. None of them stops the rest from decoding.
+
+    A ``partial`` one is parameter tables given without the area around
+    them (:func:`from_tables`: Zephyr's boards copy the BFPT alone): its
+    ``data`` is empty, its revision and access protocol are ``None``, and
+    its headers are made up (:attr:`ParameterHeader.synthetic`)."""
 
     data: bytes = field(repr=False)
-    major: int
-    minor: int
-    access_protocol: int
+    major: int | None
+    minor: int | None
+    access_protocol: int | None
     headers: tuple[ParameterHeader, ...]
     tables: tuple[Table, ...]
     bfpt: Bfpt | None
@@ -525,14 +570,24 @@ class Sfdp:
     sccr: Table | None = None
     sccr_multi_chip: Table | None = None
     warnings: tuple[str, ...] = ()
+    partial: bool = False
 
     @property
     def revision(self) -> str:
-        return f"{self.major}.{self.minor}"
+        """``"1.6"``; ``"unknown"`` for a :attr:`partial` one."""
+        return "unknown" if self.major is None else f"{self.major}.{self.minor}"
 
     @property
     def revision_name(self) -> str:
         return revision_name(self.major, self.minor)
+
+    def table(self, table_id: int) -> bytes | None:
+        """The bytes of the first table with id ``table_id`` (``0xff00``,
+        the BFPT), as many as the area holds; ``None`` where there is none."""
+        for t in self.tables:
+            if t.header.id == table_id and t.dwords:
+                return struct.pack(f"<{len(t.dwords)}I", *t.dwords)
+        return None
 
     @property
     def size(self) -> int | None:
@@ -584,6 +639,20 @@ class Sfdp:
     def _bfpt_address_bytes(self) -> int:
         return 4 if self.address_bytes is AddressBytes.FOUR else 3
 
+    @property
+    def four_byte_mode(self) -> bool:
+        """Whether the part has a 4-byte address mode for BFPT DW16's ways in
+        and out of it to describe: its BFPT allows 4-byte addresses, or its
+        density is over 16 MiB. Zephyr's ``spi_nor_process_bfp()`` reads
+        DW16 only for the first; a 3-byte part's DW16 is often left all
+        ones (Macronix's MX25R6435F: every way in and out), which says
+        nothing. :meth:`operations` and :meth:`facts` read DW16's 4-byte
+        fields only where this holds; :attr:`Bfpt.four_byte_enter` reports
+        what is written."""
+        if self.address_bytes in (AddressBytes.THREE_OR_FOUR, AddressBytes.FOUR):
+            return True
+        return self.size is not None and self.size > 16 * 1024 * 1024
+
     def operations(self, *, implied: bool = True) -> Iterator[SfdpOperation]:
         """Every operation the tables describe, in table order.
 
@@ -629,6 +698,10 @@ class Sfdp:
                 0,
                 f"BFPT erase type {e.index}: {e.size} B",
             )
+        if (dw1 := self._dw1_erase()) is not None:
+            yield SfdpOperation(
+                _ERASE_BY_OPCODE.get(dw1), dw1, "1-1-0", abytes, 0, "BFPT DW1: 4096 B erase"
+            )
         for r in bfpt.octal_reads:
             yield SfdpOperation(
                 _BY_SHAPE.get((OperationKind.READ, r.opcode, r.protocol)),
@@ -640,7 +713,8 @@ class Sfdp:
                 f"{r.mode_clocks} mode + {r.wait_states} wait clocks",
             )
         mode_ops: dict[int, list[str]] = {}
-        for methods, direction in ((bfpt.four_byte_enter, "enter"), (bfpt.four_byte_exit, "exit")):
+        dw16 = (bfpt.four_byte_enter, bfpt.four_byte_exit) if self.four_byte_mode else ((), ())
+        for methods, direction in ((dw16[0], "enter"), (dw16[1], "exit")):
             for method, opcode in (
                 (FourByteMethod.EN4B, 0xB7 if direction == "enter" else 0xE9),
                 (FourByteMethod.WREN_EN4B, 0xB7 if direction == "enter" else 0xE9),
@@ -695,66 +769,87 @@ class Sfdp:
                 "xSPI profile 1.0: octal DTR read",
             )
 
-    def features(self) -> frozenset[Feature]:
-        """The :class:`~spiflash.enums.Feature` values the tables support."""
-        out = {Feature.SFDP}
+    def facts(self) -> SfdpFacts:
+        """What the tables say, as a record's fields hold it
+        (:class:`SfdpFacts`)."""
+        return self._facts
+
+    @cached_property
+    def _facts(self) -> SfdpFacts:
+        from .model import EraseBlock, Eraser  # noqa: PLC0415 - model imports this module
+
+        size = self.size
+        erasers: list[Eraser] = []
+
+        def eraser(opcode: int | None, block: int) -> None:
+            if opcode is None or size is None or block <= 0 or size % block:
+                return
+            e = Eraser(opcode, (EraseBlock(block, size // block),))
+            if e not in erasers:
+                erasers.append(e)
+
+        for e in self.erase_types:
+            eraser(e.opcode, e.size)
+        for e in self.erase_types:
+            eraser(e.opcode_4b, e.size)
+        if (dw1 := self._dw1_erase()) is not None:
+            eraser(dw1, 4096)
+        uses: dict[str, OpcodeUse] = {}
+        for o in self.operations():
+            if o.name is None or o.name in uses:
+                continue
+            read = OPERATIONS[o.name].kind is OperationKind.READ
+            uses[o.name] = OpcodeUse(
+                o.name, f"SFDP {o.via}", implied=True, dummy_clocks=o.dummy_clocks if read else None
+            )
+        # The tables are the answer to RDSFDP, whatever is in them.
+        uses.setdefault("RDSFDP", OpcodeUse("RDSFDP", "SFDP: the tables themselves", implied=True))
         bfpt = self.bfpt
-        if bfpt is None:
-            return frozenset(out)
-        # No fast_read: SFDP gives no sign of 1-1-1 fast read (0x0b).
-        for e in bfpt.erase_types:
-            if e.size == 4096:
-                out.add(Feature.ERASE_4K)
-            elif e.size == 32 * 1024:
-                out.add(Feature.ERASE_32K)
-            elif e.size == 64 * 1024:
-                out.add(Feature.ERASE_64K)
-        if bfpt.erase_4k_opcode is not None:
-            out.add(Feature.ERASE_4K)
-        protocols = {r.protocol for r in bfpt.reads}
-        if protocols & {"1-1-2", "1-2-2", "2-2-2"}:
-            out.add(Feature.DUAL_READ)
-        if protocols & {"1-1-4", "1-4-4", "4-4-4"}:
-            out.add(Feature.QUAD_READ)
-        if "4-4-4" in protocols:
-            out.add(Feature.QPI)
-        if bfpt.octal_reads:
-            out.add(Feature.OCTAL_READ)
-        if self.profile1 is not None:
-            out.add(Feature.OCTAL_DTR_READ)
-            out.add(Feature.OCTAL_DTR_PP)
-        size = bfpt.size
-        if (
-            bfpt.address_bytes in (AddressBytes.THREE_OR_FOUR, AddressBytes.FOUR)
-            or bfpt.four_byte_enter
-            or (size is not None and size > 16 * 1024 * 1024)
-        ):
-            out.add(Feature.FOUR_BYTE_ADDR)
-        if FourByteMethod.OPCODES_4B in bfpt.four_byte_enter:
-            out.add(Feature.FOUR_BYTE_OPCODES)
-        if self.four_byte is not None and self.four_byte.usable:
-            out.add(Feature.FOUR_BYTE_OPCODES)
-            out.add(Feature.FOUR_BYTE_ADDR)
-            for i in self.four_byte.instructions:
-                if i.supported_by_bfpt and i.kind is OperationKind.PROGRAM and "4" in i.protocol:
-                    out.add(Feature.QUAD_PP)
-                if i.supported_by_bfpt and i.kind is OperationKind.READ and "8" in i.protocol:
-                    out.add(Feature.OCTAL_READ)
-        return frozenset(out)
+        return SfdpFacts(
+            size=size,
+            page_size=self.page_size,
+            address_bytes=self.address_bytes,
+            erasers=tuple(erasers),
+            opcodes=tuple(uses.values()),
+            four_byte_enter=bfpt.four_byte_enter if bfpt and self.four_byte_mode else frozenset(),
+            octal_dtr=self.profile1 is not None,
+        )
+
+    def _dw1_erase(self) -> int | None:
+        """The 4 KiB erase opcode of BFPT DW1, where no erase type has it."""
+        bfpt = self.bfpt
+        if bfpt is None or bfpt.erase_4k_opcode is None:
+            return None
+        if any(e.opcode == bfpt.erase_4k_opcode and e.size == 4096 for e in bfpt.erase_types):
+            return None
+        return bfpt.erase_4k_opcode
+
+    def features(self) -> frozenset[Feature]:
+        """The :class:`~spiflash.enums.Feature` values the tables imply: what
+        :func:`spiflash.derive.features` gives a record whose only source is
+        these tables (:meth:`facts`), by the same rules."""
+        from . import derive  # noqa: PLC0415 - derive imports this module
+
+        return derive.sfdp_features(self)
 
     def describe(self, *, verbose: bool = False) -> str:
         """The tables as text, one fact per line; with ``verbose``, every
         table's raw dwords too."""
         plural = "s" if len(self.headers) != 1 else ""
-        head = (
-            f"SFDP {self.revision} ({self.revision_name}), {len(self.headers)} parameter "
-            f"header{plural}, access protocol 0x{self.access_protocol:02x}"
-        )
+        if self.partial:
+            names = ", ".join(t.header.name for t in self.tables)
+            head = f"SFDP parameter table{plural} without the SFDP header: {names}"
+        else:
+            head = (
+                f"SFDP {self.revision} ({self.revision_name}), {len(self.headers)} parameter "
+                f"header{plural}, access protocol 0x{self.access_protocol or 0:02x}"
+            )
         lines = [head]
         for t in self.tables:
             h = t.header
             note = " (truncated)" if t.truncated else ""
-            lines.append(f"    {h.name} {h.revision}, {h.length} dwords at 0x{h.pointer:x}{note}")
+            where = "" if h.synthetic else f" at 0x{h.pointer:x}"
+            lines.append(f"    {h.name} {h.revision}, {h.length} dwords{where}{note}")
         bfpt = self.bfpt
         if bfpt is None:
             lines.append("no BFPT")
@@ -837,16 +932,17 @@ class Sfdp:
     def to_json(self) -> dict[str, Any]:
         bfpt = self.bfpt
         return {
-            "revision": self.revision,
+            "partial": self.partial,
+            "revision": None if self.partial else self.revision,
             "revision_name": self.revision_name,
             "access_protocol": self.access_protocol,
             "tables": [
                 {
                     "id": h.id,
                     "name": h.name,
-                    "revision": h.revision,
+                    "revision": None if h.synthetic else h.revision,
                     "length": h.length,
-                    "pointer": h.pointer,
+                    "pointer": None if h.synthetic else h.pointer,
                     "dwords": list(t.dwords),
                 }
                 for h, t in zip(self.headers, self.tables, strict=True)
@@ -1101,13 +1197,28 @@ def parse(data: bytes) -> Sfdp:
             warnings.append(f"{h.name}: {k} of {h.length} dwords are in the dump")
         tables.append(Table(h, tuple(dwords)))
 
-    # The BFPT: the highest minor revision, then the longest, as Linux picks it.
-    bfpts = [t for t in tables if t.header.id == BFPT_ID and t.header.major == 1 and t.dwords]
     if headers and headers[0].id != BFPT_ID:
         warnings.append("the first parameter header is not the BFPT")
+    return _decode(bytes(data), major, minor, access, tables, warnings)
+
+
+def _decode(
+    data: bytes,
+    major: int | None,
+    minor: int | None,
+    access: int | None,
+    tables: list[Table],
+    warnings: list[str],
+) -> Sfdp:
+    """An :class:`Sfdp` of ``tables``, decoded."""
+    # The BFPT: the highest minor revision, then the longest, as Linux picks
+    # it. A table given without its header (major None) counts.
+    bfpts = [
+        t for t in tables if t.header.id == BFPT_ID and t.header.major in (1, None) and t.dwords
+    ]
     bfpt = None
     if bfpts:
-        best = max(bfpts, key=lambda t: (t.header.minor, t.header.length))
+        best = max(bfpts, key=lambda t: (t.header.minor or 0, t.header.length))
         bfpt = _bfpt(best, warnings)
     else:
         warnings.append("no BFPT")
@@ -1122,11 +1233,11 @@ def parse(data: bytes) -> Sfdp:
     if (t := first(PROFILE1_ID)) is not None:
         profile1 = _profile1(t)
     return Sfdp(
-        data=bytes(data),
+        data=data,
         major=major,
         minor=minor,
         access_protocol=access,
-        headers=tuple(headers),
+        headers=tuple(t.header for t in tables),
         tables=tuple(tables),
         bfpt=bfpt,
         four_byte=four_byte,
@@ -1135,4 +1246,26 @@ def parse(data: bytes) -> Sfdp:
         sccr=first(SCCR_ID),
         sccr_multi_chip=first(SCCR_MC_ID),
         warnings=tuple(warnings),
+        partial=major is None,
     )
+
+
+def from_tables(tables: Mapping[int, bytes]) -> Sfdp:
+    """Decode parameter tables given without the SFDP area around them,
+    by table id (``{0xff00: bfpt, 0xff84: four_byte}``), as Zephyr's boards
+    copy them (``sfdp-bfp``, ``sfdp-ff84``, ...): a :attr:`~Sfdp.partial`
+    :class:`Sfdp`. Each table is as long as its bytes (whole dwords,
+    little-endian); the BFPT comes first, then the others by id. Its
+    revision is not known, so a BFPT field is read wherever the table is
+    long enough to hold it."""
+    warnings: list[str] = []
+    out: list[Table] = []
+    order = sorted(tables, key=lambda i: (i != BFPT_ID, i))
+    for i, table_id in enumerate(order):
+        raw = tables[table_id]
+        if len(raw) % 4:
+            warnings.append(f"table 0x{table_id:04x}: {len(raw)} bytes is not whole dwords")
+        n = len(raw) // 4
+        header = ParameterHeader(i, table_id, None, None, n, 0, synthetic=True)
+        out.append(Table(header, struct.unpack_from(f"<{n}I", raw)))
+    return _decode(b"", None, None, None, out, warnings)
