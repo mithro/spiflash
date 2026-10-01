@@ -432,8 +432,8 @@ QE_COMMENT_MAKERS = frozenset({0xC2, 0x9D})
 
 
 def dummy_cycles(value: str) -> tuple[list[dict[str, Any]], list[str]]:
-    """flashprog's ``.dummy_cycles`` (include/flash.h, ``union
-    dummy_cycles``): the QPI fast read quad I/O (0xeb in QPI mode,
+    """flashprog's ``.dummy_cycles`` (:upstream:`flashprog:include/flash.h`,
+    ``union dummy_cycles``): the QPI fast read quad I/O (0xeb in QPI mode,
     ``READ_4_4_4``) with its dummy clocks, and flags for what has no field.
     ``.qpi_fast_read_qio`` is its fixed count (0: flashprog does not use
     the instruction); ``.qpi_read_params`` the counts a register setting

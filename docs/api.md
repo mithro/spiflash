@@ -505,7 +505,7 @@ Changes in data format 11 (the final verification pass):
   ({sfsrc}`flashrom`'s `block_erasers (1 x ...)`, {sfsrc}`dediprog`'s
   `EraseCmd`, {sfsrc}`openocd`'s `chip_erase_cmd`);
   {py:attr}`Record.erasers <spiflash.model.Record.erasers>` gives it as
-  before. Every stored layout is over the record's size.
+  before. Every stored layout is over the record's size;
 - {py:data}`spiflash.vendors.SUCCESSORS` and {py:func}`spiflash.vendors.company`
   are new: the company a maker's flash parts went to (Atmel, Adesto, Dialog,
   Renesas; ST and Intel, Numonyx, Micron; Spansion, Cypress, Infineon; SST,
@@ -525,3 +525,20 @@ Changes in data format 11 (the final verification pass):
   refuses such a part, which a BFPT cannot describe;
 - new operations: [IRRD](opcodes/IRRD.md), [IRP](opcodes/IRP.md) and
   [IRER](opcodes/IRER.md), ISSI's information row (its OTP area);
+- a consensus tie ({py:class}`~spiflash.model.Flash`'s values) is never
+  broken by the order of the records: after the sources and the records, the
+  value of the records naming the chip's own part wins, then the smaller;
+- {py:attr}`Flash.part_records <spiflash.model.Flash.part_records>` is new:
+  the records but those of another size naming no part of the chip's size,
+  another part listed under the id, which {py:attr}`~spiflash.model.Flash.opcodes`,
+  {py:attr}`~spiflash.model.Flash.features`,
+  {py:attr}`~spiflash.model.Flash.four_byte_modes` and
+  {py:attr}`~spiflash.model.Flash.address_bytes` leave out;
+- {py:meth}`Flash.supports() <spiflash.model.Flash.supports>` does not count
+  an operation only a driver default gives (QEMU's chip erase, which its
+  model decodes for every part); {py:attr}`~spiflash.model.Flash.opcodes`
+  still lists it;
+- `SfdpDump.tables`, {py:attr}`SfdpDump.sfdp <spiflash.model.SfdpDump.sfdp>`
+  by its old name, is gone; no SFDP data issue is left: a Zephyr node's
+  tables whose density or quad enable requirement are not the node's are
+  another part's, and are not taken.

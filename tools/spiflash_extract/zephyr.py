@@ -547,10 +547,10 @@ class _Node:
         qer = given_qer
         if qer is not None and binding_name not in QER_IGNORED_BY:
             via["quad_enable_requirement"] = f"quad-enable-requirements={qer}"
-            fixed = QER_WRONG.get((jedec_id[:3].hex(), qer))
-            if fixed is not None:
-                self.notes.append(f"quad enable requirement {fixed[0]}, not {qer}: {fixed[1]}")
-                qer = fixed[0]
+            right = QER_WRONG.get((jedec_id[:3].hex(), qer))
+            if right is not None:
+                self.notes.append(f"quad enable requirement {right[0]}, not {qer}: {right[1]}")
+                qer = right[0]
         else:
             qer = None
         return make(
