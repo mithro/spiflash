@@ -327,9 +327,23 @@ def extract_nand(root: Path) -> list[Record]:
         id0, id1, id2 = key
         unused = [_unused(n) for a, b, c, n in seen if (a, b) == (id0, id1) and c in (0, id2)][:1]
         seen.append((*key, line))
-        rec["notes"] = [*notes, *unused, *rec["notes"]]
+        rec["notes"] = [*notes, *unused]
         records.append(make("rockchip", NAND, line, name, **rec))
     return records
+
+
+#: The commands sfc_nand.c sends every part, whatever its entry says: its
+#: defaults (the block erase is the eraser's). Reading from cache with
+#: 0x03 and loading with 0x02 are what sfc_nand_init() sets up before
+#: looking at the feature bits.
+NAND_DEFAULTS = {
+    "NAND_READ_CACHE_1_1_1": "every part: page_read_cmd = 0x03",
+    "NAND_PROGRAM_LOAD_1_1_1": "every part: page_prog_cmd = 0x02",
+    "NAND_PAGE_READ": "every part (sfc_nand_read)",
+    "NAND_PROGRAM_EXECUTE": "every part (sfc_nand_prog_page_raw)",
+    "NAND_GET_FEATURE": "every part (sfc_nand_read_feature)",
+    "NAND_SET_FEATURE": "every part (sfc_nand_write_feature)",
+}
 
 
 def _nand_record(
@@ -357,11 +371,17 @@ def _nand_record(
         raise ValueError(msg)
     allowed = cparse.evaluate("FEA_4BIT_READ | FEA_4BIT_PROG | FEA_SOFT_QOP_BIT", symbols)
     bits = _bits(feature, allowed, symbols)
-    claims = [
-        (feat, bit)
-        for bit, feat in (("FEA_4BIT_READ", "quad_read"), ("FEA_4BIT_PROG", "quad_pp"))
-        if bit in bits
-    ]
+    # sfc_nand_init() reads from cache with 0x6b for FEA_4BIT_READ, and
+    # loads with 0x32 for FEA_4BIT_PROG (when it reads on four lines).
+    ops = Opcodes()
+    for op, bit, cmd in (
+        ("NAND_READ_CACHE_1_1_4", "FEA_4BIT_READ", "page_read_cmd = 0x6b"),
+        ("NAND_PROGRAM_LOAD_1_1_4", "FEA_4BIT_PROG", "page_prog_cmd = 0x32"),
+    ):
+        if bit in bits:
+            ops.add(op, f"{bit}: {cmd}")
+    for op, via in NAND_DEFAULTS.items():
+        ops.add(op, via, assumed=True)
     # sfc_nand_read_id() sends 0x9f and an address byte. An id2 of 0 is not
     # compared, so not part of the id. One that repeats the manufacturer byte
     # or is 0x7f is not a device byte either, but what follows one: the
@@ -384,17 +404,13 @@ def _nand_record(
         "size": size,
         "page_size": page,
         "erasers": [derive.block_eraser(0xD8, page * ppb, size).to_json()],
-        "features": {feat for feat, _ in claims},
-        "via": feature_via(claims) | ({"quad_enable": f"has_qe_bits={qe}"} if quad_enable else {}),
+        "planes": planes,
+        # max_ecc_bits, which the driver passes to its FTL with no step.
+        "ecc": {"strength_bits": ecc},
+        "via": {"quad_enable": f"has_qe_bits={qe}"} if quad_enable else {},
         "quad_enable": quad_enable,
-        "flags": [
-            *bits,
-            f"has_qe_bits={qe}",
-            f"max_ecc_bits={ecc}",
-            f"meta={meta}",
-            f"ecc_status={decoder}",
-        ],
-        "notes": [f"{planes} plane(s) of {blocks} blocks"],
+        "opcodes": ops.to_json(),
+        "flags": [*bits, f"has_qe_bits={qe}", f"meta={meta}", f"ecc_status={decoder}"],
     }, (id0, id1, id2)
 
 

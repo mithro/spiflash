@@ -12,8 +12,10 @@ from pathlib import Path
 import pytest
 
 from spiflash.enums import Feature
-from spiflash.model import Record
+from spiflash.model import EraseBlock, Eraser, Record
+from spiflash.opcodes import OPERATIONS
 from spiflash_extract import (
+    cparse,
     dediprog,
     dts,
     flashrom,
@@ -84,6 +86,10 @@ LINUX_NAND = fixture("linux/drivers/mtd/nand/spi/winbond.c")
 
 LINUX_ESMT = fixture("linux/drivers/mtd/nand/spi/esmt.c")
 
+LINUX_MICRON = fixture("linux/drivers/mtd/nand/spi/micron.c")
+
+SPINAND_H = fixture("linux/include/linux/mtd/spinand.h")
+
 
 @pytest.fixture
 def linux_tree(tmp_path: Path) -> Path:
@@ -95,8 +101,11 @@ def linux_tree(tmp_path: Path) -> Path:
             "drivers/mtd/spi-nor/core.c": "static const struct flash_info x[] = { {} };",
             "drivers/mtd/spi-nor/winbond.c": LINUX_WINBOND,
             "drivers/mtd/spi-nor/spansion.c": LINUX_SPANSION,
+            "drivers/mtd/spi-nor/micron-st.c": fixture("linux/drivers/mtd/spi-nor/micron-st.c"),
             "drivers/mtd/nand/spi/winbond.c": LINUX_NAND,
+            "drivers/mtd/nand/spi/micron.c": LINUX_MICRON,
             "drivers/mtd/nand/spi/core.c": "",
+            linux.SPINAND_H: SPINAND_H,
         },
     )
 
@@ -222,10 +231,37 @@ def test_linux_nor(linux_tree: Path) -> None:
     assert "erase_64k" not in features(n)
 
 
+def test_linux_nor_dies(linux_tree: Path) -> None:
+    r = by_name(linux.extract_nor(linux_tree))
+    # micron-st.c's two-die late_init: n_dice 2 and die erase 0xc4.
+    mt = r["MT25QU01G"]
+    assert (mt["dies"], mt["via"]["dies"]) == (2, "mt25q01_fixups: n_dice = 2")
+    die = {o["op"]: o["via"] for o in mt["opcodes"]}["DIE_ERASE"]
+    assert die == "mt25q01_fixups: die_erase_opcode = SPINOR_OP_MT_DIE_ERASE"
+    # Winbond's n_dice is size / SZ_64M, the SFDP size: 2 for the 1 Gbit
+    # W25Q01JV. It has no die erase, but selects each die (0xc2) to poll it.
+    w = r["W25Q01JV"]
+    assert (w["dies"], w["via"]["dies"]) == (
+        2,
+        "winbond_nor_multi_die_fixups: n_dice = nor->params->size / SZ_64M",
+    )
+    ops = {o["op"]: o["via"] for o in w["opcodes"]}
+    assert ops["DIE_SELECT"] == "winbond_nor_multi_die_fixups: ready = winbond_nor_multi_die_ready"
+    assert "DIE_ERASE" not in ops
+    assert r["W25Q128"]["dies"] is None
+
+
+def test_linux_nor_dies_unknown(linux_tree: Path) -> None:
+    micron = linux_tree / "drivers/mtd/spi-nor/micron-st.c"
+    micron.write_text(micron.read_text().replace("n_dice = 2", "n_dice = nor->x"))
+    with pytest.raises(ValueError, match="sets n_dice to"):
+        linux.extract_nor(linux_tree)
+
+
 def test_linux_nand(linux_tree: Path) -> None:
-    (n,) = linux.extract_nand(linux_tree)
+    r = by_name(linux.extract_nand(linux_tree))
+    n = r["W25N01GV"]
     assert n["type"] == "nand"
-    assert n["name"] == "W25N01GV"
     assert n["vendor"] == "Winbond"
     assert n["id"] == "efaa21"
     assert n["id_method"] == "rdid_opcode_dummy"
@@ -233,22 +269,104 @@ def test_linux_nand(linux_tree: Path) -> None:
     assert n["page_size"] == 2048
     assert n["erasers"] == [{"opcode": 0xD8, "blocks": [[2048 * 64, 1024]]}]
     assert sector(n) == 2048 * 64
-    # SPINAND_HAS_QE_BIT: bit 0 of the configuration register (0xb0),
-    # which implies quad_read.
-    assert n["quad_enable"] == {"register": "nand-b0", "bit": 0}
+    # NAND_MEMORG(1, 2048, 64, 64, 1024, 20, 1, 1, 1), NAND_ECCREQ(1, 512).
+    assert (n["oob_size"], n["planes"], n["dies"], n["max_bad_blocks"]) == (64, 1, 1, 20)
+    assert n["ecc"] == {"strength_bits": 1, "step_bytes": 512}
+    assert n["die_select_bit"] is None
+    # No SPINAND_HAS_QE_BIT, and quad variants: spinand_init_quad_enable()
+    # clears bit 0 of the configuration register and reads on four lines.
+    assert n["quad_enable"] == "none"
     assert n["features"] == []
-    assert features(n) == ["quad_read"]  # a SPI NAND eraser implies no erase_*
-    assert ops(n) == {}  # nor the SE of a SPI NOR part
-    assert n["via"] == {"quad_enable": "SPINAND_HAS_QE_BIT"}
+    # Its op variants, the core's defaults, its read-id and block erase:
+    # SPI NAND's own operations, so no erase_* and no SE.
+    assert features(n) == ["dual_read", "fast_read", "quad_pp", "quad_read"]
+    assert {op: opcode for op, (opcode, _) in ops(n).items()} == {
+        "NAND_RDID_DUMMY": 0x9F,
+        "NAND_PAGE_READ": 0x13,
+        "NAND_READ_CACHE_1_1_1": 0x03,
+        "NAND_READ_CACHE_1_1_1_FAST": 0x0B,
+        "NAND_READ_CACHE_1_1_2": 0x3B,
+        "NAND_READ_CACHE_1_2_2": 0xBB,
+        "NAND_READ_CACHE_1_1_4": 0x6B,
+        "NAND_READ_CACHE_1_4_4": 0xEB,
+        "NAND_PROGRAM_LOAD_1_1_1": 0x02,
+        "NAND_PROGRAM_LOAD_1_1_4": 0x32,
+        "NAND_RANDOM_LOAD_1_1_1": 0x84,
+        "NAND_RANDOM_LOAD_1_1_4": 0x34,
+        "NAND_PROGRAM_EXECUTE": 0x10,
+        "NAND_BLOCK_ERASE": 0xD8,
+        "NAND_GET_FEATURE": 0x0F,
+        "NAND_SET_FEATURE": 0x1F,
+    }
+    # Dummy clocks are the dummy bytes x 8 over the dummy phase's lines:
+    # 1S_4S_4S(0, 2, ...) is 2 bytes on 4 lines, 4 clocks.
+    clocks = {o["op"]: o.get("dummy_clocks") for o in n["opcodes"]}
+    assert clocks["NAND_READ_CACHE_1_4_4"] == 4
+    assert clocks["NAND_READ_CACHE_1_2_2"] == 4
+    assert clocks["NAND_READ_CACHE_1_1_1"] == 8
+    assert clocks["NAND_PROGRAM_LOAD_1_1_4"] is None  # no dummy phase to give
+    assert assumed(n) == {
+        "NAND_PAGE_READ",
+        "NAND_PROGRAM_EXECUTE",
+        "NAND_GET_FEATURE",
+        "NAND_SET_FEATURE",
+    }
+    assert n["via"] == {"quad_enable": "no SPINAND_HAS_QE_BIT: spinand_init_quad_enable(false)"}
     assert n["flags"] == []
-    assert n["notes"][0] == "3.3V"
+    assert n["notes"] == ["3.3V"]  # no "1 bit(s) per cell, 64 B OOB per page"
+    # The double transfer rate variants have no operation; of an
+    # operation's several variants, the most dummy clocks (the one with no
+    # clock limit: 1S_4S_4S(0, 4, ...), not (0, 2, ..., 104 MHz)).
+    hs = r["W25N01JW"]
+    # SPINAND_HAS_QE_BIT: bit 0 of the configuration register (0xb0).
+    assert hs["quad_enable"] == {"register": "nand-b0", "bit": 0}
+    assert hs["via"] == {"quad_enable": "SPINAND_HAS_QE_BIT"}
+    clocks = {o["op"]: o.get("dummy_clocks") for o in hs["opcodes"]}
+    assert clocks["NAND_READ_CACHE_1_4_4"] == 8
+    assert clocks["NAND_READ_CACHE_1_2_2"] == 8
+    assert not any("D" in OPERATIONS[o["op"]].protocol for o in hs["opcodes"])
+
+
+def test_linux_nand_dies(linux_tree: Path) -> None:
+    r = by_name(linux.extract_nand(linux_tree))
+    # Two targets: Winbond selects one with 0xc2 and the die (winbond.c),
+    w = r["W25M02GV"]
+    assert w["dies"] == 2
+    assert w["die_select_bit"] is None
+    (select,) = [o for o in w["opcodes"] if o["op"] == "NAND_DIE_SELECT"]
+    assert select["via"] == "SPINAND_SELECT_TARGET(w25m02gv_select_target)"
+    # Micron with bit 6 of feature 0xd0 (micron.c).
+    m = r["MT29F4G01ADAGD"]
+    assert (m["dies"], m["planes"], m["oob_size"], m["max_bad_blocks"]) == (2, 2, 128, 80)
+    assert m["die_select_bit"] == {"register": "nand-d0", "bit": 6}
+    assert m["via"]["die_select_bit"] == "SPINAND_SELECT_TARGET(micron_select_target)"
+    assert "NAND_DIE_SELECT" not in {o["op"] for o in m["opcodes"]}
+    # Without SPINAND_HAS_QE_BIT, a part with a quad variant reads on four
+    # lines setting nothing (spinand_init_quad_enable(false)).
+    assert m["quad_enable"] == "none"
 
 
 def test_linux_nand_manufacturer_per_table(tmp_path: Path) -> None:
     # esmt.c has two manufacturers, 0x8c and 0xc8, each with its own table.
-    write(tmp_path, {"drivers/mtd/nand/spi/esmt.c": LINUX_ESMT})
+    write(tmp_path, {"drivers/mtd/nand/spi/esmt.c": LINUX_ESMT, linux.SPINAND_H: SPINAND_H})
     ids = {r["name"]: r["id"] for r in linux.extract_nand(tmp_path)}
     assert ids == {"F50L1G41LC": "8c2c", "F50L1G41LB": "c8017f7f7f"}
+
+
+def test_linux_nand_op_shapes() -> None:
+    shapes = linux.op_shapes(cparse.strip_comments(SPINAND_H))
+    assert shapes["SPINAND_PAGE_READ_FROM_CACHE_1S_1D_1D_OP"] is None  # DTR
+    quad = shapes["SPINAND_PAGE_READ_FROM_CACHE_1S_4S_4S_OP"]
+    assert quad is not None
+    assert (quad.opcode, quad.address_lines, quad.dummy, quad.dummy_lines) == (
+        "0xeb",
+        4,
+        "ndummy",
+        4,
+    )
+    load = shapes["SPINAND_PROG_LOAD_1S_1S_4S_OP"]
+    assert load is not None
+    assert (load.opcode, load.dummy, load.data) == ("reset ? 0x32 : 0x34", None, "out")
 
 
 LINUX_REGISTERS = """
@@ -660,6 +778,28 @@ def test_flashrom_only_big_spansion_has_an_extended_id() -> None:
         flashrom.id_bytes("rdid", 0x01, 0x20180080, "SPI_RDID")
 
 
+def test_flashrom_die_erase_gives_the_dies(tmp_path: Path) -> None:
+    micron = fixture("flashrom/flashchips/micron.c")
+    write(
+        tmp_path,
+        {
+            **FLASHROM_HEADERS,
+            # FEATURE_4BA_WREN is not in the fixture's flash.h.
+            "flashchips/micron.c": micron.replace(" | FEATURE_4BA_WREN", ""),
+            "flashchips.c": '#include "flashchips/micron.c"',
+        },
+    )
+    (m,) = flashrom.extract(tmp_path, "flashrom")
+    # spi_block_erase_c4 over {64 MiB, 2}: two dies, and the die erase it
+    # sends; the layout is the dies', derived, so not stored.
+    assert (m["dies"], m["via"]["dies"]) == (2, "spi_block_erase_c4")
+    assert 0xC4 not in [e["opcode"] for e in m["erasers"]]
+    assert ops(m)["DIE_ERASE"] == (0xC4, "block_erasers (2 x 67108864)")
+    die = Eraser(0xC4, (EraseBlock(64 << 20, 2),))
+    assert die in Record.from_json(m).erasers
+    assert sector(m) == 64 << 10
+
+
 def test_flashrom_erase_opcode_without_an_operation(tmp_path: Path) -> None:
     write(
         tmp_path,
@@ -931,16 +1071,31 @@ def test_rockchip_nand() -> None:
     assert tc["flags"] == [
         "ecc_status=sfc_nand_get_ecc_status0",
         "has_qe_bits=0",
-        "max_ecc_bits=8",
         "meta={ 0x04, 0x08, 0xFF, 0xFF }",
     ]
+    # max_ecc_bits, with no step; plane_per_die. Rockchip states no dies
+    # (its FTL's die_num is 1 for every part).
+    assert tc["ecc"] == {"strength_bits": 8}
+    assert (tc["planes"], tc["dies"], tc["oob_size"]) == (1, None, None)
+    # The read and program every part gets, and the core commands, are the
+    # driver's defaults.
+    assert assumed(tc) == set(rockchip.NAND_DEFAULTS)
     assert r["TC58CVG2S0HRAIJ"]["page_size"] == 4096
     assert sector(r["XT26G04A"]) == 128 * 2048
     # No FEA_4BIT_READ: has_qe_bits=0 says nothing, and stays a flag.
     assert tc["quad_enable"] is None
     assert r["W25N01GV"]["id"] == "efaa21"
     assert "FEA_SOFT_QOP_BIT" in r["W25N01GV"]["flags"]
-    assert r["W25N01GV"]["features"] == ["quad_pp", "quad_read"]
+    # FEA_4BIT_READ and FEA_4BIT_PROG: the quad read and load sfc_nand_init()
+    # sets up, which imply quad_read and quad_pp; the bits are their via.
+    assert r["W25N01GV"]["features"] == []
+    quad = {o["op"]: o["via"] for o in r["W25N01GV"]["opcodes"] if not o.get("assumed")}
+    assert quad == {
+        "NAND_READ_CACHE_1_1_4": "FEA_4BIT_READ: page_read_cmd = 0x6b",
+        "NAND_PROGRAM_LOAD_1_1_4": "FEA_4BIT_PROG: page_prog_cmd = 0x32",
+    }
+    assert {"quad_read", "quad_pp"} <= set(features(r["W25N01GV"]))
+    assert "FEA_4BIT_READ" not in r["W25N01GV"]["flags"]
     # Quad reads with has_qe_bits=0: sfc_nand_init() sets no QE bit first,
     # as NOR's QE_bits=0.
     assert r["W25N01GV"]["quad_enable"] == "none"
@@ -955,11 +1110,9 @@ def test_rockchip_nand() -> None:
     assert (gd["id"], gd["ext_id"]) == ("c841", "c8")
     assert (r["F50L2G41KA"]["id"], r["F50L2G41KA"]["ext_id"]) == ("c841", "7f")
     assert r["W25N01GV"]["ext_id"] is None
-    assert gd["notes"] == [
-        "Add 3rd code to distingush with F50L2G41KA",
-        "1 plane(s) of 1024 blocks",
-    ]
-    assert r["GD5F4GQ6REXXG"]["notes"] == ["1*4096", "2 plane(s) of 2048 blocks"]
+    assert gd["notes"] == ["Add 3rd code to distingush with F50L2G41KA"]
+    assert r["GD5F4GQ6REXXG"]["notes"] == ["1*4096"]
+    assert r["GD5F4GQ6REXXG"]["planes"] == 2
     assert r["GD5F4GQ6REXXG"]["size"] == 512 << 20
     assert "MT29F2G01ABA/XT26G02E/F50L2G41XA" in r
     assert "S35ML01G3/ANV1GCP0CLG/HYF1GQ4UTXCAE/YX25G1E/GSS01GSAM0" in r
@@ -968,7 +1121,7 @@ def test_rockchip_nand() -> None:
         "never used: the driver matches the entry on line 37 first"
     )
     assert r["UM19A0HISW"]["notes"][0].endswith("on line 46 first")
-    assert r["F50L2G41KA"]["notes"] == ["1 plane(s) of 2048 blocks"]  # c8 41 7f is not c8 41 c8
+    assert r["F50L2G41KA"]["notes"] == []  # c8 41 7f is not c8 41 c8
     assert len(rockchip.extract(ROCKCHIP)) == len(recs) + 11
 
 
@@ -1112,7 +1265,8 @@ def test_imsprog() -> None:
     g = r["GD5F1GQ5UEXXG"]
     assert (g["type"], g["id"], g["id_method"]) == ("nand", "c851", "rdid_opcode_dummy")
     assert (g["size"], g["page_size"], sector(g)) == (128 << 20, 2048, 128 << 10)
-    assert "ECCsize=128" in g["flags"]
+    assert g["oob_size"] == 128  # ECCsize, the spare area of a page
+    assert not [f for f in g["flags"] if f.startswith("ECCsize")]
     assert g["opcodes"] == []
     assert r["MX35LF1G24AD-Z41"]["id"] == "c21403"
     assert r["F35SQA002G"]["id"] == "cd7272"
@@ -1217,6 +1371,31 @@ def test_imsprog_stale_keys_raise(tmp_path: Path) -> None:
 def test_imsprog_without_an_end_entry(tmp_path: Path) -> None:
     (r,) = imsprog.extract(dat(tmp_path, IMSPROG_DAT[:0x44]), {})
     assert r["name"] == "FL016AIF"
+
+
+def test_record_make_keeps_each_kind_to_its_own() -> None:
+    nand = {"type": "nand", "id_method": "rdid_opcode_dummy"}
+    # SPI NAND geometry is SPI NAND's; dies are both kinds'.
+    for field in record.NAND_ONLY:
+        value = {"strength_bits": 8} if field == "ecc" else 2
+        with pytest.raises(ValueError, match="on a SPI NOR record"):
+            record.make("linux", "f", 1, "n", **{field: value})
+        assert record.make("linux", "f", 1, "n", **nand, **{field: value})[field] == value
+    assert record.make("linux", "f", 1, "n", dies=2)["dies"] == 2
+    # Each operation is of the record's kind of flash.
+    with pytest.raises(ValueError, match="are not nand operations"):
+        record.make("linux", "f", 1, "n", **nand, opcodes=[{"op": "READ_1_1_4", "via": "v"}])
+    with pytest.raises(ValueError, match="are not nor operations"):
+        record.make("linux", "f", 1, "n", opcodes=[{"op": "NAND_PAGE_READ", "via": "v"}])
+    # A die is selected with a command or a register bit, not both.
+    bit = {"register": "nand-d0", "bit": 6}
+    select = [{"op": "NAND_DIE_SELECT", "via": "v"}]
+    with pytest.raises(ValueError, match="a die select operation and a die select bit"):
+        record.make("linux", "f", 1, "n", **nand, dies=2, die_select_bit=bit, opcodes=select)
+    # The die erase layout is the dies', never stored.
+    die = [{"opcode": 0xC4, "blocks": [[64 << 20, 2]]}]
+    with pytest.raises(ValueError, match="a die erase layout is derived"):
+        record.make("linux", "f", 1, "n", size=128 << 20, erasers=die)
 
 
 def test_record_make_validates() -> None:
@@ -1895,12 +2074,18 @@ def test_qemu(tmp_path: Path) -> None:
     t = r["MT35XU01G"]
     assert t["ext_id"] == "4100"
     assert "INFO_STACKED keeps 2 bytes of the ext_id 0x104100" in t["notes"]
-    assert "die_cnt=2" in t["flags"]
-    assert ops(t)["DIE_ERASE"] == (0xC4, "die_cnt = 2")
+    # The die count is the dies; the die erase layout is theirs, derived.
+    assert (t["dies"], t["via"]["dies"]) == (2, "die_cnt=2")
+    assert not [f for f in t["flags"] if f.startswith("die_cnt")]
+    assert ops(t)["DIE_ERASE"] == (0xC4, "DIE_ERASE: INFO_STACKED parts")
+    loaded = Record.from_json(t)
+    assert loaded.size is not None  # from its SFDP tables
+    die = [e for e in loaded.erasers if e.opcode == 0xC4]
+    assert [(b.size, b.count) for e in die for b in e.blocks] == [(loaded.size // 2, 2)]
     assert ops(t)["BE_32K_4B"] == (0x5C, "SFDP 4BAIT erase type 3: 32768 B, 4-byte address")
     assert sector(t) == 128 << 10
     assert "erase_64k" not in features(t)
-    assert r["N25Q00"]["flags"] == ["die_cnt=4"]
+    assert r["N25Q00"]["dies"] == 4
     assert r["N25Q00"]["ext_id"] == "1000"
     assert r["N25Q00"]["sfdp"] is None
 
@@ -2055,7 +2240,13 @@ def test_dediprog(tmp_path: Path) -> None:
     assert "RDID" not in ops(mt)
     assert mt["via"]["id_method"] == "RDIDCommand=0xAF"
     assert "RDIDCommand=0xAF" not in mt["flags"]
-    assert {"opcode": 0xC4, "blocks": [[64 << 20, 2]]} in mt["erasers"]
+    # DieSizeInKByte, half the chip: two dies, whose die erase layout is
+    # derived from them, not stored.
+    assert (mt["dies"], mt["via"]["dies"]) == (2, "DieSizeInKByte=65536")
+    assert mt["erasers"] is None
+    assert ops(mt)["DIE_ERASE"] == (0xC4, "EraseCmd=0x00C4D800")
+    die = Eraser(0xC4, (EraseBlock(64 << 20, 2),))
+    assert die in Record.from_json(mt).erasers
     assert "RDID" in ops(r["MT25TL256B ( for one die)"])
     # A 64 KiB block on a 32 KiB part is no layout, and no sector size.
     cd = r["IS25CD025"]
@@ -2072,12 +2263,23 @@ def test_dediprog(tmp_path: Path) -> None:
     n = r["W25N01GVXXIG"]
     assert (n["type"], n["id"], n["id_method"]) == ("nand", "efaa21", "rdid_opcode_dummy")
     assert (n["size"], n["page_size"], sector(n)) == (128 << 20, 2048, 128 << 10)
-    assert [o["op"] for o in n["opcodes"]] == ["RDID"]
+    # Its read-id is SPI NAND's, from its id method: none is stored.
+    assert n["opcodes"] == []
+    assert "NAND_RDID_DUMMY" in ops(n)
+    # SpareSizeInByte's high half, the whole spare area of a page.
+    assert n["oob_size"] == 64
     # Its block erase is over BlockSizeInByte, which gives its sector size.
     assert (n["erasers"], n["features"]) == ([{"opcode": 0xD8, "blocks": [[128 << 10, 1024]]}], [])
     assert (r["GD5F1GQ4UC"]["id"], r["GD5F1GQ4UC"]["id_method"]) == ("c8b148", "rdid_opcode")
     assert r["MK60N1GAL"]["id"] == "a791"  # 0xA791, read as three bytes
-    assert len(recs) == 29
+    # SupportLUT: the bad block lookup table's swap and read.
+    lut = r["W25N01JWXXIG"]
+    assert {o["op"]: o["via"] for o in lut["opcodes"]} == {
+        "NAND_BBM_SWAP": "SupportLUT=true",
+        "NAND_READ_BBM_LUT": "SupportLUT=true",
+    }
+    assert ops(lut)["NAND_BBM_SWAP"][0] == 0xA1
+    assert len(recs) == 30
 
 
 def test_dediprog_classes(tmp_path: Path) -> None:
@@ -2217,33 +2419,56 @@ def test_mediatek() -> None:
     assert (w["file"], w["line"], w["type"], w["vendor"]) == (mediatek.IDS, 56, "nand", None)
     assert (w["id"], w["id_method"]) == ("efaa21", "rdid_opcode_dummy")
     assert (w["size"], w["page_size"], sector(w)) == (128 << 20, 2048, 128 << 10)
-    assert w["features"] == ["dual_read", "quad_pp", "quad_read"]
-    assert w["flags"] == [
-        "cap_pl=snand_cap_program_load_x4",
-        "cap_rd=snand_cap_read_from_cache_quad",
-        "ndies=1",
-        "planes_per_die=1",
-        "program_load=1_1_1,1_1_4",
-        "read_from_cache=1_1_1,1_1_2,1_2_2,1_1_4,1_4_4",
-        "sparesize=64",
-    ]
-    assert w["notes"] == []  # the flags hold the geometry
-    assert w["opcodes"] == []
+    # SNAND_MEMORG_1G_2K_64: the spare area, planes and dies are fields.
+    assert (w["oob_size"], w["planes"], w["dies"]) == (64, 1, 1)
+    # Each I/O mode of its read-from-cache and program-load caps is an
+    # operation, with the dummy clocks its SNAND_OP gives; they imply the
+    # capabilities, so none is claimed, and the caps are their via.
+    assert w["features"] == []
+    assert features(w) == ["dual_read", "fast_read", "quad_pp", "quad_read"]
+    assert w["flags"] == []
+    assert w["notes"] == []
+    stated = {o["op"]: (o["via"], o["dummy_clocks"]) for o in w["opcodes"] if "assumed" not in o}
+    rd, pl = "cap_rd=snand_cap_read_from_cache_quad", "cap_pl=snand_cap_program_load_x4"
+    assert stated == {
+        "NAND_READ_CACHE_1_1_1_FAST": (rd, 8),  # the driver's 1-1-1 read is 0x0b
+        "NAND_READ_CACHE_1_1_2": (rd, 8),
+        "NAND_READ_CACHE_1_2_2": (rd, 4),
+        "NAND_READ_CACHE_1_1_4": (rd, 8),
+        "NAND_READ_CACHE_1_4_4": (rd, 4),
+        "NAND_PROGRAM_LOAD_1_1_1": (pl, 0),
+        "NAND_PROGRAM_LOAD_1_1_4": (pl, 0),
+    }
+    assert assumed(w) == set(mediatek.DEFAULTS)
     # The size is the main area of every die; the spare area is not in it.
     m = r["W25M02GV"]
     assert m["size"] == 256 << 20
-    assert {"ndies=2", "select_die=mtk_snand_winbond_select_die"} <= set(m["flags"])
+    # Two dies, selected with Winbond's 0xc2 and the die.
+    assert m["dies"] == 2
+    (select,) = [o for o in m["opcodes"] if o["op"] == "NAND_DIE_SELECT"]
+    assert select["via"] == "select_die=mtk_snand_winbond_select_die"
+    assert m["die_select_bit"] is None
+    assert m["flags"] == []
     # Planes are not counted again: a two-plane part's blocks are all its
     # blocks.
     t = r["MT29F2G01AAAED"]
     assert (t["size"], sector(t)) == (256 << 20, 128 << 10)
-    assert "planes_per_die=2" in t["flags"]
+    assert t["planes"] == 2
     # Read from cache on one, two or four lines; program load on one only.
-    assert t["features"] == ["dual_read", "quad_read"]
-    assert "program_load=1_1_1" in t["flags"]
+    assert features(t) == ["dual_read", "fast_read", "quad_read"]
+    assert "NAND_PROGRAM_LOAD_1_1_4" not in ops(t)
     d = r["MT29F4G01ADAGD"]
     assert d["size"] == 512 << 20
-    assert "select_die=mtk_snand_micron_select_die" in d["flags"]
+    # Micron's die select: bit 6 of feature 0xd0, which the driver sets
+    # whatever the die (an upstream bug, noted).
+    assert (d["dies"], d["planes"]) == (2, 2)
+    assert d["die_select_bit"] == {"register": "nand-d0", "bit": 6}
+    assert d["via"]["die_select_bit"] == "select_die=mtk_snand_micron_select_die"
+    assert d["notes"] == [mediatek.MICRON_SELECT_BUG]
+    assert "NAND_DIE_SELECT" not in ops(d)
+    # quad_q2d: its 1-4-4 read takes 2 dummy clocks.
+    q2d = {o["op"]: o["dummy_clocks"] for o in r["EM73C044SNA"]["opcodes"] if "assumed" not in o}
+    assert q2d["NAND_READ_CACHE_1_4_4"] == 2
     # The id method is the one the entry names.
     g = r["GD5F1GQ4UAWXX"]
     assert (g["id"], g["id_method"]) == ("c810", "rdid_opcode_addr")

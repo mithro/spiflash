@@ -165,8 +165,6 @@ def _record(
     eeprom = "EEPROM" in flags
     claims = [(_FEATURES[f], f) for f in flags if f in _FEATURES]
     features = {feat for feat, _ in claims}
-    if die_cnt:
-        flags.append(f"die_cnt={die_cnt}")
 
     erasers = []
     if not eeprom:
@@ -194,12 +192,15 @@ def _record(
         if "ER_32K" in flags:
             ops.add("BE_32K", "ER_32K", "ERASE_32K")
     if die_cnt:
-        ops.add("DIE_ERASE", f"die_cnt = {die_cnt}", "DIE_ERASE")
+        # The model erases a die (its size over die_cnt) for a stacked part.
+        ops.add("DIE_ERASE", "DIE_ERASE: INFO_STACKED parts", "DIE_ERASE")
 
     # The dump's facts (spiflash.sfdp) are derived at load; make() drops
     # the INFO geometry they repeat.
     dump = None
     via = feature_via(claims)
+    if die_cnt:
+        via["dies"] = f"die_cnt={die_cnt}"
     reader = fields.get("sfdp_read")
     if reader is not None:
         if reader not in dumps:
@@ -229,6 +230,7 @@ def _record(
         flags=flags,
         via=via,
         protection=layout or None,
+        dies=die_cnt or None,
         opcodes=ops.to_json(),
         sfdp=dump.hex() if dump else None,
         notes=notes,

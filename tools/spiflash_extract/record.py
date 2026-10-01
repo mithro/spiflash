@@ -81,6 +81,23 @@ Fields (``None`` / empty when the upstream does not say):
     ``{"bp0": {"register": "sr1", "bit": 2}, ..., "tb": {...}}``
     (:class:`spiflash.registers.Protection`); no two roles, nor a role and
     the quad enable bit, on one bit.
+``oob_size``, ``planes``, ``max_bad_blocks``, ``ecc``
+    A SPI NAND part's geometry, as the entry states it: the spare
+    (out-of-band) bytes of each page, the planes of each die, the most
+    blocks of each die that may be bad, and the error correction it needs
+    (``{"strength_bits": 8, "step_bytes": 512}``, without ``"step_bytes"``
+    where the entry gives none). SPI NAND only. What follows from them
+    (blocks, pages per block, the spare area in all) is not stored.
+``dies``
+    The dies in the package, where the entry states them (SPI NOR and SPI
+    NAND), and not where its SFDP tables give the same. A die erase layout
+    is never stored: it is the stated die erase (``DIE_ERASE``,
+    ``DIE_ERASE_61``) over the dies (:func:`spiflash.derive.die_erasers`).
+``die_select_bit``
+    The register bit that selects the die, where the part selects it with a
+    register (Micron's ``{"register": "nand-d0", "bit": 6}``); one that
+    selects it with a command has the ``NAND_DIE_SELECT`` or ``DIE_SELECT``
+    operation instead, never both.
 ``opcodes``
     The operations the entry states (a record's ``opcode_claims``):
     ``[{"op": "READ_1_1_4", "via": "SPI_NOR_QUAD_READ"}, ...]``, ``op`` a name
@@ -89,8 +106,10 @@ Fields (``None`` / empty when the upstream does not say):
     :func:`spiflash.derive.opcodes` gives are not stored (its SFDP tables'
     among them). A driver default (an operation the upstream's driver
     issues to every part, or every part of a class, whatever the entry
-    says) has ``"assumed": true``, and implies no capability. A use may
-    give the part's ``"dummy_clocks"`` (none does yet).
+    says) has ``"assumed": true``, and implies no capability. A use gives
+    the part's ``"dummy_clocks"`` wherever the entry states them, even
+    where they are the operation's usual number. Each operation is of the
+    record's kind of flash (:attr:`spiflash.opcodes.Operation.flash_type`).
 ``sfdp``
     Hex of the part's SFDP (JESD216) area, where the upstream carries a
     dump of it (QEMU's flash model does); :mod:`spiflash.sfdp` decodes it.
@@ -146,6 +165,12 @@ KEYS = (
     "quad_enable",
     "quad_enable_requirement",
     "protection",
+    "oob_size",
+    "planes",
+    "dies",
+    "die_select_bit",
+    "max_bad_blocks",
+    "ecc",
     "opcodes",
     "sfdp",
     "sfdp_tables",
@@ -326,6 +351,7 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         raise ValueError(msg)
     rec["features"] = sorted(set(rec["features"]))
     check_via(rec)
+    _check_kind(rec)
     _drop_sfdp(rec)
     claimed = set(rec["features"])
     _drop_implied(rec)
@@ -352,6 +378,38 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         msg = f"{rec['source']} {rec['name']}: dropping implied claims lost {sorted(lost)}"
         raise AssertionError(msg)
     return rec
+
+
+#: The fields only a SPI NAND part has.
+NAND_ONLY = ("oob_size", "planes", "max_bad_blocks", "ecc")
+
+#: The operations selecting a die by command, which a part selecting it
+#: with a register bit (``die_select_bit``) does not have.
+DIE_SELECTS = frozenset({"DIE_SELECT", "NAND_DIE_SELECT"})
+
+
+def _check_kind(rec: Record) -> None:
+    """Raise for what a record of its kind of flash cannot hold: SPI NAND
+    geometry on a SPI NOR record, another kind's operation, both a die
+    select operation and a die select bit, or a die erase layout (which is
+    derived from the dies: :func:`spiflash.derive.die_erasers`)."""
+    where = f"{rec['source']} {rec['name']}"
+    if rec["type"] == FlashType.NOR.value:
+        given = [f for f in NAND_ONLY if rec[f] is not None]
+        if given:
+            msg = f"{where}: {given} on a SPI NOR record"
+            raise ValueError(msg)
+    other = [o["op"] for o in rec["opcodes"] if OPERATIONS[o["op"]].flash_type != rec["type"]]
+    if other:
+        msg = f"{where}: {other} are not {rec['type']} operations"
+        raise ValueError(msg)
+    if rec["die_select_bit"] is not None and DIE_SELECTS & {o["op"] for o in rec["opcodes"]}:
+        msg = f"{where}: a die select operation and a die select bit, not one"
+        raise ValueError(msg)
+    die_erases = {OPERATIONS[op].opcode for op in derive.DIE_ERASES}
+    if any(e["opcode"] in die_erases for e in rec["erasers"] or ()):
+        msg = f"{where}: a die erase layout is derived: give dies and the die erase"
+        raise ValueError(msg)
 
 
 def _drop_implied(rec: Record) -> None:

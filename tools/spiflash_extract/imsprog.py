@@ -13,7 +13,7 @@ format" says and as ``MainWindow`` in
     0x3c  bus speed factor, 2 bytes little-endian, in thousandths
     0x3e  4-byte addressing: 0x00 none, 0x01 EN4B, 0x11 Winbond, 0x21 Spansion
     0x3f  block size in KiB, 2 bytes big-endian
-    0x42  SPI NAND: spare (ECC) bytes per page / 64
+    0x42  SPI NAND: spare (ECC) bytes per page / 64 (``ECCsize``)
     0x43  VCC: 0 3.3 V, 1 1.8 V, 2 5.0 V, 3 2.5 V
 
 An all-zero entry ends the table. Only SPI NOR and SPI NAND are taken; the
@@ -228,7 +228,9 @@ def _nand(e: bytes, where: str) -> dict[str, object]:
         "size": size,
         "page_size": int.from_bytes(e[0x38:0x3A], "little"),
         "erasers": [derive.block_eraser(0xD8, block, size).to_json()],
-        "flags": [*_flags(e), f"ECCsize={e[0x42] * 64}"],
+        # ECCsize: the spare area of each page, in 64-byte units.
+        "oob_size": e[0x42] * 64 or None,
+        "flags": _flags(e),
     }
 
 

@@ -1,5 +1,5 @@
 {
- "format": 7,
+ "format": 8,
  "sources": {
   "dediprog": {
    "branch": "master",
@@ -77,7 +77,8 @@
    "paths": [
     "drivers/mtd/spi-nor/",
     "drivers/mtd/nand/spi/",
-    "include/linux/mtd/spi-nor.h"
+    "include/linux/mtd/spi-nor.h",
+    "include/linux/mtd/spinand.h"
    ],
    "records": 377,
    "url": "https://github.com/torvalds/linux"

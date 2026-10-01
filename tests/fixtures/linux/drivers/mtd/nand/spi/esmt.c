@@ -2,6 +2,21 @@
 #define SPINAND_MFR_ESMT_C8			0xc8
 #define SPINAND_MFR_ESMT_8C			0x8c
 
+static SPINAND_OP_VARIANTS(read_cache_variants,
+			   SPINAND_PAGE_READ_FROM_CACHE_1S_1S_4S_OP(0, 1, NULL, 0, 0),
+			   SPINAND_PAGE_READ_FROM_CACHE_1S_1S_2S_OP(0, 1, NULL, 0, 0),
+			   SPINAND_PAGE_READ_FROM_CACHE_FAST_1S_1S_1S_OP(0, 1, NULL, 0, 0),
+			   SPINAND_PAGE_READ_FROM_CACHE_1S_1S_1S_OP(0, 1, NULL, 0, 0));
+
+static SPINAND_OP_VARIANTS(write_cache_variants,
+			   SPINAND_PROG_LOAD_1S_1S_4S_OP(true, 0, NULL, 0),
+			   SPINAND_PROG_LOAD_1S_1S_1S_OP(true, 0, NULL, 0));
+
+static SPINAND_OP_VARIANTS(update_cache_variants,
+			   SPINAND_PROG_LOAD_1S_1S_4S_OP(false, 0, NULL, 0),
+			   SPINAND_PROG_LOAD_1S_1S_1S_OP(false, 0, NULL, 0));
+
+
 static const struct spinand_info esmt_8c_spinand_table[] = {
 	SPINAND_INFO("F50L1G41LC",
 		     SPINAND_ID(SPINAND_READID_METHOD_OPCODE_ADDR, 0x2C),

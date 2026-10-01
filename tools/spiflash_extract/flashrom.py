@@ -34,7 +34,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from spiflash.derive import ERASE_BY_OPCODE
+from spiflash.derive import DIE_ERASES, ERASE_BY_OPCODE
+from spiflash.opcodes import OPERATIONS
 
 from . import cparse
 from .ops import Opcodes
@@ -171,6 +172,32 @@ def _erasers(expr: str, symbols: dict[str, str | int]) -> list[dict[str, Any]]:
     return out
 
 
+#: The die erase opcodes: an eraser sending one erases a die at a time.
+DIE_ERASE_OPCODES = frozenset(OPERATIONS[op].opcode for op in DIE_ERASES)
+
+
+def _dies(erasers: list[dict[str, Any]]) -> tuple[int | None, dict[str, str]]:
+    """The dies a die erase eraser gives (``spi_block_erase_c4`` over
+    ``{64 MiB, 2}``: 2), and its ``via``. The eraser itself is not stored:
+    the record's die erase layout is the dies'
+    (:func:`spiflash.derive.die_erasers`)."""
+    counts = {
+        (e["opcode"], count)
+        for e in erasers
+        if e["opcode"] in DIE_ERASE_OPCODES
+        for _, count in e["blocks"]
+    }
+    if not counts:
+        return None, {}
+    if len(counts) > 1 or any(
+        len(e["blocks"]) > 1 for e in erasers if e["opcode"] in DIE_ERASE_OPCODES
+    ):
+        msg = f"die erase layouts of more than one die count: {sorted(counts)}"
+        raise ValueError(msg)
+    ((opcode, count),) = counts
+    return count, {"dies": f"spi_block_erase_{opcode:02x}"}
+
+
 def _record(
     entry: cparse.Block,
     raw: str,
@@ -208,6 +235,7 @@ def _record(
     claims = [(feat, flag) for flag in flags for rx, feat in _FEATURES if rx.fullmatch(flag)]
     features = {feat for feat, _ in claims}
     erasers = _erasers(f.get("block_erasers", "{}"), symbols)
+    dies, die_via = _dies(erasers)
     # Only a comment about the entry itself: "the latter supports SFDP", or
     # "F model supports SFDP", is about another part of a multi-part entry.
     # The RDSFDP operation's via holds the comment (and implies ``sfdp``).
@@ -237,13 +265,14 @@ def _record(
         id_method=method,
         size=size,
         page_size=cparse.evaluate(f["page_size"], symbols) if "page_size" in f else None,
-        erasers=erasers or None,
+        erasers=[e for e in erasers if e["opcode"] not in DIE_ERASE_OPCODES] or None,
         features=features,
         flags=flags,
-        via=feature_via(claims),
+        via=feature_via(claims) | die_via,
         voltage=voltage,
         quad_enable=quad_enable,
         protection=bits or None,
+        dies=dies,
         tested=tested,
         opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp=bool(sfdp), source=source),
         notes=notes,
