@@ -87,6 +87,8 @@ def test_tables_a_source_copies_come_after_the_whole_dumps() -> None:
     # The W25Q512JV: QEMU's whole dump.
     sfdp = nor_page("ef4020")
     assert "Dump of" in sfdp[sfdp.index("## SFDP") :]
+    # The sizes are markup of their own, not escaped text.
+    assert "  - {sfnum}`64 MiB`, {sfnum}`256 B` pages, 3 or 4-byte addresses" in sfdp
 
 
 def test_a_value_from_a_records_own_tables_is_marked() -> None:

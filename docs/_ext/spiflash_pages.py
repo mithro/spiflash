@@ -380,8 +380,8 @@ def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
     if s.page_size is not None:
         geometry.append(f"{size_text(s.page_size)} pages")
     if s.address_bytes is not None:
-        geometry.append(f"{s.address_bytes}-byte addresses")
-    rows.append(["Geometry", esc(", ".join(geometry))])
+        geometry.append(esc(f"{s.address_bytes}-byte addresses"))
+    rows.append(["Geometry", ", ".join(geometry)])  # size_text is markup
     if s.erase_types:
         erases = []
         for e in s.erase_types:
