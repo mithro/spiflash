@@ -187,14 +187,21 @@ _VIA_KEY = re.compile(r"feature:([a-z0-9_]+)|([a-z_]+)(?:\.([a-z_]+))?(?::([a-z0
 
 
 def _eraser_members(rec: Record) -> set[str]:
-    """The ``erasers:<member>`` names of a record's erasers: ``0x20``, ..."""
-    return {f"0x{e['opcode']:02x}" for e in rec["erasers"] or () if e["opcode"] is not None}
+    """The ``erasers:<member>`` names of a record's erasers: ``0x20``, ...;
+    those it stores, and those its own SFDP tables give it
+    (:attr:`spiflash.model.Record.sfdp_erasers`), which an upstream token can
+    state too (QEMU's ``ER_4K``, for an eraser its dump gives)."""
+    erasers = [e["opcode"] for e in rec["erasers"] or ()]
+    if rec.get("sfdp") or rec.get("sfdp_tables"):
+        erasers += [e.opcode for e in Model.from_json(rec).sfdp_erasers]
+    return {f"0x{opcode:02x}" for opcode in erasers if opcode is not None}
 
 
 def check_via(rec: Record) -> None:
     """Raise for a ``via`` key that names no claimed feature, no field
     :data:`VIA_FIELDS` allows, a field the record leaves empty, a component
-    the field does not have, or an eraser the record does not have."""
+    the field does not have, or an eraser the record does not have (stored,
+    or given by its own SFDP tables)."""
     for key in rec["via"]:
         m = _VIA_KEY.fullmatch(key)
         if m is None:
@@ -203,7 +210,12 @@ def check_via(rec: Record) -> None:
             ok = m[1] in rec["features"]
         else:
             field, component, member = m[2], m[3], m[4]
-            ok = field in VIA_FIELDS and rec[field] not in (None, [], "", {})
+            if field not in VIA_FIELDS:
+                ok = False
+            elif field == "erasers":
+                ok = bool(_eraser_members(rec))
+            else:
+                ok = rec[field] not in (None, [], "", {})
             if component is not None:
                 ok = ok and component in VIA_COMPONENTS.get(field, ())
             if member is not None:
@@ -324,8 +336,8 @@ def _drop_sfdp(rec: Record) -> None:
     tables give the same (:meth:`spiflash.sfdp.Sfdp.facts`): the record
     derives them from the tables at load. A value that differs stays, as the
     upstream's own (a :meth:`spiflash.model.Record.sfdp_disagreements`). The
-    ``via`` token of a dropped eraser goes back to the flags: no field holds
-    it now."""
+    ``via`` token of a dropped eraser stays: its ``erasers:0x..`` key names
+    the eraser the tables give, which it also states (QEMU's ``ER_4K``)."""
     if not (rec["sfdp"] or rec["sfdp_tables"]):
         return
     facts = Model.from_json(rec).sfdp_facts
@@ -337,11 +349,6 @@ def _drop_sfdp(rec: Record) -> None:
     given = [e.to_json() for e in Model.from_json(rec).sfdp_erasers]
     kept = [e for e in rec["erasers"] or () if e not in given]
     rec["erasers"] = kept or None
-    members = _eraser_members(rec)
-    for key in [k for k in rec["via"] if k.startswith("erasers")]:
-        _, _, member = key.partition(":")
-        if (member and member not in members) or not kept:
-            rec["flags"] = [*rec["flags"], *tokens(rec["via"].pop(key))]
 
 
 def _same_use(stored: dict[str, Any], derived: OpcodeUse) -> bool:
@@ -355,9 +362,9 @@ def _drop_derived(rec: Record, held: set[str], via: dict[str, list[str]]) -> set
     """Drop the operations ``rec`` derives at load (a stored use with dummy
     clocks other than the derived one's stays). A flag (of ``held``) that
     only a dropped erase operation's via held moves to ``via``, under its
-    eraser, ``erasers:0x<opcode>``, or ``erasers`` for a token that gives
-    several; where the record stores no such eraser (its SFDP tables give
-    it), the flag stays a flag, and is returned."""
+    eraser (stored, or from its SFDP tables), ``erasers:0x<opcode>``, or
+    ``erasers`` for a token that gives several; where the record has no
+    such eraser, the flag stays a flag, and is returned."""
     model = Model.from_json(rec)
     derived = derive.opcodes(model)
     dropped = [o for o in rec["opcodes"] if any(_same_use(o, u) for u in derived)]

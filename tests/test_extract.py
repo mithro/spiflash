@@ -1475,15 +1475,20 @@ def test_qemu(tmp_path: Path) -> None:
 
     # INFO6: a three-byte ext_id; a dump, which the record stores and
     # derives its reads, erasers and size from: INFO's size and erasers are
-    # the dump's, so are not stored, and its tokens are flags again.
+    # the dump's, so are not stored; its tokens are the via of the erasers
+    # the dump gives, which the entry states too.
     m = r["MX25L25635E"]
     assert m["vendor"] == "Macronix"
     assert (m["id"], m["ext_id"]) == ("c22019", "c22019")
     assert (m["size"], m["erasers"]) == (None, None)
     assert m["page_size"] == 256  # INFO's: the JESD216 (1.0) table has none
     assert Record.from_json(m).size == 32 << 20
-    assert m["flags"] == ["ER_32K", "ER_4K"]
-    assert m["via"] == {"sfdp": ".sfdp_read = m25p80_sfdp_mx25l25635e"}
+    assert m["flags"] == []
+    assert m["via"] == {
+        "erasers:0x20": "ER_4K",
+        "erasers:0x52": "ER_32K",
+        "sfdp": ".sfdp_read = m25p80_sfdp_mx25l25635e",
+    }
     assert m["sfdp"] is not None
     assert m["sfdp"].startswith("53464450000101ff")
     # The dump implies every one: none is stored.
@@ -1517,8 +1522,9 @@ def test_qemu(tmp_path: Path) -> None:
     # Flags for the status register layout; the multi-line heading before Spansion.
     n = r["N25Q256A"]
     assert n["vendor"] == "Micron"
-    assert n["flags"] == ["ER_4K"]
+    assert n["flags"] == []
     assert n["via"] == {
+        "erasers:0x20": "ER_4K",
         "feature:lock": "HAS_SR_BP3_BIT6; HAS_SR_TB",
         "sfdp": ".sfdp_read = m25p80_sfdp_n25q256a",
     }

@@ -493,6 +493,10 @@ def _erase_layouts(f: Flash) -> list[str]:
                 operation += " *(driver default)*"
             if e not in r.eraser_claims:
                 operation += " *(SFDP)*"
+            # The upstream token stating it, where one does (QEMU's ER_4K).
+            token = r.via.get(f"erasers:0x{op:02x}") if op is not None else None
+            if token:
+                operation += f", from `{token.replace('`', '')}`"  # a code span: no escapes
             rows.append(
                 [
                     source_badge(r.source),

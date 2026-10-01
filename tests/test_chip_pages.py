@@ -98,3 +98,5 @@ def test_a_value_from_a_records_own_tables_is_marked() -> None:
     assert qemu.count("*(SFDP)*") == 3  # size, page and sector
     layouts = text[text.index("## Erase layouts") : text.index("## What each source says")]
     assert "*(SFDP)*" in layouts
+    # QEMU's ER_4K states the 4 KiB eraser its dump gives: its provenance.
+    assert "[`BE_4K`](../opcodes/BE_4K.md) *(SFDP)*, from `ER_4K`" in layouts

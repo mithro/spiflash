@@ -27,5 +27,7 @@ BFPT has is those parts' own, but SFDP gives no sign of fast read 0x0b or
 page program 0x02, so those stay the model's defaults
 ([](../derived.md#sfdp-tables)). The entry's own geometry, which the model
 uses, is stored only where it differs from the dump's: on every one of the
-thirteen it agrees, so their size and erase layouts come from the dumps, and
-`ER_4K` and `ER_32K` stay flags. The chip pages show each dump decoded.
+thirteen it agrees, so their size and erase layouts come from the dumps; the
+`ER_4K` and `ER_32K` flags stating an erase layout a dump gives stay its
+provenance (the record's `via`, shown in a chip page's erase layouts). The
+chip pages show each dump decoded.
