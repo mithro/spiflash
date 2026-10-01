@@ -134,12 +134,17 @@ OTP_COMMANDS: dict[str, str | None] = {
 OTP_READ = "READ_OTP"
 
 
+_GD_OTP = "OTP: 1536B total; read 0x48; write 0x42, erase 0x44"
+_GD_3K = "the {parts} datasheets give three 1024-byte security registers ({sheets})"
+
 #: OTP comments whose size is wrong, by entry name and comment: the
-#: user-programmable bytes the part's datasheet gives, and why. The record
+#: user-programmable bytes the part's datasheet gives, its regions where
+#: the datasheet gives them (``None``: as the comment), and why. The record
 #: stores the datasheet's, with a note.
-OTP_SIZE_WRONG: dict[tuple[str, str], tuple[int, str]] = {
+OTP_SIZE_WRONG: dict[tuple[str, str], tuple[int, int | None, str]] = {
     ("S25FL132K", "OTP: 768B total, 256B reserved; read 0x48; write 0x42, erase 0x44"): (
         768,
+        None,
         (
             "the S25FL1-K datasheet (8.3) gives four 256-byte security registers, register "
             "0 holding the SFDP tables: three, 768 bytes, are the user's"
@@ -147,10 +152,34 @@ OTP_SIZE_WRONG: dict[tuple[str, str], tuple[int, str]] = {
     ),
     ("W25Q40.V", "OTP: 756B total; read 0x48; write 0x42, erase 0x44, read ID 0x4B"): (
         768,
+        None,
         (
             "the W25Q40BV has four 256-byte security registers, of which Winbond reserves "
             "register 0: 768 bytes are the user's (756 is a typo)"
         ),
+    ),
+    (
+        "GD25LQ128E/GD25LB128E/GD25LR128E/GD25LQ128D/GD25LQ128C",
+        "OTP: 1024B total, 256B reserved; read 0x48; write 0x42, erase 0x44",
+    ): (
+        3072,
+        3,
+        _GD_3K.format(parts="GD25LQ128D and GD25LQ128E", sheets="Rev. 1.9, Rev. 1.3"),
+    ),
+    ("GD25Q127C/GD25B127D", _GD_OTP): (
+        3072,
+        3,
+        _GD_3K.format(parts="GD25Q127C and GD25B127D", sheets="Rev. 2.3, Rev. 1.5"),
+    ),
+    ("GD25Q128E/GD25B128E/GD25R128E/GD25Q128H/GD25B128H", _GD_OTP): (
+        3072,
+        3,
+        _GD_3K.format(parts="GD25Q128E and GD25B128H", sheets="Rev. 1.4, Rev. 1.3"),
+    ),
+    ("P25D32SH/P25Q32SH", "OTP: 3 x 512 bytes"): (
+        3072,
+        3,
+        'the P25Q32SH datasheet gives "3*1024-byte security registers"',
     ),
 }
 
@@ -181,6 +210,21 @@ _FL_S_UNIFORM = (
     f"page buffer ({_FL_S}, Table 56, sector architecture 00h; ordering information, "
     "note 63)"
 )
+
+
+def _gd(maximum: int, sheets: str) -> dict[str, tuple[Any, str]]:
+    """A GigaDevice 1.8 V entry's supply: 1.65 V to ``maximum`` mV, as the
+    datasheets of the parts it names give ("Full voltage range"), where
+    flashrom gives 1.695 V to 1.95 V and flashprog 1.65 V to 1.95 V."""
+    why = f"the {sheets} datasheets give a full voltage range of 1.65 V to {maximum / 1000} V"
+    if "and" in sheets and maximum == 2000:
+        why += " (the range the parts the entry names share)"
+    return {"voltage": ((1650, maximum), why)}
+
+
+_GD_LQ128 = _gd(2000, "GD25LQ128D, GD25LQ128E, GD25LB128E and GD25LR128E")
+_GD_LQ64 = _gd(2000, "GD25LQ64E and GD25LQ64H")
+_GD_LQ512 = _gd(2000, "GD25LB512MF and GD25LR512MF")
 
 #: Entries some of whose values are wrong, by name, with the value the
 #: part's datasheet gives and why: the record stores the datasheet's, with
@@ -214,6 +258,31 @@ ENTRY_WRONG: dict[str, dict[str, tuple[Any, str]]] = {
             512,
             'the S25FL512S has a "512-byte Page Programming buffer" (001-98284 Rev. *U, features)',
         ),
+    },
+    # GigaDevice's 1.8 V parts (flashrom's and flashprog's names).
+    "GD25LQ128E/GD25LB128E/GD25LR128E/GD25LQ128D/GD25LQ128C": _GD_LQ128,
+    "GD25LQ128C/GD25LQ128D/GD25LQ128E": _GD_LQ128,
+    "GD25LQ64(B)": _GD_LQ64,
+    "GD25LQ32": _gd(2000, "GD25LQ32D, GD25LQ32E and GD25LQ32H"),
+    "GD25LQ16": _gd(2100, "GD25LQ16C and GD25LQ16E"),
+    "GD25LQ80": _gd(2000, "GD25LQ80C (to 2.1 V) and GD25LQ80E"),
+    "GD25LQ40": _gd(2000, "GD25LQ40C (to 2.1 V) and GD25LQ40E"),
+    "GD25LQ20": _gd(2000, "GD25LQ20C (to 2.1 V) and GD25LQ20E"),
+    "GD25LB512MF/GD25LR512MF": _GD_LQ512,
+    "GD25LF512MF": _gd(2000, "GD25LB512MF and GD25LR512MF (its family's)"),
+    "GD25LF128E": _gd(2000, "GD25LF80E and GD25LF255E (its family's)"),
+    # XMC: flashrom's and flashprog's names.
+    "XM25QH64C/XM25QH64D": {
+        "voltage": (
+            (2300, 3600),
+            'the XM25QH64C (Rev. 1.6) and XM25QH64D datasheets give "Full voltage range: 2.3-3.6V"',
+        )
+    },
+    "XM25QH64C": {
+        "voltage": (
+            (2300, 3600),
+            'the XM25QH64C datasheet (Rev. 1.6) gives "Full voltage range: 2.3-3.6V"',
+        )
     },
 }
 
@@ -504,8 +573,9 @@ def _record(
         otp_area = given
         fixed = OTP_SIZE_WRONG.get((name, note))
         if fixed is not None:
-            notes.append(f"OTP area {fixed[0]} B, not the comment's {given['size']} B: {fixed[1]}")
-            otp_area = {**given, "size": fixed[0]}
+            size, regions, why = fixed
+            notes.append(f"OTP area {size} B, not the comment's {given['size']} B: {why}")
+            otp_area = {**given, "size": size} | ({"regions": regions} if regions else {})
         wrong_ops, why = OTP_COMMANDS_WRONG.get(mfr & 0xFF, (frozenset(), ""))
         if wrong_ops & set(named):
             left = sorted(wrong_ops & set(named))

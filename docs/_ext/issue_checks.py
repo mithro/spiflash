@@ -190,7 +190,7 @@ EXPLAINED = {
     ),
     ("010219", "supply_mv"): (
         "Dediprog's 1.8 V is for the S25FS256S, a 1.7 V to 2.0 V part, which no source "
-        "here gives a range: no source is wrong. (flashrom's \"S25FL256S Large Sectors\" "
+        'here gives a range: no source is wrong. (flashrom\'s "S25FL256S Large Sectors" '
         'and "Small Sectors" entries give the S25FL256S, a 2.7 V to 3.6 V part, the '
         "S25FS256S's 1.7 V to 2.0 V: their records carry the datasheet's range.)"
     ),
@@ -224,13 +224,36 @@ EXPLAINED = {
         "Linux's 768 B (three regions) does not."
     ),
     ("c84018", "otp.size"): (
-        "Parts sharing the id: the GD25Q128B, C and E. The GD25Q128B's 768 B is flashrom's "
-        '"1024B total, 256B reserved"; whether 256 B are reserved is uncertain (its '
-        "datasheet is said to disagree with itself; not checked here)."
+        "Parts sharing the id: the GD25Q128B has three 256-byte security registers, "
+        '768 B (its datasheet: "three 256-byte Security Registers", though its feature '
+        'list says "4*256-Byte"), flashrom\'s "1024B total, 256B reserved"; the '
+        "GD25Q127C, GD25B127D, GD25Q128E and GD25B128H three 1024-byte ones, 3072 B "
+        '(their datasheets), which flashprog\'s "1536B total" for them got wrong (its '
+        "records carry the datasheets'). The GD25Q128C's 1536 B is both sources', not "
+        "checked."
     ),
     ("c86318", "otp.size"): (
-        "flashrom gives the GD25LF128E 1024 B less 256 B reserved, flashprog three 1 KiB "
-        "regions; the datasheet was not to hand to say which is right."
+        "flashrom gives the GD25LF128E 1024 B less 256 B reserved, the comment of its "
+        "GD25Q128B entry; flashprog three 1 KiB regions, as the GD25LF80E has (its "
+        "datasheet, Rev. 1.2). No GD25LF128E datasheet was found (the part is "
+        "discontinued), so which is right is not checked."
+    ),
+    ("c22018", "otp.size"): (
+        "Parts sharing the id: the MX25L12805D's secured OTP is 64 B, the MX25L12835F's "
+        '512 B (its datasheet, v1.7: "4K-bit Secured OTP"), the MX25L12833F\'s 1 KiB '
+        "(flashrom's, not checked): no source is wrong, and the chip's one answer is the "
+        "most sources'."
+    ),
+    ("c22018", "size"): (
+        "Dediprog lists its MX25L25835E, 32 MiB, under this id, the 16 MiB MX25L12835F's "
+        "(Macronix's 256 Mbit parts answer c2 20 19; not checked for this one): another "
+        "part's record, so its operations and capabilities are not this chip's "
+        "(Flash.part_records)."
+    ),
+    ("1c7016", "otp.size"): (
+        "Parts sharing the id: the EN25QH32B has three 512-byte security sectors, 1536 B "
+        "(its datasheet, Rev. 1.7), the EN25QH32 512 B (both sources', not checked): no "
+        "source is wrong."
     ),
 }
 

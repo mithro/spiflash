@@ -96,7 +96,16 @@ datasheet's, with a note (`ENTRY_WRONG`, both sources):
   entry has it, and the "S25FL256S Large Sectors" a 512-byte page too;
 - the "S25FL256S" entries give half the part ("This is just half the
   size"): it is 32 MiB;
-- the S25FL512S's page is 512 bytes, not 256.
+- the S25FL512S's page is 512 bytes, not 256;
+- GigaDevice's 1.8 V GD25LQ, GD25LB, GD25LR and GD25LF entries give 1.695 V
+  ({sfsrc}`flashrom`) or 1.65 V ({sfsrc}`flashprog`) to 1.95 V: their
+  datasheets give 1.65 V to 2.0 V (2.1 V for the GD25LQ16C and E);
+- the XM25QH64C is a 2.3 V to 3.6 V part, not 2.7 V.
+
+And some OTP comments' sizes (`OTP_SIZE_WRONG`): the GD25LQ128D and E, the
+GD25Q127C and the GD25Q128E have three 1024-byte security registers, not
+"1024B total, 256B reserved" or "1536B total", and the P25Q32SH three
+1024-byte ones, not "3 x 512 bytes".
 
 The erase routines that send one opcode are that erase: `s25fl_block_erase`
 is 0xdc, `s25fs_block_erase_d8` 0xd8 (`FUNCTION_OPCODES`).
