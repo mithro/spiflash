@@ -60,22 +60,12 @@ ZEPHYR_BFPTS: dict[tuple[str, int], tuple[int, int | None, list[tuple[int, int]]
         [(0x20, 4096), (0x52, 32768), (0xD8, 65536)],
         ["READ_1_1_4", "READ_1_4_4"],
     ),
-    ("boards/nxp/frdm_mcxe247/frdm_mcxe247.dts", 297): (
-        8 << 20,
-        256,  # main stored the driver's page-size, 128: now a flag
-        [(0x20, 4096), (0x52, 32768), (0xD8, 65536)],
-        ["READ_1_1_2", "READ_1_1_4", "READ_1_2_2", "READ_1_4_4"],
-    ),
+    # Not frdm_mcxe247's W25Q64 nor wio_tracker_l1's P25Q16H: their tables
+    # are another part's (spiflash_extract.zephyr, _Node.copied).
     ("boards/particle/argon/dts/mesh_feather.dtsi", 174): (
         4 << 20,
         None,
         [(0x20, 4096), (0x52, 32768), (0xD8, 65536)],
-        ["READ_1_1_2", "READ_1_1_4", "READ_1_2_2", "READ_1_4_4"],
-    ),
-    ("boards/seeed/wio_tracker_l1/wio_tracker_l1.dts", 219): (
-        2 << 20,
-        None,
-        [(0x20, 4096), (0x52, 32768), (0x81, 256), (0xD8, 65536)],
         ["READ_1_1_2", "READ_1_1_4", "READ_1_2_2", "READ_1_4_4"],
     ),
     ("boards/shields/x_nucleo_pgeez1/x_nucleo_pgeez1.overlay", 23): (
@@ -603,7 +593,7 @@ def test_encode_round_trips_the_times() -> None:
                 0xAB,
             )
         done += 1
-    assert done == 22  # QEMU 8, Zephyr 14
+    assert done == 21  # QEMU 8, Zephyr 13 (not the tables that are another part's)
 
 
 def test_encode_leaves_out_a_time_it_cannot_write() -> None:

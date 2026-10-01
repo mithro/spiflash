@@ -40,11 +40,11 @@ def test_id_timing(capsys: pytest.CaptureFixture[str]) -> None:
     assert "page program 200 µs typ, ≤ 1.2 ms; DPD exit ≤ 15 µs" in out
     # -v: every time, each value with who gives it; and the clock.
     _, out = run(capsys, "id", "c22817", "-v")
-    assert "    time: dpd_exit maximum: 5 µs (zephyr); 35 µs (zephyr)" in out
+    # Compared at SFDP resolution (35 µs and 40 µs agree), shown as given.
+    assert "    time: dpd_exit maximum: 35 µs (zephyr); 40 µs (zephyr (SFDP))" in out
     assert "    time: block_erase:0x20 maximum: 384 ms (zephyr (SFDP))" in out
     assert "    clock: Dediprog lists 70 MHz" in out
-    # Compared at SFDP resolution, shown as given.
-    assert "sources disagree on timings.dpd_exit.maximum: 5 µs (zephyr); 35 µs (zephyr)" in out
+    assert "sources disagree on timings.dpd_exit.maximum" not in out
     _, js = run(capsys, "id", "c22817", "--json")
     (chip,) = json.loads(js)
     assert chip["timings"]["dpd_exit"]["maximum"]["value"] == 35_000

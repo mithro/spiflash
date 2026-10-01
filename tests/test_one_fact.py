@@ -22,7 +22,7 @@ from spiflash.model import TIMING_COMPONENTS, EraseBlock, Record
 from spiflash.opcodes import OPERATIONS
 from spiflash.registers import Register, RegisterBit
 from spiflash.timings import BOUNDS, TimingKey, Timings, component_name, parse_component
-from spiflash_extract import record
+from spiflash_extract import record, zephyr
 from spiflash_extract.flashrom import otp as flashrom_otp
 
 
@@ -311,18 +311,18 @@ def test_a_disagreement_is_the_stored_value() -> None:
                 assert d["timings"][str(key)][str(bound)] == stored, _where(d)
             elif field != "erasers":
                 assert d[field] == stored, _where(d)
-    # One board copies another part's table (16 MiB, with DTR, for a 2 MiB
-    # P25Q16H). Two boards' page-size is their driver's setting, kept as a
-    # flag (spiflash_extract.zephyr.PAGE_SIZE_IS_THE_DRIVERS). frdm_mcxe247's
-    # W25Q64 carries the MX25R6435F's table (QE at SR1 bit 6), and its own
-    # quad-enable-requirements, Winbond's S2B1v1. nrf7002dk's MX25R6435F
-    # gives t-exit-dpd 5 µs; its BFPT's DW14 40 µs (the datasheet's tRDP is
-    # 35 µs, or 45 µs in high-performance mode).
-    assert sorted(found) == [
-        ("MX25R6435F", "timings.dpd_exit.maximum"),
-        ("P25Q16H", "size"),
-        ("W25Q64", "quad_enable_requirement"),
-    ]
+    # None is left: the tables another part's (16 MiB, with DTR, for a 2 MiB
+    # P25Q16H; the MX25R6435F's, QE at SR1 bit 6, for frdm_mcxe247's W25Q64,
+    # S2B1v1) are not taken, nor nrf7002dk's t-exit-dpd of 5 µs for its
+    # MX25R6435F (the datasheet's tRDP is 35 µs, its BFPT's DW14 40 µs).
+    # Two boards' page-size is their driver's setting, kept as a flag
+    # (spiflash_extract.zephyr.PAGE_SIZE_IS_THE_DRIVERS).
+    assert found == []
+    notes = [n for d in RECORDS if d["source"] == "zephyr" for n in d["notes"]]
+    assert len([n for n in notes if "another part's tables" in n]) == 2
+    # Each time a board gives that is not its part's is left out, with a note.
+    for why in zephyr.NOT_THE_PARTS.values():
+        assert any(n.endswith(why) for n in notes), why
 
 
 def test_no_sfdp_residue() -> None:

@@ -158,18 +158,9 @@ _MX25V = (
 #: What is known of an issue, by its chip and value: why the sources
 #: disagree where that is not plain from their answers.
 EXPLAINED = {
-    ("c22817", "timings.dpd_exit.maximum"): (
-        "The MX25R6435F datasheet (Rev. 1.6) gives tRDP 35 µs in ultra low power mode and "
-        "45 µs in high performance mode, and its BFPT 40 µs: nrf7002dk's t-exit-dpd of 5 µs "
-        "is wrong."
-    ),
     ("c22817", "timings.erase_resume_to_suspend.typical"): (
         "Two versions of the MX25R6435F's BFPT, which Zephyr's boards copy, differ in DW12's "
         "erase resume-to-suspend interval alone."
-    ),
-    ("ef4017", "timings.dpd_exit.maximum"): (
-        "frdm_mcxe247's W25Q64 carries the MX25R6435F's BFPT, whose DW14 gives 40 µs; the "
-        "W25Q64JV's tRES1 is 3 µs."
     ),
     ("20ba21", "dies"): _TWO_PARTS.format(part="MT25QL01GBBB"),
     ("20bb21", "dies"): _TWO_PARTS.format(part="MT25QU01GBBB"),

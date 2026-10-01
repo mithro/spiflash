@@ -33,10 +33,14 @@ some with placeholder ids.
   reset is a power cycle"), so they are the rail's, not the part's RESET#
   times, and a note says so
   ({py:data}`~spiflash_extract.zephyr.BOARD_MARGINS`). Some `t-exit-dpd`s
-  are a board's margin too: the GD25Q16C boards' 100 µs, where its
-  datasheet's tRES1 is 20 µs. A `t-exit-dpd` is often more precise than the BFPT's DW14, which
-  rounds it up (the MX25R6435F's 35 µs is 40 µs there): it is kept, and is
-  no disagreement; nrf7002dk's 5 µs is ([data issues](../issues/sfdp.md)).
+  are not the part's either, and are not taken, with a note
+  ({py:data}`~spiflash_extract.zephyr.NOT_THE_PARTS`): the GD25Q16C boards'
+  100 µs, a margin over its datasheet's tRES1 of 20 µs; nrf7002dk's 5 µs,
+  shorter than the MX25R6435F's tRDP; rm1xx_dvk's 20 ns for its AT25DF041B,
+  a unit slip. (The MX25L3233F's 100 µs is its datasheet's tRES1.) A
+  `t-exit-dpd` is often more precise than the BFPT's DW14, which rounds it
+  up (the MX25R6435F's 35 µs is 40 µs there): it is kept, and is no
+  disagreement.
   `spi-max-frequency` and the other clock and controller properties are the
   board's settings, not the part's, and are not taken.
 - `has-dpd` gives [DP](../opcodes/DP.md) and [RDPD](../opcodes/RDPD.md)
@@ -72,9 +76,14 @@ some with placeholder ids.
   [data issue](../issues/sfdp.md): the `spi_nor` driver refuses a size its
   table contradicts. The tables are what the board's porter copied, not
   always the part's: frdm_mcxe247's W25Q64 carries the MX25R6435F's BFPT
-  byte for byte (`spiflash sfdp-diff ef4017 c22817` finds no difference;
-  its node says the quad enable is S2B1v1, the table SR1 bit 6), and
-  wio_tracker_l1's P25Q16H carries another part's, a 16 MiB one with DTR.
+  byte for byte (its node says the quad enable is S2B1v1, the table SR1 bit
+  6), and wio_tracker_l1's P25Q16H, 2 MiB, carries another part's, a 16 MiB
+  one with DTR. Tables whose density is not the node's size, or whose quad
+  enable requirement is not the node's, are another part's: they are not
+  taken, and a note says so.
+  The W25Q64 nodes' S2B1v1 is wrong too: the W25Q64JV's 1-byte WRSR leaves
+  its Status Register-2 alone, which is S2B1v4, and the record has that,
+  with a note (`QER_WRONG`).
 - `page-size` is the part's page for `jedec,spi-nor`, but two drivers take
   it as their own setting, though every binding inherits
   {upstream}`jedec,jesd216.yaml <zephyr:dts/bindings/mtd/jedec,jesd216.yaml>`'s description, "Number of bytes in a page from

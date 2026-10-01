@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from spiflash.derive import ERASE_FEATURE
 from spiflash.enums import Bound, TimedEvent
-from spiflash.sfdp import BFPT_ID, FOUR_BYTE_ID, PROFILE1_ID
+from spiflash.sfdp import BFPT_ID, FOUR_BYTE_ID, PROFILE1_ID, from_tables
 from spiflash.timings import TimingKey
 
 from . import cparse, dts
@@ -257,6 +257,44 @@ BOARD_MARGINS = {
     "boards/shields/st_b_m2mem_pack1/": (
         "the shield's reset is a power cycle of the module (its LDO enable), "
         "so its times are the rail's, not the part's RESET# times"
+    ),
+}
+
+_GD25Q16C_MARGIN = (
+    "100 µs is the board's margin: the GD25Q16C's tRES1 is 20 µs (its datasheet, Rev. 3.2)"
+)
+
+#: Times a board gives that are not its part's, by file and property, and
+#: why: a board's margin over the datasheet's maximum, or a value no part
+#: has. The record leaves them out, with a note.
+NOT_THE_PARTS = {
+    ("boards/beagle/beagleconnect_freedom/beagleconnect_freedom-common.dtsi", "t-exit-dpd"): (
+        _GD25Q16C_MARGIN
+    ),
+    ("boards/adafruit/feather_stm32f405/adafruit_feather_stm32f405.dts", "t-exit-dpd"): (
+        _GD25Q16C_MARGIN
+    ),
+    ("boards/nordic/nrf7002dk/nrf5340_cpuapp_common.dtsi", "t-exit-dpd"): (
+        "5 µs is shorter than the MX25R6435F's tRDP, 35 µs (45 µs in high performance mode; "
+        "its datasheet, Rev. 1.6), and its own BFPT's 40 µs"
+    ),
+    ("boards/ezurio/rm1xx_dvk/rm1xx_dvk.dts", "t-exit-dpd"): (
+        "20 ns is no deep power-down exit time (the AT25DF041A's tRDPD is 3 µs, its "
+        "datasheet; the AT25DF041B's was not to hand): a unit slip"
+    ),
+}
+
+#: Quad enable requirements a node gives wrongly, by chip id and the code
+#: it gives: the code the part's datasheet gives, and why. The record
+#: stores the datasheet's, with a note.
+QER_WRONG = {
+    ("ef4017", "S2B1v1"): (
+        "S2B1v4",
+        (
+            "a 1-byte WRSR (01h) leaves the W25Q64JV's Status Register-2 as it is "
+            '("the Status Register-2 will not be affected", its datasheet, Rev. N, 8.2.5), '
+            "which is S2B1v4; S2B1v1's 1-byte WRSR clears it"
+        ),
     ),
 }
 
@@ -479,9 +517,20 @@ class _Node:
         self.capabilities(binding)
         times, time_via = self.times()
         via |= time_via
-        qer = self.string("quad-enable-requirements")
+        given_qer = self.string("quad-enable-requirements")
+        copied = self.copied(tables, size, given_qer)
+        if copied is not None:
+            props = ", ".join(p for p in SFDP_TABLES if self.props.get(p))
+            self.notes.append(f"{props} not read: another part's tables ({copied})")
+            tables = {}
+            via.pop("sfdp_tables", None)
+        qer = given_qer
         if qer is not None and binding_name not in QER_IGNORED_BY:
             via["quad_enable_requirement"] = f"quad-enable-requirements={qer}"
+            fixed = QER_WRONG.get((jedec_id[:3].hex(), qer))
+            if fixed is not None:
+                self.notes.append(f"quad enable requirement {fixed[0]}, not {qer}: {fixed[1]}")
+                qer = fixed[0]
         else:
             qer = None
         return make(
@@ -505,6 +554,27 @@ class _Node:
             sfdp_tables=tables,
             notes=self.notes,
         )
+
+    @staticmethod
+    def copied(tables: dict[str, str], size: int | None, qer: str | None) -> str | None:
+        """Why a node's SFDP tables are another part's, copied from another
+        board's node, or ``None``: their density is not the node's size
+        (xiao_ble's 2 MiB P25Q16H with a 16 MiB part's BFPT), or their quad
+        enable requirement (DW15) is not the one the node gives
+        (frdm_mcxe247's W25Q64JV, S2B1v1, with the MX25R6435F's BFPT,
+        S1B6)."""
+        if not tables:
+            return None
+        facts = from_tables({int(k, 16): bytes.fromhex(v) for k, v in tables.items()}).facts()
+        why = []
+        if size is not None and facts.size is not None and facts.size != size:
+            why.append(f"their density, {facts.size} bytes, is not the node's {size}")
+        if qer is not None and facts.quad_enable_requirement not in (None, qer):
+            why.append(
+                f"their quad enable requirement, {facts.quad_enable_requirement}, is not "
+                f"the node's {qer}"
+            )
+        return "; ".join(why) or None
 
     def name(self, descriptive: list[str]) -> str | None:
         """The part name, from the first place that gives one (see the
@@ -584,6 +654,9 @@ class _Node:
             margin = next((why for d, why in BOARD_MARGINS.items() if self.rel.startswith(d)), None)
             if n and prop.startswith("t-reset-") and margin:
                 self.notes.append(f"{prop}={n} not read: {margin}")
+                continue
+            if n and (self.rel, prop) in NOT_THE_PARTS:
+                self.notes.append(f"{prop}={n} not read: {NOT_THE_PARTS[self.rel, prop]}")
                 continue
             if n and prop.endswith("-dpd-delay") and "use-udpd" in self.props:
                 # The AT45's times are then Ultra-Deep Power-Down's.

@@ -2049,13 +2049,13 @@ def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
                         ee ff ff ff ff ff 00 ff ff ff 00 ff 0c 20 0f 52
                         10 d8 00 ff 23 72 f5 00 82 ed 04 cc 44 83 68 44
                         30 b0 30 b0 f7 c4 d5 5c 00 be 29 ff f0 d0 ff ff];"""
-    r, m = zephyr_board(
+    r, m, c = zephyr_board(
         tmp_path,
         f"""mx25r6435f@0 {{
             compatible = "jedec,spi-nor";
             jedec-id = [c2 28 17];
             {table}
-            size = <DT_SIZE_M(16)>;
+            size = <DT_SIZE_M(64)>;
             page-size = <4096>;
         }};
         mx25r6435f@1 {{
@@ -2063,25 +2063,31 @@ def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
             jedec-id = [c2 28 17];
             {table}
             page-size = <4096>;
+        }};
+        mx25r1635f@2 {{
+            compatible = "jedec,spi-nor";
+            jedec-id = [c2 28 15];
+            {table}
+            size = <DT_SIZE_M(16)>;
         }};""",
     )
     # What the node states and the table does not is stored, and is the
-    # record's value; the two are disagreements, not notes.
-    assert (r["size"], r["page_size"]) == (2 << 20, 4096)
+    # record's value; the page is a disagreement, not a note. The size the
+    # table repeats is not stored.
+    assert (r["size"], r["page_size"]) == (None, 4096)
     assert r["notes"] == []
     loaded = Record.from_json(r)
-    assert (loaded.size, loaded.page_size) == (2 << 20, 4096)
-    assert loaded.sfdp_disagreements() == (
-        ("size", 2 << 20, 8 << 20),
-        ("page_size", 4096, 256),
-    )
-    # The table's erase types are laid over the record's own size.
-    assert [e.to_json() for e in loaded.erasers] == [
-        {"opcode": 0x20, "blocks": [[4096, 512]]},
-        {"opcode": 0x52, "blocks": [[32768, 64]]},
-        {"opcode": 0xD8, "blocks": [[65536, 32]]},
+    assert (loaded.size, loaded.page_size) == (8 << 20, 4096)
+    assert loaded.sfdp_disagreements() == (("page_size", 4096, 256),)
+    # A table of another density than the node's is another part's: not
+    # taken, with a note.
+    assert (c["size"], c["sfdp_tables"]) == (2 << 20, {})
+    assert c["notes"] == [
+        (
+            "sfdp-bfp not read: another part's tables (their density, 8388608 bytes, is "
+            "not the node's 2097152)"
+        )
     ]
-    assert loaded.sector_size == 65536
     # The driver's page-size is a flag, and the part's page is the table's.
     assert (m["page_size"], "page-size=4096" in m["flags"]) == (None, True)
     assert Record.from_json(m).page_size == 256
@@ -2137,10 +2143,10 @@ def test_zephyr_quad_enable_requirement(tmp_path: Path) -> None:
     assert c["via"]["quad_enable_requirement"] == "quad-enable-requirements=S1B6"
     assert "quad-enable-requirements=S1B6" not in c["flags"]
     assert Record.from_json(c).quad_enable_requirement == "S1B6"
-    assert d["quad_enable_requirement"] == "S2B1v5"
-    assert Record.from_json(d).sfdp_disagreements()[:1] == (
-        ("quad_enable_requirement", "S2B1v5", "S1B6"),
-    )
+    # One that differs is another part's table: not taken, with a note, and
+    # the node's requirement is the record's.
+    assert (d["quad_enable_requirement"], d["sfdp_tables"]) == ("S2B1v5", {})
+    assert d["notes"][0].startswith("sfdp-bfp not read: another part's tables (their quad")
 
 
 def test_zephyr_skips(tmp_path: Path) -> None:
