@@ -147,6 +147,20 @@ def test_from_tables() -> None:
     assert from_tables({0xFF00: bfpt}).facts() == whole.facts()
 
 
+def test_dw1s_4k_erase_needs_dw1s_uniform_bits() -> None:
+    # No erase types; DW1[15:8] is 0x20 in both, but DW1[1:0] 11 says the
+    # part has no uniform 4 KiB erase.
+    def tables(bits: int) -> Sfdp:
+        dws = [0xFFF32000 | 0xE4 | bits, (16 << 23) - 1, 0, 0, 0, 0, 0, 0, 0]
+        return from_tables({0xFF00: b"".join(d.to_bytes(4, "little") for d in dws)})
+
+    assert [e.opcode for e in tables(0b01).facts().erasers] == [0x20]
+    assert "BE_4K" in {u.op for u in tables(0b01).facts().opcodes}
+    assert tables(0b11).facts().erasers == ()
+    assert "BE_4K" not in {u.op for u in tables(0b11).facts().opcodes}
+    assert "erase_4k" not in tables(0b11).features()
+
+
 def test_facts_carry_each_reads_dummy_clocks() -> None:
     facts = parse(W25Q512JV).facts()
     clocks = {u.op: u.dummy_clocks for u in facts.opcodes}
@@ -423,6 +437,33 @@ def test_encode_4byte_instructions() -> None:
     assert s.four_byte.erase_opcodes == (0xDC, None, None, None)
     assert "READ_1_4_4_4B: the 4BAIT lists a 4-byte read only with its 3-byte form" in out.missing
     assert s.address_bytes is AddressBytes.THREE_OR_FOUR
+
+
+def test_encode_qpi_sequences_land_in_their_dw15_bits() -> None:
+    # DW15[8:4] are the 4-4-4 enable sequences (bit 5: 0x38, bit 6: 0x35),
+    # DW15[3:0] the disable ones; bit 9 is 0-4-4 mode, which encode never
+    # claims.
+    ops = [{"op": op, "via": "x"} for op in ("EQPI_38", "RSTQIO_FF")]
+    s = encode(rec(opcodes=ops), assume=True).sfdp
+    assert s.bfpt is not None
+    assert s.bfpt.qpi_enable == ("0x38",)
+    assert s.bfpt.qpi_disable == ("0xff",)
+    assert s.bfpt.mode_0_4_4 is False
+    s = encode(rec(opcodes=[{"op": "EQPI_35", "via": "x"}]), assume=True).sfdp
+    assert s.bfpt is not None
+    assert s.bfpt.qpi_enable == ("0x35",)
+    # The shipped PY25Q64HA, whose sources give 0x38: the bits it was
+    # once written to (9, 10) would read as 0-4-4 mode.
+    dw15 = encode(chip("852017"), assume=True).sfdp.bfpt
+    assert dw15 is not None
+    assert (dw15.qpi_enable, dw15.qpi_disable, dw15.mode_0_4_4) == (("0x38",), ("0xff",), False)
+    assert dw15.dwords[14] == 0xFF000021
+    # diff compares 0-4-4 mode.
+    with_044 = parse(W25Q512JV)
+    assert with_044.bfpt is not None
+    assert with_044.bfpt.mode_0_4_4 is True
+    bare = encode(rec(), assume=True).sfdp
+    assert "mode_0_4_4" in {f.path for f in diff(with_044, bare).fields}
 
 
 def test_encode_refuses() -> None:

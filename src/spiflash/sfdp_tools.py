@@ -113,6 +113,7 @@ ENCODE_LOSSES = {
     "quad_enable": "the quad enable requirement (DW15)",
     "qpi_enable": "the QPI enable sequence, in a revision encode cannot fill",
     "qpi_disable": "the QPI disable sequence, in a revision encode cannot fill",
+    "mode_0_4_4": "0-4-4 (continuous read) mode (DW15), written as not supported",
     "four_byte_enter": "4-byte mode entry (DW16), in a revision encode cannot fill",
     "four_byte_exit": "4-byte mode exit (DW16), in a revision encode cannot fill",
     "soft_reset": "soft reset (DW16)",
@@ -391,7 +392,9 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
     out.unknown.append(("DW15", "the quad enable requirement", "written as 0, no QE bit"))
     out.unknown.append(("DW15", "0-4-4 mode", "written as not supported"))
     ops = part.ops
-    enter = (0 if "EQPI_38" not in ops else 1 << 5) | (0 if "EQPI_35" not in ops else 1 << 6)
+    # DW15[8:4], the 4-4-4 enable sequences: bit 5 is "issue 0x38", bit 6
+    # "issue 0x35" (so bits 1 and 2 of the field).
+    enter = (0 if "EQPI_38" not in ops else 1 << 1) | (0 if "EQPI_35" not in ops else 1 << 2)
     leave = (0 if "RSTQIO_FF" not in ops else 1) | (0 if "RSTQIO_F5" not in ops else 1 << 1)
     if enter or leave:
         out.unknown.append(
@@ -652,6 +655,7 @@ def _fields(s: Sfdp) -> dict[str, Any]:
             else QUAD_ENABLE.get(bfpt.quad_enable, f"reserved code {bfpt.quad_enable}"),
             "qpi_enable": bfpt.qpi_enable or None,
             "qpi_disable": bfpt.qpi_disable or None,
+            "mode_0_4_4": bfpt.mode_0_4_4,
             "four_byte_enter": bfpt.four_byte_enter or None,
             "four_byte_exit": bfpt.four_byte_exit or None,
             "soft_reset": bfpt.soft_reset or None,
