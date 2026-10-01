@@ -115,5 +115,8 @@ Rockchip. It is not reviewed in the open, though, and has the errors above,
 so it ranks below the curated tables. It is the only source here for many
 Etron parts, the older Micron MT29F1G01AAADD and MT29F4G01AAADD, and
 HeYangTek's HYF1GQ4U.
+Its poll timeout (`SNFI_POLL_INTERVAL`, 1 s) is its driver's, and its
+sample delay and latch latency are per SoC: no time per part
+([](../derived.md#times)).
 [Its data issues page](../issues/source-mediatek.md) lists where it
 disagrees with the others.

@@ -10,7 +10,36 @@ some with placeholder ids.
 - A node gives the id, the size (in bits in the JESD216-based bindings), and,
   where the board sets them, the page size, the read and program modes it
   uses (`readoc`, `writeoc`, the MSPI I/O mode) and what the chip needs
-  (`has-dpd`, `enter-4byte-addr`, ...), kept in the record's `flags`.
+  (`enter-4byte-addr`, `has-lock`, ...), kept in the record's `flags`.
+- The part's times are the record's `timings` ([](../derived.md#times)),
+  each bounded as its binding's words say
+  ({upstream}`jedec,spi-nor-common.yaml <zephyr:dts/bindings/mtd/jedec,spi-nor-common.yaml>`,
+  {upstream}`jedec,nor-mspi.yaml <zephyr:dts/bindings/mtd/jedec,nor-mspi.yaml>`,
+  {upstream}`atmel,at45.yaml <zephyr:dts/bindings/mtd/atmel,at45.yaml>`,
+  {upstream}`jedec,spi-nand.yaml <zephyr:dts/bindings/mtd/jedec,spi-nand.yaml>`;
+  the extractor checks each property it reads is declared there): `t-enter-dpd`
+  ("Duration required to complete the DPD command": tDP, a maximum),
+  `t-exit-dpd` (tRES1, a maximum), `t-reset-recovery` ("Minimum time ... the
+  chip needs to recover after reset": the host's least wait, so the part's
+  maximum), `t-reset-pulse` (a minimum), the AT45's `enter-dpd-delay` and
+  `exit-dpd-delay` (maxima; not with `use-udpd`, when they are ultra-deep
+  power-down's), and `dpd-wakeup-sequence`'s tDPDD, tCDRP and tRDP (minimum,
+  minimum, maximum, as the MX25R datasheets give them). 0 is not given. SPI
+  NAND's `*-duration-max` (in µs) would be maxima, but no node naming its
+  part gives them (the two that do name it only in a comment). The
+  st_b_m2mem_pack1 shield's 5 ms reset pulse and 10 ms recovery, on every
+  module it carries, are its board's margin (its overlay: "a reset is a
+  power cycle"), and are kept as the node's, with that comment as their
+  note; no other source gives those parts a reset time to disagree with. A `t-exit-dpd` is often more precise than the BFPT's DW14, which
+  rounds it up (the MX25R6435F's 35 µs is 40 µs there): it is kept, and is
+  no disagreement; nrf7002dk's 5 µs is ([data issues](../issues/sfdp.md)).
+  `spi-max-frequency` and the other clock and controller properties are the
+  board's settings, not the part's, and are not taken.
+- `has-dpd` gives [DP](../opcodes/DP.md) and [RDPD](../opcodes/RDPD.md)
+  (the binding: "implies that the RDPD (0xAB) Release from Deep Power Down
+  command is also supported"), but RDPD not where the node gives a
+  `dpd-wakeup-sequence`, whose part wakes by a pulse of chip select. Where
+  the node's BFPT has DW14, both are its tables'.
   `quad-enable-requirements` is JESD216's quad enable requirement, the
   record's `quad_enable_requirement` (which gives its quad enable bit), but
   on a `jedec,spi-nor` node, whose driver takes the requirement from the

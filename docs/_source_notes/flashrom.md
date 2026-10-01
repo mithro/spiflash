@@ -93,3 +93,9 @@ entry ("the latter supports SFDP", "F model supports SFDP", "MX25L1006E
 supports SFDP") is kept as a note and claims nothing: the database has no
 per-model claim within an entry yet, so that model's SFDP is a known loss
 (six entries, in {sfsrc}`flashprog` too).
+
+It gives no time per SPI part ([](../derived.md#times)): `.probe_timing` is
+for parallel, LPC and FWH chips ("SPI devices will always have zero delay
+and ignore this field", {upstream}`flashrom:include/flash.h`), and the poll
+intervals of its SPI erase and program routines and its status register
+write wait are its driver's, for every part.

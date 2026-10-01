@@ -27,3 +27,5 @@ of the W25Q256 and W25Q512 families, so the bit is its driver's, and the
 flag stays a flag. An
 `SPI_NOR_HAS_SST26LOCK` part locks with a block protection register instead:
 no bits, a `lock` claim, and [ULBPR](../opcodes/ULBPR.md) to unlock it.
+Its waits (Linux's 40 s, a 200 µs soft reset) are its driver's: no time
+per part ([](../derived.md#times)).

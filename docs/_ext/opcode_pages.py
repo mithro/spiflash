@@ -101,6 +101,18 @@ NOTES = {
         "one-byte electronic signature ({sfsrc}`flashrom`'s RES1; RES2 parts answer two bytes). "
         "Older parts use this in place of the JEDEC id ([`RDID`](RDID.md))."
     ),
+    "DP": (
+        "Puts the flash in deep power-down once chip select goes high (after tDP), where it "
+        "ignores everything but its release: [`RDPD`](RDPD.md), or on some parts (Macronix's "
+        "MX25R) a pulse of chip select. The chip pages give the times "
+        "([](../derived.md#times))."
+    ),
+    "RDPD": (
+        "The release from deep power-down alone: 0xab, then chip select high, and the part is "
+        "ready after tRES1. On many parts the same opcode followed by dummy bytes reads a "
+        "signature ([`RES`](RES.md)), but not on all (the M25PX parts give none), so the two "
+        "are separate operations."
+    ),
     "RDSFDP": (
         f"Reads the Serial Flash Discoverable Parameters ([JESD216]({JESD216})) from the given "
         "address: tables describing the part's size, erase types, read modes and "

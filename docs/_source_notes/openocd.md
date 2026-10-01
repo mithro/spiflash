@@ -15,6 +15,7 @@ answer against it. Names are "vendor abbreviation, part"
 (`"mac 25l12845"` is the MX25L12845); the parser puts it back.
 
 It gives the read, quad read, page program, sector erase and chip erase
-opcodes per part. Its {upstream}`openocd:src/helper/jep106.inc`, a copy of
+opcodes per part, and no time: its drivers' timeouts are their own
+([](../derived.md#times)). Its {upstream}`openocd:src/helper/jep106.inc`, a copy of
 [JEDEC's list](https://www.jedec.org/standards-documents/docs/jep-106ab), is
 where the [JEP106 manufacturer names](../jep106/index.md) come from.

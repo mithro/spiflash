@@ -97,3 +97,8 @@ further. That, and its known errors, is why it ranks below
 the curated tables, above only {sfsrc}`qemu` and {sfsrc}`zephyr`. It is
 still the only source for many parts, mostly from Chinese makers
 (Zbit, Dosilicon, Boya, UCUNDATA, Zetta, XMC, Yuchuang, Fidelix, ...).
+
+Its `delay` (1000 on nearly every entry) is a bus-speed factor, "bus_speed =
+default_bus_speed * Delay / 1000" (its README), not a time of the part: it
+stays the flag `delay=N`, and its ready wait is its driver's
+([](../derived.md#times)).

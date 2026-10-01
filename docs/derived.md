@@ -48,8 +48,9 @@ again:
   instruction table lists (a dual, quad or octal read only where the BFPT
   lists its 3-byte form, as Linux takes them; its 1-1-1 read 0x13 and fast
   read 0x0c, which the BFPT has no bits for, always), the ways into and out
-  of 4-byte mode (DWORD 16), the
-  read 0x03 JESD216 guarantees, and RDSFDP itself.
+  of 4-byte mode (DWORD 16), deep power-down and its release (`DP` and
+  `RDPD`, DWORD 14), the read 0x03 JESD216 guarantees, and RDSFDP itself;
+- the times of DWORDs 10 to 14 ([](#times)).
 
 Those operations and erasers imply capabilities by the rules above, the same
 as a source's. Three things only SFDP says imply them too: the BFPT's address
@@ -411,6 +412,99 @@ write it, and parsed when read ({py:attr}`Record.test_status
 and write tested, write protection not. A field a `{...}` leaves out is
 unknown, not the `OK` that C makes it.
 
+## Times
+
+A time is how long the part takes to do something: an event
+({py:class}`~spiflash.enums.TimedEvent`: a block erase, by its eraser's
+opcode; a chip erase; a page or byte program; a suspend; entering and
+leaving deep power-down; a reset), a bound ({py:class}`~spiflash.enums.Bound`:
+the bound of the datasheet parameter it is, tDP a maximum, tCRDP a minimum,
+not of the host's wait), and a whole number of nanoseconds, the one unit of
+time ({py:class}`~spiflash.timings.Timings`). Which bounds each event can
+have is a closed table ({py:data}`~spiflash.timings.BOUNDS`), each backed by
+a source.
+
+What a source states:
+
+- {sfsrc}`dediprog`'s `ChipEraseTime`, in seconds, is a chip erase time
+  whose bound is **unspecified**: against nine datasheets it is the maximum
+  three times, the typical twice and neither four times (the W25Q64JV's 20 s
+  is its typical, the W25Q64JV-DTR entry's 100 s its maximum), and Dediprog's
+  `dpcmd` never reads it. It is compared only with other unspecified times,
+  in practice Dediprog's own;
+- {sfsrc}`zephyr`'s `t-enter-dpd` and `t-exit-dpd` (tDP and tRES1, which
+  datasheets give as maxima), the AT45's `enter-dpd-delay` and
+  `exit-dpd-delay`, `t-reset-recovery` (the host's least wait, so the
+  part's own maximum) and `t-reset-pulse` (a minimum), and the three of a
+  `dpd-wakeup-sequence` (tDPDD and tCDRP, minima, and tRDP, a maximum, as
+  the MX25R datasheets give them). Each is the part's as the board's porter
+  copied it; 0 is not given.
+
+Every other time in the sources is a driver's or a board's: flashrom's and
+flashprog's poll intervals and `.probe_timing` (parallel chips only),
+Linux's and U-Boot's 40 s waits, Rockchip's and MediaTek's timeouts,
+Dediprog's `Timeout` (a template's poll count), IMSProg's `delay` (a
+bus-speed factor), and Zephyr's clock and controller settings. None is
+stored.
+
+What SFDP tables give ({py:func}`spiflash.derive.sfdp_timings`):
+
+- each erase type's typical time (BFPT DWORD 10), under its opcode, and the
+  chip erase's (DWORD 11), each with a maximum: the typical time times DWORD
+  10's multiplier, 2 × (N + 1);
+- the page program's and the first and further byte programs' typical times
+  (DWORD 11), each with a maximum through DWORD 11's multiplier;
+- where the part can suspend, the most time an erase or program suspend
+  takes, and the typical interval from a resume to the next suspend
+  (DWORD 12, as Macronix's MX25U25645G datasheet reproduces the table);
+- where it has deep power-down, the most time from the release to the part
+  being ready (DWORD 14), and the operations `DP` and `RDPD` (its exit
+  opcode, unless 0xff, "no command"). SFDP gives no time to enter it.
+
+**Which multiplier a chip erase's maximum takes is a rule, not a fact the
+tables state** ({py:data}`~spiflash.derive.CHIP_ERASE_MULTIPLIER`): DWORD
+10's, the erase types'. JESD216's field names, as vendors reproduce the
+BFPT, give DWORD 11's to "Page or byte program" alone (Macronix MX25U25645G
+Rev. 1.4 p. 101; Cypress S70FS01GS Rev. \*E p. 126), and Infineon's SMIF
+driver computes the chip erase maximum with DWORD 10's (mtb-pdl-cat1,
+`cy_smif_sfdp.c:1378-1417`), the only driver found that computes one and
+acts on it. Zephyr keeps the chip erase time beside DWORD 11's multiplier in
+one struct only because the bits are in that dword. The command's `spiflash
+sfdp` prints both multipliers, so the other reading is easy to work out.
+
+A multiplier is a coarse bound. Against twelve datasheets both multipliers
+cover tCE max, but DWORD 10's ends just above the erase types' maxima and
+DWORD 11's just above tPP max. A derived maximum is the table's claim, not
+a datasheet's maximum for every temperature grade or power mode. SFDP
+typical times are the tables', not the datasheets' (IS25WP256: 60 s
+against 70 s).
+
+A record's times are what it states, and for each (event, bound) it states
+none, what its tables give: a stated time equal to its tables' is not
+stored. **Each bound is its own value, never compared with another**: a
+typical and a maximum do not disagree. A time a BFPT writes directly (a
+typical, a suspend latency, the deep power-down exit delay) is compared at
+the tables' resolution: (count + 1) × a unit, so a stated 35 µs and a
+table's 40 µs (5 × 8 µs) agree ({py:func}`spiflash.derive.compared_time`); a
+maximum through a multiplier is compared exactly. The pages show every time
+as given. A record's minimum, typical and maximum are in order; where two
+sources' are not, that is a [data issue](issues/timing.md).
+
+{py:func}`~spiflash.sfdp_tools.encode` writes DWORDs 10, 11 and 14 only
+where the database holds exactly what they say: every typical time one the
+table can write, in the finest unit that holds it, and the maxima one
+multiplier of them (the chip erase's too, by the rule above).
+
+A source's maximum clock ({py:attr}`Record.max_clock_hz
+<spiflash.model.Record.max_clock_hz>`) is {sfsrc}`dediprog`'s `Clock`, where
+it is one clock in MHz. It is a poor guide: against twelve datasheets it was
+the part's fastest clock three times (GD25WB256E, MX66L1G45G, W25Q512JV),
+a slower clock seven times (the MX25U25645G's 104 MHz is its limit at one of
+its dummy cycle settings, 166 MHz its fastest), above it once (the
+W25Q80BL's 75 MHz; 50 MHz in its datasheet), and once no clock (the
+IS25WP256D's `166Mbit`). Zephyr's `spi-max-frequency` is the board's
+setting, and not taken.
+
 ## Dummy clocks
 
 An operation's page gives its usual dummy clocks
@@ -424,8 +518,14 @@ for data issues: a part takes fewer dummy clocks at a lower clock (Linux
 lists a variant per clock limit, and keeps the most), and which clock a
 source's numbers are for is not said, so two numbers need not disagree. The
 chip pages show each source's, where they differ (the Paragon PN26G01A's
-quad I/O read: Linux 4, MediaTek 2); comparing them waits for the timing
-model. Those a part's SFDP
+quad I/O read: Linux 4, MediaTek 2). A dummy count that holds only up to a
+clock (Linux's `SPI_MEM_OP_MAX_FREQ` on 29 read variants of five Winbond
+SPI NAND parts: the same 1S-8S-8S read takes 20 dummy clocks at any clock,
+16 up to 162 MHz, 12 up to 124 MHz, 8 up to 86 MHz; the xSPI profile's
+dummy clocks by clock rate) is part of an operation's bus shape, not a time
+([](#times)): it needs a use per (dummy clocks, clock limit), which is not
+modelled yet, so those variants are stored as uses with their dummy clocks
+and no limit, and comparing them waits for it. Those a part's SFDP
 tables give are derived from them, and a stored use giving the same as its
 tables is not stored. {sfsrc}`rockchip`'s 8 for every SPI NAND read is its
 driver's, no part's. {sfsrc}`flashprog`'s `.dc` bits are not dummy clocks:

@@ -412,3 +412,71 @@ Changes in data format 9 (4-byte addressing, supply, OTP, legacy ids):
   res1:15`, and with `-v` the legacy ids and the supplies outside a range;
   the site a 4-byte addressing section, legacy ids and the OTP area on the
   chip pages, and the SUPPLY data issues.
+
+Changes in data format 10 (the timing model, and the maximum clock):
+
+- **`Operation.timing` is {py:attr}`Operation.shape_source
+  <spiflash.opcodes.Operation.shape_source>`**, and its enum
+  `spiflash.enums.TimingSource` is {py:class}`~spiflash.enums.ShapeSource`
+  (the same members): where an operation's address bytes and dummy clocks
+  come from, not a duration, which the old name suggested beside the new
+  {py:attr}`Record.timings <spiflash.model.Record.timings>`;
+- one unit of time, the nanosecond: the SFDP decoder's
+  `EraseType.typical_us`, `Bfpt.page_program_us` and `Bfpt.chip_erase_us`
+  are {py:attr}`~spiflash.sfdp.EraseType.typical_ns`,
+  {py:attr}`~spiflash.sfdp.Bfpt.page_program_ns` and
+  {py:attr}`~spiflash.sfdp.Bfpt.chip_erase_ns`, and so are their keys in
+  {py:meth}`Sfdp.to_json() <spiflash.sfdp.Sfdp.to_json>` (`spiflash sfdp
+  --json`, and {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>`'s
+  `"sfdp"`), which gains the multipliers, the byte program, suspend and
+  deep power-down exit times, and `"timings"`;
+  `spiflash.units.human_time(us)` is
+  {py:func}`~spiflash.units.human_duration` (in ns; `µs`, not `us`), and
+  {py:func}`~spiflash.units.human_frequency` is new;
+- {py:class}`~spiflash.sfdp.Bfpt` gains `erase_max_multiplier` (DW10[3:0])
+  and `program_max_multiplier` (DW11[3:0]), the byte program times, DW12's
+  suspend latencies and resume-to-suspend intervals, and DW14's
+  `exit_deep_power_down_delay_ns`; {py:class}`~spiflash.sfdp.SfdpFacts`
+  gains `timings`; {py:meth}`Sfdp.operations()
+  <spiflash.sfdp.Sfdp.operations>` gives DW14's deep power-down opcodes;
+- new: {py:mod}`spiflash.timings` ({py:class}`~spiflash.timings.Timings`,
+  {py:class}`~spiflash.timings.TimingKey`, {py:data}`~spiflash.timings.BOUNDS`),
+  {py:class}`~spiflash.enums.TimedEvent`, {py:class}`~spiflash.enums.Bound`,
+  and {py:func}`spiflash.derive.sfdp_timings`,
+  {py:data}`~spiflash.derive.CHIP_ERASE_MULTIPLIER` and
+  {py:func}`~spiflash.derive.compared_time`;
+- the records gain `"timings"` (`{"chip_erase": {"unspecified":
+  200000000000}}`, `{}` without) and `"max_clock_hz"` (`null` without); a
+  `"via"` key may name a time (`"timings.dpd_exit"`, or `"timings"` for one
+  token giving several) and `max_clock_hz`. {sfsrc}`zephyr`'s `has-dpd` and
+  `dpd-wakeup-sequence` flags go: the first is the new
+  [DP](opcodes/DP.md) and [RDPD](opcodes/RDPD.md) operations (a release by
+  0xab alone, not [RES](opcodes/RES.md)'s signature read), the second three
+  times;
+- {py:class}`~spiflash.model.Record` has
+  {py:attr}`~spiflash.model.Record.timing_claims` (stored, JSON
+  `"timings"`), {py:attr}`~spiflash.model.Record.timings` (them, over what
+  its SFDP tables give) and {py:attr}`~spiflash.model.Record.max_clock_hz`;
+  {py:meth}`~spiflash.model.Record.given` reads a time as
+  `"timings.chip_erase.maximum"`, and
+  {py:meth}`~spiflash.model.Record.sfdp_disagreements` gives a stated time
+  its tables give otherwise;
+- {py:class}`~spiflash.model.Flash` has
+  {py:meth}`~spiflash.model.Flash.timing`,
+  {py:attr}`~spiflash.model.Flash.timings`,
+  {py:meth}`~spiflash.model.Flash.timing_order` and
+  {py:attr}`~spiflash.model.Flash.max_clock_hz`, and
+  {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>` gains
+  `"timings"` and `"max_clock_hz"`;
+- {py:data}`~spiflash.model.COMPARED` gains `timings`, compared per
+  component, each (event, bound) its own
+  ({py:data}`~spiflash.model.TIMING_COMPONENTS`: `"timings.chip_erase.unspecified"`,
+  ...), at SFDP resolution where a BFPT writes the time directly, and
+  `max_clock_hz`; {py:func}`~spiflash.model.compared_value` takes the
+  value's name;
+- {py:func}`~spiflash.sfdp_tools.encode` writes DW10, DW11 and DW14 where
+  the database holds exactly what they say, and
+  {py:func}`~spiflash.sfdp_tools.to_entry` stores the tables' times;
+- the command's description gains a `timing:` line, and with `-v` every
+  time and the clock; the site a Timing section on the chip pages, and a
+  TIMING kind of data issue.
