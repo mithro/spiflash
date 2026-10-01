@@ -678,6 +678,16 @@ def _record(
     # "bit6 is quad enable", on the status register line: SR1 bit 6, of a
     # maker whose QE bit is there (QE_COMMENT_MAKERS), where .reg_bits gives
     # no QE bit and no role there.
+    # flashprog's "Fixed QE=1" (not one qualified to a model, "GD25LB256D:
+    # Fixed QE=1") on a .qe it writes RW: the comment is right, the bit read
+    # only (GD25LF80E, GD25LF255E, GD25LR512MF, GD55LB01GF and GD55LB02GF
+    # datasheets: "QE = 1 permanently").
+    if quad_enable is not None and quad_enable["writability"] == "rw" and "Fixed QE=1" in notes:
+        quad_enable = {**quad_enable, "writability": "ro"}
+        notes.append(
+            '.qe read only, not RW: its comment says "Fixed QE=1", and the GD25LF and '
+            'GD55LB datasheets give "QE = 1 permanently"'
+        )
     qe_note = next((n for n in notes if n in QE_COMMENTS), None)
     taken = {(b["register"], b["bit"]) for b in bits.values()}
     readable = (mfr & 0xFF) in QE_COMMENT_MAKERS and ("sr1", 6) not in taken

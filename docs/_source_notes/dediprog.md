@@ -195,9 +195,11 @@ The entry has much that the database has no
 field for yet: the status and configuration register
 commands, the 4 KiB sector size where no opcode
 goes with it, the classes' die counts (`N25Qxxx_Large_2Die`, which are its
-programming algorithms'), and for SPI NAND the ECC layout
-(`DefaultErrorBits`, `DefaultDataUnitSize`), the read dummy length and the
-bad block marker.
+programming algorithms'), and for SPI NAND the read dummy length and the
+bad block marker. Its SPI NAND `DefaultErrorBits` and `DefaultDataUnitSize`
+would be the record's `ecc`, but they are a template's (8 bits per 528
+bytes on 202 of the 210 entries, whatever the part needs; one gives 544
+bits), so are not taken.
 
 Its entries are not reviewed in the open, and some are wrong: an entry's
 read and program words swapped, a block size larger than the chip, several

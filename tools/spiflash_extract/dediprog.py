@@ -416,8 +416,9 @@ def _identify(chip: dict[str, str]) -> tuple[str, str, str | None, str]:
 
 #: The SPI NOR ``PageSizeInByte`` of the template: 256 on all but seven of
 #: the SPI NOR entries, the SST parts Dediprog writes a byte or a word at
-#: a time among them (whose flashrom pages are 1 or 32 bytes), so no
-#: part's page size; the other value, 512, is the part's.
+#: a time, which have no page program, among them: no part's page size.
+#: The other value, 512 (the S25FL512S, S25HL and S28HS parts), is the
+#: part's.
 NOR_PAGE_TEMPLATE = 256
 
 
