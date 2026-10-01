@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from . import derive
-from .enums import FlashType
+from .enums import AddressBytes, FlashType, FourByteMethod
 from .model import Eraser, Flash, Record
 from .opcodes import OPERATIONS
 from .registers import QE_NONE, QuadEnableRequirement, Register
@@ -41,7 +41,6 @@ from .sfdp import (
     FOUR_BYTE_ID,
     QUAD_ENABLE,
     SIGNATURE,
-    AddressBytes,
     Sfdp,
     Table,
     parse,
@@ -91,6 +90,22 @@ _THREE_BYTE_READ = {
 }
 # A BFPT erase opcode's 4-byte-address form.
 _FOUR_BYTE_ERASE = {0x20: "BE_4K_4B", 0x52: "BE_32K_4B", 0xD8: "SE_4B"}
+
+#: BFPT DW16's bit for each way into 4-byte mode (bit 29, dedicated 4-byte
+#: opcodes, is written from the operations); flashrom's ``ear_bit7`` has
+#: none.
+_ENTER_BITS = {
+    24: FourByteMethod.EN4B,
+    25: FourByteMethod.WREN_EN4B,
+    26: FourByteMethod.WREAR,
+    27: FourByteMethod.BRWR,
+    28: FourByteMethod.NV_CR,
+    30: FourByteMethod.ALWAYS_4B,
+}
+
+#: The ways in that are a register, which is also cleared to leave 4-byte
+#: mode: their way-out bit is 10 below the way-in bit (DW16[18:16]).
+_REGISTERS = frozenset({FourByteMethod.WREAR, FourByteMethod.BRWR, FourByteMethod.NV_CR})
 
 _ADDRESS_CODE = {AddressBytes.THREE: 0, AddressBytes.THREE_OR_FOUR: 1, AddressBytes.FOUR: 2}
 
@@ -166,6 +181,7 @@ class _Part:
     address_bytes: AddressBytes | None
     quad_enable_requirement: QuadEnableRequirement | None = None
     quad_enable: RegisterBit | NoQuadEnable | None = None
+    four_byte_modes: frozenset[FourByteMethod] = frozenset()
 
 
 def _uniform(erasers: Iterable[Eraser], size: int | None) -> list[tuple[int, int]]:
@@ -196,16 +212,19 @@ def _from_record(r: Record) -> _Part:
         r.page_size,
         erasers,
         ops,
-        derive.address_bytes(r),
+        r.address_bytes,
         r.quad_enable_requirement,
         r.quad_enable,
+        r.four_byte_modes,
     )
 
 
 def _from_flash(f: Flash) -> _Part:
     """A chip as its sources agree on it: its size and page size, the
     operations some source gives it (not as a default), each eraser as the
-    most sources give it, and the address bytes the most sources imply."""
+    most sources give it, its address bytes (:attr:`Flash.address_bytes
+    <spiflash.model.Flash.address_bytes>`), and every way into 4-byte mode
+    a source gives."""
     records = sorted(f.records, key=lambda r: r.source.priority)
     ops: dict[str, int | None] = {}
     for name, op in f.opcodes.items():
@@ -220,17 +239,16 @@ def _from_flash(f: Flash) -> _Part:
         ((opcode, c.most_common(1)[0][0]) for opcode, c in votes.items()),
         key=lambda e: (e[1], e[0]),
     )
-    said = Counter(a for r in records if (a := derive.address_bytes(r)) is not None)
-    address = said.most_common(1)[0][0] if said else None
     return _Part(
         f.name,
         f.size,
         f.page_size,
         erasers,
         ops,
-        address,
+        f.address_bytes,
         f.quad_enable_requirement,
         f.quad_enable,
+        f.four_byte_modes,
     )
 
 
@@ -276,13 +294,14 @@ def encode(
     ``revision`` 1.5 and 1.6 add DW10 to DW16: erase and program times,
     suspend and resume, deep power-down, the quad enable requirement and
     4-byte address mode, which the database does not hold (but for a quad
-    enable requirement a source gives). Without
-    ``assume``, ``encode`` then lowers the revision to 1.0, the highest it
-    can fill, and lists what it left out in ``missing``; with ``assume``, it
-    writes JESD216's "not supported" encodings or the shortest times, and
-    the 4-byte mode and QPI sequences the operations suggest, each listed in
-    ``assumed``. ``ValueError`` for a SPI NAND part, a part of no known size,
-    or a revision it cannot write (:data:`REVISIONS`)."""
+    enable requirement and the ways into 4-byte mode a source gives).
+    Without ``assume``, ``encode`` then lowers the revision to 1.0, the
+    highest it can fill, and lists what it left out in ``missing``; with
+    ``assume``, it writes JESD216's "not supported" encodings or the
+    shortest times, and the ways out of 4-byte mode and the QPI sequences
+    the operations suggest, each listed in ``assumed``. ``ValueError`` for
+    a SPI NAND part, a part of no known size, or a revision it cannot write
+    (:data:`REVISIONS`)."""
     if revision not in REVISIONS:
         known = ", ".join(f"{a}.{b}" for a, b in REVISIONS)
         msg = f"encode writes SFDP {known}, not {revision[0]}.{revision[1]}"
@@ -428,20 +447,24 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
         out.unknown.append(
             ("DW15", "the QPI enable and disable sequences", "written from the operations")
         )
-    modes_in = modes_out = 0
-    if "EN4B" in ops:
-        modes_in |= 1 << 24
+    # DW16[31:24], the ways in, are the part's own (an extended or bank
+    # address register is left at 0 the same way, so is a way out too);
+    # DW16[18:14], the ways out, are written from EX4B, with a write enable
+    # where the way in has one.
+    modes = part.four_byte_modes
+    modes_in = sum(1 << bit for bit, m in _ENTER_BITS.items() if m in modes)
+    modes_out = sum(1 << (bit - 10) for bit, m in _ENTER_BITS.items() if m in _REGISTERS & modes)
     if "EX4B" in ops:
-        modes_out |= 1 << 14
-    if "WREAR" in ops:
-        modes_in, modes_out = modes_in | 1 << 26, modes_out | 1 << 16
-    if "BRWR" in ops:
-        modes_in, modes_out = modes_in | 1 << 27, modes_out | 1 << 17
+        modes_out |= 1 << (15 if FourByteMethod.WREN_EN4B in modes else 14)
     if any(op.endswith("_4B") for op in ops):
         modes_in |= 1 << 29
-    if modes_in or modes_out:
+    if modes:
+        out.lost.append(("DW16", f"the ways into 4-byte mode, {', '.join(sorted(modes))}"))
+    if FourByteMethod.EAR_BIT7 in modes:
+        out.blocked.append(("DW16", "setting bit 7 of the extended address register"))
+    if modes_out:
         out.unknown.append(
-            ("DW16", "how to enter and exit 4-byte address mode", "written from the operations")
+            ("DW16", "how to exit 4-byte address mode", "written from the ways in and EX4B")
         )
     out.unknown.append(("DW16", "soft reset", "written as none"))
     out.unknown.append(("DW16", "the status register 1 write enable", "written as none"))
@@ -530,11 +553,12 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
     """A record in the data's shape
     (:repo:`records.json <src/spiflash/data/records.json>`, this format) holding
     what ``sfdp`` says as stored values, so a dump can be read as one more
-    source: its size, page size, quad enable requirement, dies and erasers, its
-    operations with their dummy clocks (not the erases its erasers give), and
-    the capabilities only
-    SFDP says (:func:`spiflash.derive.sfdp_claims`), with their reasons in
-    ``via``. The identity (``source``, ``name``, ``id``, ...) is ``None``:
+    source: its size, page size, quad enable requirement, dies, erasers and
+    ways into 4-byte mode, its operations with their dummy clocks (not the
+    erases its erasers give, nor the operations its ways into 4-byte mode
+    give), and the capabilities only SFDP says
+    (:func:`spiflash.derive.sfdp_claims`), with their reasons in ``via``.
+    The identity (``source``, ``name``, ``id``, ...) is ``None``:
     ``Record.from_json(to_entry(s) | {"source": ..., ...})`` reads it."""
     facts = sfdp.facts()
     erase_ops = {derive.ERASE_BY_OPCODE.get(e.opcode) for e in facts.erasers if e.opcode}
@@ -556,6 +580,7 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
         "flags": [],
         "via": {f"feature:{f}": why for f, why in sorted(claims.items())},
         "voltage": None,
+        "supply_mv": None,
         "quad_enable": None,
         "quad_enable_requirement": None
         if facts.quad_enable_requirement is None
@@ -567,6 +592,9 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
         "die_select_bit": None,
         "max_bad_blocks": None,
         "ecc": None,
+        "four_byte_modes": sorted(facts.four_byte_modes),
+        "otp": None,
+        "legacy_ids": [],
         "opcodes": [
             {
                 "op": u.op,

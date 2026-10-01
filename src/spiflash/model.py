@@ -6,14 +6,24 @@ from __future__ import annotations
 import datetime
 import re
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from functools import cached_property, partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, TypeVar
 
 from . import derive
-from .enums import Feature, FlashType, IdFamily, IdMethod, Source
+from .enums import (
+    ENTER_METHODS,
+    AddressBytes,
+    Feature,
+    FlashType,
+    FourByteMethod,
+    IdFamily,
+    IdMethod,
+    Source,
+    TestResult,
+)
 from .opcodes import OPERATIONS, OpcodeUse, Operation, sort_key
 from .registers import (
     ROLES,
@@ -28,6 +38,7 @@ from .registers import (
 )
 from .sfdp import Sfdp, SfdpFacts, from_tables
 from .sfdp import parse as parse_sfdp
+from .units import human_size
 from .vendors import canonical
 
 if TYPE_CHECKING:
@@ -121,6 +132,134 @@ class EccRequirement:
         """``8 bits per 512 B``, or ``8 bits`` without a step."""
         bits = f"{self.strength_bits} bit{'s' if self.strength_bits != 1 else ''}"
         return bits if self.step_bytes is None else f"{bits} per {self.step_bytes} B"
+
+
+@dataclass(frozen=True, slots=True)
+class Otp:
+    """A part's one-time-programmable area: the ``size`` bytes the user can
+    program (not those its maker reserves or programs, such as Winbond's
+    security register 0 or Atmel's unique id), in ``regions`` regions of one
+    size (``None`` where the source does not say how many, or they differ
+    in size)."""
+
+    size: int
+    regions: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.size <= 0 or (self.regions is not None and self.size % self.regions):
+            msg = f"an OTP area of {self.size} bytes is not {self.regions} equal regions"
+            raise ValueError(msg)
+
+    @property
+    def region_size(self) -> int | None:
+        """Each region's bytes, where the regions are known."""
+        return None if self.regions is None else self.size // self.regions
+
+    def compatible(self, other: Otp) -> bool:
+        """Whether the two agree: the same size, and the same regions where
+        both give them."""
+        regions = {self.regions, other.regions} - {None}
+        return self.size == other.size and len(regions) < 2
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> Otp:
+        return cls(d["size"], d.get("regions"))
+
+    def to_json(self) -> dict[str, Any]:
+        """``{"size": 768, "regions": 3}``; ``"regions"`` only where given."""
+        out: dict[str, Any] = {"size": self.size}
+        if self.regions is not None:
+            out["regions"] = self.regions
+        return out
+
+    def __str__(self) -> str:
+        """``768 B (3 x 256 B)``, or ``1 KiB`` without the regions."""
+        size = human_size(self.size)
+        if self.regions is None:
+            return size
+        return f"{size} ({self.regions} x {human_size(self.region_size)})"
+
+
+class LegacyId(NamedTuple):
+    """An id a part also answers to a legacy command (REMS 0x90, RES 0xab),
+    besides the one its record is grouped by: ``method`` is how it is read
+    (:class:`~spiflash.enums.IdMethod`), ``id`` the bytes."""
+
+    method: IdMethod
+    id: bytes
+
+    @property
+    def family(self) -> IdFamily:
+        return self.method.family
+
+    @property
+    def key(self) -> str:
+        """As :attr:`Flash.key` writes a legacy chip's id: ``res1:15``."""
+        return f"{self.family}:{self.id.hex()}"
+
+    def to_json(self) -> list[str]:
+        """``["res1", "15"]``."""
+        return [str(self.method), self.id.hex()]
+
+
+@dataclass(frozen=True, slots=True)
+class TestStatus:
+    """flashrom's (or flashprog's) test status of a part, operation by
+    operation (:attr:`Record.test_status`, parsed from :attr:`Record.tested`);
+    ``None`` for an operation the entry leaves out."""
+
+    __test__: ClassVar[bool] = False  # not a pytest test class
+
+    probe: TestResult | None
+    read: TestResult | None
+    erase: TestResult | None
+    write: TestResult | None
+    #: Write protection (flashprog: ``block_protection``).
+    wp: TestResult | None
+
+
+#: flashrom's and flashprog's ``TEST_*`` shorthands (include/flash.h):
+#: probe, read, erase, write, write protection.
+_TEST_MACROS = {
+    "UNTESTED": "NT NT NT NT NT",
+    "OK_PROBE": "OK NT NT NT NT",
+    "OK_PR": "OK OK NT NT NT",
+    "OK_PRE": "OK OK OK NT NT",
+    "OK_PREW": "OK OK OK OK NT",
+    "OK_PREWB": "OK OK OK OK OK",
+    "BAD_PROBE": "BAD NT NT NT NT",
+    "BAD_PR": "BAD BAD NT NT NT",
+    "BAD_PRE": "BAD BAD BAD NT NT",
+    "BAD_PREW": "BAD BAD BAD BAD NT",
+    "BAD_PREWB": "BAD BAD BAD BAD BAD",
+}
+
+
+def parse_tested(tested: str | None) -> TestStatus | None:
+    """A ``tested`` value as flashrom or flashprog writes it, parsed:
+    ``TEST_OK_PREW``, or ``{.probe = OK, .read = OK, .erase = NA, ...}``
+    (flashprog's ``.block_protection`` is ``wp``). A field a ``{...}``
+    leaves out is ``None``: C makes it 0, which is ``OK``, but the entry
+    does not say. ``None`` for ``None``; ``ValueError`` for anything else."""
+    if tested is None:
+        return None
+    if tested.startswith("TEST_") and tested[5:] in _TEST_MACROS:
+        values = [TestResult(v.lower()) for v in _TEST_MACROS[tested[5:]].split()]
+        return TestStatus(*values)
+    names = [f.name for f in fields(TestStatus)]
+    m = re.fullmatch(r"\{\s*(.*?)\s*,?\s*\}", tested)
+    if m is None:
+        msg = f"not a test status: {tested!r}"
+        raise ValueError(msg)
+    given: dict[str, TestResult] = {}
+    for part in m[1].split(","):
+        name, _, value = (s.strip() for s in part.partition("="))
+        name = {"block_protection": "wp"}.get(name.lstrip("."), name.lstrip("."))
+        if name not in names:
+            msg = f"not a test status: {tested!r}"
+            raise ValueError(msg)
+        given[name] = TestResult(value.lower())
+    return TestStatus(**{f: given.get(f) for f in names})
 
 
 class Claim(NamedTuple):
@@ -330,6 +469,7 @@ CLAIMS = {
     "quad_enable": "quad_enable_claim",
     "quad_enable_requirement": "quad_enable_requirement_claim",
     "dies": "dies_claim",
+    "four_byte_modes": "four_byte_mode_claims",
 }
 
 #: The single values a record gives from its SFDP tables where it states
@@ -364,7 +504,10 @@ class Compared(StrEnum):
 #: The values the sources are compared on, and how: what
 #: :attr:`Flash.conflicts`, :meth:`Flash.by_ext_id`, the command's
 #: description and the data issues checks read. A record's own value is
-#: :meth:`Record.given`'s.
+#: :meth:`Record.given`'s. Not ``supply_mv``: two programmers may power a
+#: part at two voltages in its range, so a supply setting is checked
+#: against the range (:meth:`Flash.supply_outside`) rather than the
+#: other settings.
 COMPARED: dict[str, Compared] = {
     "size": Compared.EQUAL,
     "page_size": Compared.EQUAL,
@@ -379,13 +522,16 @@ COMPARED: dict[str, Compared] = {
     "die_select_bit": Compared.EQUAL,
     "max_bad_blocks": Compared.EQUAL,
     "ecc": Compared.PER_COMPONENT,
+    "otp": Compared.PER_COMPONENT,
 }
 
 #: The components of each value compared per component: a protection
-#: layout's roles, an ECC requirement's strength and step.
+#: layout's roles, an ECC requirement's strength and step, an OTP area's
+#: size and regions.
 COMPONENTS: dict[str, tuple[str, ...]] = {
     "protection": ROLES,
     "ecc": ("strength_bits", "step_bytes"),
+    "otp": ("size", "regions"),
 }
 
 #: :data:`COMPARED`, each value as it is compared: a value compared per
@@ -406,10 +552,11 @@ class Record:
     The fields made from arguments are what the entry states, as the data
     stores them; :attr:`size`, :attr:`page_size`, :attr:`erasers`,
     :attr:`features`, :attr:`opcodes`, :attr:`sector_size`,
-    :attr:`quad_enable_requirement`, :attr:`quad_enable` and :attr:`dies`
-    are worked out from them and from its SFDP tables
-    (:mod:`spiflash.derive`). See :mod:`spiflash_extract.record` for what
-    each field means."""
+    :attr:`quad_enable_requirement`, :attr:`quad_enable`, :attr:`dies` and
+    :attr:`four_byte_modes` are worked out from them and from its SFDP
+    tables (:mod:`spiflash.derive`), as are :attr:`address_bytes` and
+    :attr:`test_status`. See :mod:`spiflash_extract.record` for what each
+    field means."""
 
     source: Source
     file: str
@@ -469,6 +616,18 @@ class Record:
     max_bad_blocks: int | None = None
     #: The error correction the part needs (SPI NAND).
     ecc: EccRequirement | None = None
+    #: The ways into 4-byte address mode the entry states, but those its
+    #: SFDP tables give (:data:`~spiflash.enums.ENTER_METHODS`: never
+    #: ``opcodes_4b``, which the ``_4B`` operations say).
+    four_byte_mode_claims: frozenset[FourByteMethod] = frozenset()
+    #: The supply voltage, in millivolts, a programmer's table says to power
+    #: the part at (Dediprog's ``Voltage``, IMSProg's ``chipVCC``): a
+    #: setting of the programmer, never with a :attr:`voltage` range.
+    supply_mv: int | None = None
+    #: The part's one-time-programmable area.
+    otp: Otp | None = None
+    #: The ids the part also answers to legacy commands (REMS, RES).
+    legacy_ids: tuple[LegacyId, ...] = ()
     #: The size: :attr:`size_claim`, or failing that its SFDP tables' density.
     size: int | None = field(init=False, compare=False, repr=False)
     #: The page size: :attr:`page_size_claim`, or failing that its SFDP tables'.
@@ -498,14 +657,28 @@ class Record:
     #: The dies in the package: :attr:`dies_claim`, or failing that how
     #: many its SFDP tables' SCCR multi-chip table describes.
     dies: int | None = field(init=False, compare=False, repr=False)
+    #: The ways into 4-byte address mode: :attr:`four_byte_mode_claims`, and
+    #: those its SFDP tables give (BFPT DW16).
+    four_byte_modes: frozenset[FourByteMethod] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "via", MappingProxyType(dict(self.via)))
         object.__setattr__(self, "sfdp_tables", MappingProxyType(dict(self.sfdp_tables)))
+        object.__setattr__(self, "four_byte_mode_claims", frozenset(self.four_byte_mode_claims))
+        object.__setattr__(self, "legacy_ids", tuple(self.legacy_ids))
+        where = f"{self.source} {self.name}"
         if self.quad_enable_claim is not None and self.quad_enable_requirement_claim is not None:
-            msg = f"{self.source} {self.name}: a quad enable bit and a requirement, not one"
+            msg = f"{where}: a quad enable bit and a requirement, not one"
+            raise ValueError(msg)
+        if self.four_byte_mode_claims - ENTER_METHODS:
+            msg = f"{where}: {sorted(self.four_byte_mode_claims - ENTER_METHODS)} are not ways in"
+            raise ValueError(msg)
+        if self.voltage is not None and self.supply_mv is not None:
+            msg = f"{where}: a supply voltage range and a supply setting, not one"
             raise ValueError(msg)
         facts = self.sfdp_facts
+        modes = self.four_byte_mode_claims | (facts.four_byte_modes if facts else frozenset())
+        object.__setattr__(self, "four_byte_modes", modes)
         size, page = self.size_claim, self.page_size_claim
         qer = self.quad_enable_requirement_claim
         dies = self.dies_claim
@@ -588,6 +761,14 @@ class Record:
             ),
             max_bad_blocks=d.get("max_bad_blocks"),
             ecc=EccRequirement.from_json(d["ecc"]) if d.get("ecc") else None,
+            four_byte_mode_claims=frozenset(
+                FourByteMethod(m) for m in d.get("four_byte_modes") or ()
+            ),
+            supply_mv=d.get("supply_mv"),
+            otp=Otp.from_json(d["otp"]) if d.get("otp") else None,
+            legacy_ids=tuple(
+                LegacyId(IdMethod(m), bytes.fromhex(i)) for m, i in d.get("legacy_ids") or ()
+            ),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -611,6 +792,7 @@ class Record:
             "flags": list(self.flags),
             "via": dict(self.via),
             "voltage": list(self.voltage) if self.voltage else None,
+            "supply_mv": self.supply_mv,
             "quad_enable": quad_enable_to_json(self.stored("quad_enable")),
             "quad_enable_requirement": _str_or_none(self.stored("quad_enable_requirement")),
             "protection": self.protection.to_json() if self.protection else None,
@@ -620,6 +802,9 @@ class Record:
             "die_select_bit": self.die_select_bit.to_json() if self.die_select_bit else None,
             "max_bad_blocks": self.max_bad_blocks,
             "ecc": self.ecc.to_json() if self.ecc else None,
+            "four_byte_modes": sorted(self.stored("four_byte_modes")),
+            "otp": self.otp.to_json() if self.otp else None,
+            "legacy_ids": [i.to_json() for i in self.legacy_ids],
             "opcodes": [
                 {
                     "op": u.op,
@@ -671,6 +856,18 @@ class Record:
         (:func:`compared_value`): a register bit by its place, without how
         it is written, which most sources do not say."""
         return compared_value(self.given(name))
+
+    @property
+    def address_bytes(self) -> AddressBytes | None:
+        """How many address bytes the part takes
+        (:func:`spiflash.derive.address_bytes`): ``4byte_addr`` is in
+        :attr:`features` exactly when this is neither ``THREE`` nor ``None``."""
+        return derive.address_bytes(self)
+
+    @property
+    def test_status(self) -> TestStatus | None:
+        """:attr:`tested`, parsed (:func:`parse_tested`)."""
+        return parse_tested(self.tested)
 
     def feature_reasons(self) -> dict[Feature, str]:
         """Each capability in :attr:`features`, and why the entry gives it
@@ -986,6 +1183,10 @@ class Flash:
     #: from the most specific to the least, each value taken from the first
     #: layer that gives one. Empty: all the records are one layer.
     layers: tuple[tuple[Record, ...], ...] = field(default=(), repr=False, compare=False)
+    #: For a JEDEC chip :meth:`Database.lookup <spiflash.db.Database.lookup>`
+    #: gives for a legacy id: that id, which its records list
+    #: (:attr:`legacy_ids`) though the chip is not grouped by it.
+    answers_legacy: LegacyId | None = field(default=None, repr=False, compare=False)
 
     def _value(self, get: Callable[[Record], T | None]) -> T | None:
         """The value the sources agree on, from the most specific records
@@ -1228,6 +1429,93 @@ class Flash:
         )
         return EccRequirement(strength, step)
 
+    @cached_property
+    def supply_mv(self) -> int | None:
+        """The supply voltage, in millivolts, the programmers' tables say to
+        power the part at (:attr:`Record.supply_mv`), as most say: a setting,
+        where no source gives a :attr:`voltage` range."""
+        return self._value(lambda r: r.supply_mv)
+
+    def supply_outside(self) -> dict[int, tuple[Record, ...]]:
+        """Each supply setting a programmer's table gives (:attr:`Record.supply_mv`)
+        outside the supply range another source gives the same part
+        (:attr:`Record.voltage`, within one of :attr:`variants`), and the
+        records giving it: Dediprog powering a 2.3 to 3.6 V part at 1.8 V."""
+        out: dict[int, list[Record]] = {}
+        for variant in self.variants:
+            ranges = {r.voltage for r in variant if r.voltage is not None}
+            for r in variant:
+                mv = r.supply_mv
+                if mv is None or all(lo <= mv <= hi for lo, hi in ranges):
+                    continue
+                if r not in out.setdefault(mv, []):
+                    out[mv].append(r)
+        return {mv: tuple(rs) for mv, rs in sorted(out.items())}
+
+    @cached_property
+    def otp(self) -> Otp | None:
+        """The one-time-programmable area: the size most sources give, and
+        the regions most of those giving that size and the regions give
+        (one giving no regions does not vote on them)."""
+        size = self._value(lambda r: r.otp.size if r.otp else None)
+        if size is None:
+            return None
+        regions = self._value(lambda r: r.otp.regions if r.otp and r.otp.size == size else None)
+        return Otp(size, regions)
+
+    @cached_property
+    def four_byte_modes(self) -> frozenset[FourByteMethod]:
+        """Every way into 4-byte address mode any source gives
+        (:attr:`Record.four_byte_modes`, stated or from SFDP tables). Parts
+        sharing an id can differ, so check :meth:`four_byte_mode_sources`."""
+        return frozenset().union(*(r.four_byte_modes for r in self.records))
+
+    def four_byte_mode_sources(self, method: FourByteMethod | str) -> tuple[FeatureSource, ...]:
+        """The sources giving a way into 4-byte mode, one each, in source
+        priority order: ``implied`` when it is from the source's SFDP tables
+        rather than stated (a statement in any of its records wins), and
+        ``because`` the upstream token or ``"its SFDP tables (BFPT DW16)"``."""
+        method = FourByteMethod(method)
+        found: dict[Source, FeatureSource] = {}
+        for r in sorted(self.records, key=lambda r: r.source.priority):
+            if method not in r.four_byte_modes:
+                continue
+            stated = method in r.four_byte_mode_claims
+            via = r.via.get(f"four_byte_modes:{method}") or r.via.get("four_byte_modes")
+            because = (via or "stated") if stated else "its SFDP tables (BFPT DW16)"
+            given = FeatureSource(r.source, not stated, because)
+            if r.source not in found or (found[r.source].implied and stated):
+                found[r.source] = given
+        return tuple(found.values())
+
+    @cached_property
+    def address_bytes(self) -> AddressBytes | None:
+        """How many address bytes the part takes (:attr:`Record.address_bytes`):
+        of the records saying more than 3, what most say; else ``THREE``
+        where any says so. Like :attr:`features`, a source saying the part
+        takes 4-byte addresses is not outvoted by those not saying it, so
+        ``4byte_addr`` is in :attr:`features` exactly when this is neither
+        ``THREE`` nor ``None``."""
+        said = [(a, r.source) for r in self.records if (a := r.address_bytes) is not None]
+        more = _consensus((a, s) for a, s in said if a is not AddressBytes.THREE)
+        if more is not None:
+            return more
+        return AddressBytes.THREE if said else None
+
+    @cached_property
+    def legacy_ids(self) -> dict[LegacyId, tuple[Source, ...]]:
+        """The ids the part also answers to legacy commands, as its records
+        list them (:attr:`Record.legacy_ids`), and the sources listing each.
+        :meth:`Database.lookup <spiflash.db.Database.lookup>` finds the chip
+        by them too; they make no chip of their own."""
+        out: dict[LegacyId, list[Source]] = {}
+        for r in sorted(self.records, key=lambda r: r.source.priority):
+            for legacy in r.legacy_ids:
+                giving = out.setdefault(legacy, [])
+                if r.source not in giving:
+                    giving.append(r.source)
+        return {k: tuple(v) for k, v in sorted(out.items())}
+
     def value(self, name: str) -> Any:
         """The chip's value of ``name``, one of :data:`COMPARED_VALUES`:
         ``flash.value("size")`` is :attr:`size`, ``flash.value("protection.tb")``
@@ -1460,6 +1748,18 @@ class Flash:
             "die_select_bit": self.die_select_bit.to_json() if self.die_select_bit else None,
             "max_bad_blocks": self.max_bad_blocks,
             "ecc": self.ecc.to_json() if self.ecc else None,
+            "supply_mv": self.supply_mv,
+            "otp": self.otp.to_json() if self.otp else None,
+            "address_bytes": _str_or_none(self.address_bytes),
+            "four_byte_modes": {
+                str(m): [s._asdict() for s in self.four_byte_mode_sources(m)]
+                for m in sorted(self.four_byte_modes)
+            },
+            "legacy_ids": [
+                {"method": str(i.method), "id": i.id.hex(), "sources": list(s)}
+                for i, s in self.legacy_ids.items()
+            ],
+            "answers_legacy": self.answers_legacy.key if self.answers_legacy else None,
             "features": sorted(self.features),
             "feature_sources": {
                 f: [s._asdict() for s in self.feature_sources(f)] for f in sorted(self.features)

@@ -185,6 +185,84 @@ _FEATURE_DESCRIPTIONS = {
 }
 
 
+class AddressBytes(StrEnum):
+    """How many address bytes a part takes (BFPT DW1[18:17]; for a record,
+    :func:`spiflash.derive.address_bytes`)."""
+
+    THREE = "3"
+    THREE_OR_FOUR = "3 or 4"
+    FOUR = "4"
+
+
+class FourByteMethod(StrEnum):
+    """A way into (or out of) 4-byte address mode: BFPT DW16's, and
+    flashrom's setting of the extended address register's bit 7. The value
+    is the token the data stores; :attr:`label` says it in words.
+
+    A record's :attr:`~spiflash.model.Record.four_byte_modes` holds only the
+    ways in (:data:`ENTER_METHODS`), and never ``OPCODES_4B``: the 4-byte
+    operations themselves say that (``4byte_opcodes``). ``HW_RESET``,
+    ``SW_RESET`` and ``POWER_CYCLE`` are ways out only."""
+
+    EN4B = "en4b"
+    WREN_EN4B = "wren_en4b"
+    WREAR = "wrear"
+    EAR_BIT7 = "ear_bit7"
+    BRWR = "brwr"
+    NV_CR = "nv_cr"
+    OPCODES_4B = "opcodes_4b"
+    ALWAYS_4B = "always_4b"
+    HW_RESET = "hw_reset"
+    SW_RESET = "sw_reset"
+    POWER_CYCLE = "power_cycle"
+
+    @property
+    def label(self) -> str:
+        """The way in words: ``"EN4B (0xb7)"``."""
+        return _FOUR_BYTE_LABELS[self]
+
+
+_FOUR_BYTE_LABELS = {
+    FourByteMethod.EN4B: "EN4B (0xb7)",
+    FourByteMethod.WREN_EN4B: "WREN then EN4B (0x06, 0xb7)",
+    FourByteMethod.WREAR: "extended address register (0xc5/0xc8)",
+    FourByteMethod.EAR_BIT7: "extended address register bit 7",
+    FourByteMethod.BRWR: "bank address register (0x17/0x16)",
+    FourByteMethod.NV_CR: "16-bit non-volatile configuration register",
+    FourByteMethod.OPCODES_4B: "dedicated 4-byte opcodes",
+    FourByteMethod.ALWAYS_4B: "always 4-byte",
+    FourByteMethod.HW_RESET: "hardware reset",
+    FourByteMethod.SW_RESET: "software reset",
+    FourByteMethod.POWER_CYCLE: "power cycle",
+}
+
+#: The ways into 4-byte address mode a record's ``four_byte_modes`` may
+#: hold: not ``OPCODES_4B`` (the ``_4B`` operations say it) nor the ways out.
+ENTER_METHODS = frozenset(FourByteMethod) - {
+    FourByteMethod.OPCODES_4B,
+    FourByteMethod.HW_RESET,
+    FourByteMethod.SW_RESET,
+    FourByteMethod.POWER_CYCLE,
+}
+
+
+class TestResult(StrEnum):
+    """How well flashrom (or flashprog) says it supports one operation on a
+    part (their ``enum test_state``)."""
+
+    __test__ = False  # not a pytest test class
+
+    OK = "ok"
+    #: Not tested.
+    NT = "nt"
+    #: Known not to work.
+    BAD = "bad"
+    #: Depends on the configuration (an Intel flash descriptor, ...).
+    DEP = "dep"
+    #: Not applicable (writing a ROM).
+    NA = "na"
+
+
 class OperationKind(StrEnum):
     """What an SPI operation is for; the members are in the order the site
     and the command list operations."""
