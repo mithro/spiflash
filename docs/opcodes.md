@@ -12,30 +12,35 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 - `8D` marks double transfer rate, on eight lines
   ([`READ_8D_8D_8D`](opcodes/READ_8D_8D_8D.md));
 - `_4B` is the form taking a 4-byte address
-  ([`READ_1_4_4_4B`](opcodes/READ_1_4_4_4B.md)).
+  ([`READ_1_4_4_4B`](opcodes/READ_1_4_4_4B.md));
+- `NAND_` marks a SPI NAND operation: SPI NAND has a command set of its
+  own ({ref}`SPI NAND <opcodes-nand>`), and an opcode can be a SPI NOR and a SPI
+  NAND one (0x13 is SPI NOR's 4-byte read and SPI NAND's page read).
 
 ## Where each source's opcodes come from
 
 | Source | Where the opcodes come from |
 |---|---|
 | {sfsrc}`flashrom`, {sfsrc}`flashprog` | the probe, the `.read`/`.write` functions, each block eraser (`spi_block_erase_20` sends 0x20), and the feature bits (`FEATURE_FAST_READ_QIO`, `FEATURE_4BA_ENTER`, `FEATURE_QPI_38_FF`, ...) |
-| {sfsrc}`linux` | what {upstream}`linux:drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default; the `no_sfdp_flags` (dual, quad and octal read, 4 KiB erase); sector and chip erase; and the 4-byte forms for `SPI_NOR_4B_OPCODES` |
+| {sfsrc}`linux` | what {upstream}`linux:drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default; the `no_sfdp_flags` (dual, quad and octal read, 4 KiB erase); sector and chip erase; the 4-byte forms for `SPI_NOR_4B_OPCODES`; and the die erase and die select its fixups set. For SPI NAND, the entry's read-from-cache, write-cache and update-cache op variants, each read with the part's dummy clocks, its die select, and the page read, program execute and feature commands {upstream}`linux:drivers/mtd/nand/spi/core.c` sends every part |
 | {sfsrc}`u-boot` | the same from its {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
-| {sfsrc}`dediprog` | the id command, and the opcodes its entry packs into `ReadCmd`, `ProgramCmd` and `EraseCmd`: the single-line read and page program, and the chip, block and die erase (SPI NOR only) |
-| {sfsrc}`rockchip` | what its rkflash driver sets up for an SPI NOR entry ({upstream}`rockchip:drivers/rkflash/sfc_nor.c`): the read, page program, 4 KiB and block erase opcodes the entry gives, its quad read and program where its feature bits turn them on, and entering 4-byte mode for `FEA_4BYTE_ADDR_MODE` |
-| {sfsrc}`mediatek` | none: its table is SPI NAND only, and the read-from-cache and program-load modes each entry allows (x1, x2, x4, dual and quad I/O) are kept in the record's `flags` |
+| {sfsrc}`dediprog` | the id command, and the opcodes its entry packs into `ReadCmd`, `ProgramCmd` and `EraseCmd`: the single-line read and page program, and the chip, block and die erase (SPI NOR); for SPI NAND, the bad block lookup table's swap and read where its `SupportLUT` says |
+| {sfsrc}`rockchip` | what its rkflash driver sets up for an SPI NOR entry ({upstream}`rockchip:drivers/rkflash/sfc_nor.c`): the read, page program, 4 KiB and block erase opcodes the entry gives, its quad read and program where its feature bits turn them on, and entering 4-byte mode for `FEA_4BYTE_ADDR_MODE`; and for an SPI NAND one ({upstream}`rockchip:drivers/rkflash/sfc_nand.c`), the quad read from cache and quad load its feature bits turn on, and the read, load, page read, program execute and feature commands it sends every part |
+| {sfsrc}`mediatek` | its table is SPI NAND only: the read-from-cache and program-load modes each entry allows (`cap_rd` and `cap_pl`: x1, x2, x4, dual and quad I/O), each with its dummy clocks; Winbond's die select (0xc2); and the page read, program execute and feature commands its driver sends every part |
 | {sfsrc}`openocd` | the columns of its table: read, fastest read, page program, sector erase and chip erase |
 | {sfsrc}`openfpgaloader` | what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends: read, page program, and the erases its table allows |
 | {sfsrc}`imsprog` | what its {upstream}`imsprog:IMSProg_programmer/spi_nor_flash.c` sends to a SPI NOR part: read, page program (in 256-byte pages) and the 0xd8 block erase (at every 64 KiB, whatever the part's blocks; it never sends a chip erase), and above 16 MiB the way the entry says to enter 4-byte addressing (`EN4B`, Winbond's, or Spansion's bank register) |
 | {sfsrc}`qemu` | what its model ({upstream}`qemu:hw/block/m25p80.c`) decodes for every part (read, fast read, page program, sector erase, and chip erase as 0xc7 and 0x60), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for ({upstream}`qemu:hw/block/m25p80_sfdp.c`), everything those tables list, with the part's own dummy clocks, worked out from the stored tables ([](derived.md#sfdp-tables)) |
 | {sfsrc}`zephyr` | the board's devicetree: everything in the chip's own SFDP tables where the board copies them (`sfdp-bfp`, JESD216's Basic Flash Parameter table, and `sfdp-ff84`), worked out from the stored tables, and the read and program modes the board uses (`readoc`, `writeoc`, `use-fast-read`, `enter-4byte-addr`, ...) |
 
-Two kinds follow from what any SPI NOR entry already says, so they are worked
+Two kinds follow from what any entry already says, so they are worked
 out when the data is loaded rather than stored ({py:mod}`spiflash.derive`):
 the id read of the way the entry reads its id ([`RDID`](opcodes/RDID.md),
-[`REMS`](opcodes/REMS.md), [`RES`](opcodes/RES.md), ...), unless the entry
-names the command it reads the id with ({sfsrc}`dediprog`'s `RDIDCommand`), and
-the erase each of its erase layouts sends. A chip page marks those *implied* in "Why each source
+[`REMS`](opcodes/REMS.md), [`RES`](opcodes/RES.md), ..., and a SPI NAND
+part's [`NAND_RDID_DUMMY`](opcodes/NAND_RDID_DUMMY.md) and the others),
+unless the entry names the command it reads the id with ({sfsrc}`dediprog`'s
+`RDIDCommand`), and the erase each of its erase layouts sends (a SPI NAND
+part's [`NAND_BLOCK_ERASE`](opcodes/NAND_BLOCK_ERASE.md)). A chip page marks those *implied* in "Why each source
 lists each opcode". An operation a source's driver sends to every part, whatever the
 entry says (Linux's fast read, U-Boot's quad page program for every quad-read part), is
 marked a *driver default*: it says nothing of the part, so implies no capability

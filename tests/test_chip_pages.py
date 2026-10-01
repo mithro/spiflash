@@ -116,3 +116,40 @@ def test_registers() -> None:
     assert "put bp3 and tb on one bit, SR1 bit 5" in regs
     # A chip no source gives a register bit has no section.
     assert "## Registers" not in nor_page("1f6601")
+
+
+def test_a_spi_nand_page_has_its_geometry() -> None:
+    text = page("efab21")  # the W25M02GV: two dies, Winbond's die select
+    cards = text[text.index("{grid-item-card} Capacity") : text.index("## ")]
+    assert "{grid-item-card} Spare/page" in cards
+    assert "{grid-item-card} Block" in cards
+    assert "{grid-item-card} Sector" not in cards
+    geometry = text[text.index("## NAND geometry") :]
+    geometry = geometry[: geometry.index("\n## ")]
+    assert "Spare area per page" in geometry
+    assert "Die select operation" in geometry
+    assert "[`NAND_DIE_SELECT`](../opcodes/NAND_DIE_SELECT.md)" in geometry
+    assert "Worked out from those" in geometry
+    assert "Blocks per die" in geometry
+    # The block erase is SPI NAND's own, linked.
+    assert "[`NAND_BLOCK_ERASE`](../opcodes/NAND_BLOCK_ERASE.md)" in text
+    # Micron's die select bit.
+    assert "die select feature bit 6" in page("2c36")
+
+
+def test_the_opcodes_give_a_parts_dummy_clocks() -> None:
+    text = page("efab21")
+    table = text[text.index("## Opcodes") : text.index("Why each source lists each opcode")]
+    assert "  - Dummy\n" in table
+    why = text[text.index("Why each source lists each opcode") :]
+    assert r"read\_cache\_variants, 4 dummy clocks" in why
+    # The SPI NAND kinds link to the opcodes page's SPI NAND table.
+    assert "<../opcodes.html#opcodes-nand>`" in table
+
+
+def test_a_die_erase_layout_is_the_dies() -> None:
+    text = nor_page("20ba22")  # MT25QL02G
+    layouts = text[text.index("## Erase layouts") :]
+    assert "*(from its 4 dies)*" in layouts
+    dies = text[text.index("## Dies") : text.index("## Erase layouts")]
+    assert "{bdg-primary}`chip`" in dies

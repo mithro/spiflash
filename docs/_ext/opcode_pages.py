@@ -23,7 +23,7 @@ from page_markup import (
     vendor_link,
     vendor_of,
 )
-from spiflash.enums import DataPhase, OperationKind, TimingSource
+from spiflash.enums import DataPhase, FlashType, OperationKind, TimingSource
 from spiflash.opcodes import OPERATIONS
 
 if TYPE_CHECKING:
@@ -60,6 +60,12 @@ TIMING_TEXT = {
     ),
     TimingSource.JESD216: (
         f"[JEDEC JESD216]({JESD216}) (SFDP) specifies a 3-byte address and 8 dummy clocks."
+    ),
+    TimingSource.LINUX_SPINAND: (
+        "{sfsrc}`linux`'s `SPINAND_*_OP` macros in "
+        "{upstream}`linux:include/linux/mtd/spinand.h` give each SPI NAND operation's "
+        "address bytes and lines; its dummy bytes are each part's, from the op variants "
+        "its entry lists (shown on the chip pages as dummy clocks)."
     ),
     TimingSource.PART: (
         "The details vary by part: check its datasheet. Where the dummy clocks are "
@@ -167,6 +173,49 @@ NOTES = {
         "Erases one die of a stacked part (Micron); the address selects the die. On "
         "single-die parts chip erase ([`CHIP_ERASE`](CHIP_ERASE.md)) does the same."
     ),
+    "DIE_ERASE_61": (
+        "Infineon's (Cypress's) die erase, on its stacked S25H and S28H parts in "
+        "4-byte address mode; the address selects the die."
+    ),
+    "DIE_SELECT": (
+        "Selects which die of a stacked Winbond part the following commands go to; "
+        "the data byte is the die, from 0. {sfsrc}`linux` selects each in turn to "
+        "poll its busy bit."
+    ),
+    "NAND_RDID": (
+        "The flash answers with its id straight after the opcode: the manufacturer "
+        "byte, then its device bytes."
+    ),
+    "NAND_RDID_DUMMY": "The flash answers with its id after one dummy byte.",
+    "NAND_RDID_ADDR": "The flash answers with its id after one address byte (0).",
+    "NAND_PAGE_READ": (
+        "Reads the page at a 3-byte row (page) address into the part's cache; the "
+        "host polls the status feature until the busy bit clears, then reads from "
+        "the cache."
+    ),
+    "NAND_PROGRAM_EXECUTE": (
+        "Programs the cache into the page at a 3-byte row (page) address; the host "
+        "loads the cache first, and sends Write Enable (0x06) before."
+    ),
+    "NAND_BLOCK_ERASE": (
+        "Erases the block holding a 3-byte row (page) address. The host sends Write "
+        "Enable (0x06) first, then polls the status feature until the busy bit clears."
+    ),
+    "NAND_GET_FEATURE": (
+        "Reads the feature (register) at a 1-byte address: 0xa0 block protection, "
+        "0xb0 configuration, 0xc0 status, and the vendors' own (Micron's die select "
+        "at 0xd0)."
+    ),
+    "NAND_SET_FEATURE": "Writes the feature (register) at a 1-byte address.",
+    "NAND_BBM_SWAP": (
+        "Adds a link to the part's bad block lookup table: the logical block, then "
+        "the physical block standing in for it."
+    ),
+    "NAND_READ_BBM_LUT": "Reads the part's bad block lookup table, after 8 dummy clocks.",
+    "NAND_DIE_SELECT": (
+        "Selects which die of a stacked Winbond SPI NAND part (the W25M02GV) the "
+        "following commands go to; the data byte is the die, from 0."
+    ),
     "CHIP_ERASE_ALT": "Most parts accept this as well as 0xc7 ([`CHIP_ERASE`](CHIP_ERASE.md)).",
     "CHIP_ERASE_ATMEL": "Atmel AT25F parts' chip erase.",
     "READ_8D_8D_8D": (
@@ -189,7 +238,11 @@ def explain(op: Operation) -> str:
     """What ``op`` does, in a paragraph."""
     cmd, addr, data = op.lines
     width = f"{op.address_bytes}-byte"
-    if op.kind is OperationKind.READ:
+    if op.flash_type is FlashType.NAND:
+        # A read from cache or a load; the rest are in NOTES.
+        cache = op.name.startswith(("NAND_READ_CACHE", "NAND_PROGRAM_LOAD", "NAND_RANDOM_LOAD"))
+        text = _explain_nand_cache(op) if cache else ""
+    elif op.kind is OperationKind.READ:
         text = (
             f"Reads data from a {width} address. The host sends the command on {_lines(cmd)} "
             f"and the address on {_lines(addr)}"
@@ -221,6 +274,29 @@ def explain(op: Operation) -> str:
         text = ""
     note = NOTES.get(op.name, "")
     return " ".join(t for t in (text, note) if t) or esc(op.description) + "."
+
+
+def _explain_nand_cache(op: Operation) -> str:
+    """A SPI NAND read from cache or program load, in a paragraph."""
+    cmd, addr, data = op.lines
+    width = f"{op.address_bytes}-byte"
+    if op.kind is OperationKind.READ:
+        return (
+            f"Reads from the part's cache, which a page read "
+            f"([`NAND_PAGE_READ`](NAND_PAGE_READ.md)) filled, from a {width} column address. "
+            f"The host sends the command on {_lines(cmd)} and the address on {_lines(addr)}"
+            + (f", then {_dummy(op)}" if op.dummy_clocks != 0 else "")
+            + f"; the flash answers with data on {_lines(data)}, for as long as the host "
+            "keeps the clock running. A part's own dummy clocks are on its chip page."
+        )
+    keeps = "keeps the rest of" if op.name.startswith("NAND_RANDOM_LOAD") else "clears"
+    return (
+        f"Loads data into the part's cache from a {width} column address, and {keeps} "
+        f"the cache: the command goes on {_lines(cmd)}, the address on {_lines(addr)}, "
+        f"and the data on {_lines(data)}. Program execute "
+        "([`NAND_PROGRAM_EXECUTE`](NAND_PROGRAM_EXECUTE.md)) then programs the cache "
+        "into a page."
+    )
 
 
 def _lines(n: int) -> str:
@@ -270,7 +346,11 @@ def phases(op: Operation) -> list[list[str]]:
 
 def related(op: Operation) -> list[Operation]:
     """Operations that share ``op``'s opcode, and its 3- and 4-byte-address pair."""
-    out = [o for o in OPERATIONS.values() if o.opcode == op.opcode and o is not op]
+    out = [
+        o
+        for o in OPERATIONS.values()
+        if o.opcode == op.opcode and o is not op and o.flash_type is op.flash_type
+    ]
     pair = op.name.removesuffix("_4B") if op.name.endswith("_4B") else op.name + "_4B"
     if pair in OPERATIONS and OPERATIONS[pair] not in out:
         out.append(OPERATIONS[pair])
@@ -285,6 +365,7 @@ def operation_page(op: Operation, flashes: list[Flash], slugs: dict[int, str]) -
     out = [f"# `{op.name}`: {esc(op.description)}\n"]
     tags = [
         f"{{sfop}}`0x{op.opcode:02x}`",
+        badge(op.flash_type.label, "secondary"),
         badge(KIND_TITLE[op.kind], "primary"),
         badge(op.protocol, "info"),
     ]

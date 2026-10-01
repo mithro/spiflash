@@ -20,7 +20,9 @@ erase opcode with its block layout, the supply voltage, the test status
 (`TEST_OK_PREW`: probe, read, erase and write tested), the feature bits
 (`FEATURE_*`), and the legacy ids. Its names use `.` as a wildcard
 (`W25Q128.V` is the BV, FV and JV), so such a name is a family rather than a
-part.
+part. A die erase eraser (`spi_block_erase_c4` over `{64 MiB, 2}` on the
+MT25QL01G) gives the record's `dies` and its [DIE_ERASE](../opcodes/DIE_ERASE.md);
+its layout is the dies', so is not stored ([](../derived.md#dies)).
 
 Its `.reg_bits` say where each status register bit with a role is, by what
 the bit does (`.tb` is a bit that works as TB, whatever the datasheet calls

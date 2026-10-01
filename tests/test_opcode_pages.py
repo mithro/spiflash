@@ -74,6 +74,13 @@ def test_octal_dtr_is_a_bus_with_a_strobe() -> None:
         ("CHIP_ERASE", "whole chip"),
         ("RDID", "JEP106"),
         ("READ_1_8_8", "depends on the part"),
+        ("NAND_READ_CACHE_1_4_4", "Reads from the part's cache"),
+        ("NAND_READ_CACHE_1_4_4", "4 dummy clocks"),
+        ("NAND_PROGRAM_LOAD_1_1_4", "clears the cache"),
+        ("NAND_RANDOM_LOAD_1_1_1", "keeps the rest of the cache"),
+        ("NAND_BLOCK_ERASE", "row (page) address"),
+        ("NAND_DIE_SELECT", "W25M02GV"),
+        ("DIE_ERASE_61", "Infineon"),
     ],
 )
 def test_explanations(name: str, phrase: str) -> None:
@@ -93,3 +100,9 @@ def test_related() -> None:
     names = {o.name for o in related(OPERATIONS["READ_1_1_1_FAST"])}
     assert {"READ_8D_8D_8D", "READ_1_1_1_FAST_4B"} <= names
     assert {o.name for o in related(OPERATIONS["SE_4B"])} == {"SE"}
+    # SPI NAND's operations are their own: 0x13 is SPI NOR's 4-byte read
+    # and SPI NAND's page read, which are not related.
+    assert "READ_1_1_1_4B" not in {o.name for o in related(OPERATIONS["NAND_PAGE_READ"])}
+    assert {o.name for o in related(OPERATIONS["NAND_READ_CACHE_1_1_1"])} == {
+        "NAND_READ_CACHE_1_1_1_3A"
+    }

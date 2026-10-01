@@ -76,9 +76,20 @@ For an SPI NAND entry, `sfc_nand_init()` in sfc_nand.c:
 - the page is `sec_per_page` sectors of 512 bytes, the erase block
   `page_per_blk` pages (its block erase's layout), and the size `plane_per_die` times `blk_per_plane`
   blocks, which `density` agrees with in every entry;
-- `FEA_4BIT_READ` and `FEA_4BIT_PROG` are quad read (0x6b) and quad program
-  load (0x32). SPI NAND records have no opcodes, as {sfsrc}`linux`'s have
-  none;
+- the record's `planes` is `plane_per_die`, which also sets the plane bit
+  of the column address; Rockchip states no dies (its FTL's `die_num` is 1
+  for every part);
+- its `ecc` is `max_ecc_bits`, which the driver passes to its FTL with no
+  step: 8 bits, not 8 bits per 512 bytes;
+- the driver reads from cache with 0x03 and loads with 0x02, then for
+  `FEA_4BIT_READ` reads with the quad output 0x6b
+  ([`NAND_READ_CACHE_1_1_4`](../opcodes/NAND_READ_CACHE_1_1_4.md)), and for
+  `FEA_4BIT_PROG` (while it reads on four lines) loads with 0x32
+  ([`NAND_PROGRAM_LOAD_1_1_4`](../opcodes/NAND_PROGRAM_LOAD_1_1_4.md)). The
+  feature bits are those operations' `via`, which imply `quad_read` and
+  `quad_pp`. Its 0x03 and 0x02, and the page read, program execute and
+  feature commands it sends every part, are driver defaults, 8 dummy clocks
+  for every read: no part's own;
 - `has_qe_bits=1` is a quad enable bit, bit 0 of the configuration feature
   (0xb0), which `sfc_nand_enable_QE()` sets before quad reads; with
   `has_qe_bits=0` a part with quad reads is read with four lines setting
@@ -109,20 +120,17 @@ id is never used, and its record says which line wins
 
 The raw fields are kept in the record's `flags`: the feature bits that give
 no capability (`FEA_SOFT_QOP_BIT`, ...; `FEA_4BIT_READ` and the others that
-do are the capability's `via`), the function writing the status registers
+do are an operation's or a capability's `via`), the function writing the status registers
 where it sends nothing the record has as an operation
 (`write_status=snor_write_status`), `has_qe_bits=0` on a part without quad
 reads, which says nothing, and the following fields, which the database has
 no field for yet:
 
-- the ECC strength its FTL expects (`max_ecc_bits=8`);
 - where the FTL keeps its metadata in the spare area
   (`meta={ 0x04, 0x08, 0xFF, 0xFF }`);
 - the function that decodes its ECC status
   (`ecc_status=sfc_nand_get_ecc_status0`), since the parts report ECC
   results in different bits of feature registers 0xc0 and 0xf0.
-
-The number of planes is in the notes (`2 plane(s) of 1024 blocks`).
 
 Its entries are not reviewed in the open, and a few disagree with the other
 sources: it gives the F50L1G41LC 2 Gbit, where {sfsrc}`linux` and

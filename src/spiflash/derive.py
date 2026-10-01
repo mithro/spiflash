@@ -5,12 +5,14 @@ A fact an upstream entry states is stored once, in one field of its
 the record is made, and never written to the data. The rules read only what
 the record stores (:data:`~spiflash.model.CLAIMS`). They are:
 
-- how a SPI NOR record reads its id (:data:`ID_OPERATION`) gives the id
-  operation, unless the entry names the command it reads the id with
-  (``via["id_method"]``: Dediprog's ``RDIDCommand``) or stores another id
-  read, which is then what it states;
-- each of its erasers with an opcode (:data:`ERASE_BY_OPCODE`) gives that
-  erase operation;
+- how a record reads its id (:data:`ID_OPERATION`, a SPI NAND one's
+  :data:`NAND_ID_OPERATION`) gives the id operation, unless the entry names
+  the command it reads the id with (``via["id_method"]``: Dediprog's
+  ``RDIDCommand``) or stores another id read, which is then what it states;
+- each of its erasers with an opcode (:data:`ERASE_BY_OPCODE`, a SPI NAND
+  one's :data:`NAND_ERASE_BY_OPCODE`) gives that erase operation;
+- its dies and the die erase it states give the die erase layout
+  (:func:`die_erasers`), which is never stored;
 - its SFDP tables (an upstream's dump, or tables it copies) give what they
   say in the record's own terms (:meth:`Sfdp.facts
   <spiflash.sfdp.Sfdp.facts>`): the size, page size and quad enable

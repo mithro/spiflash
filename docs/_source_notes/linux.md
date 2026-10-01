@@ -60,5 +60,40 @@ bit. A per-part fixup does (the MX25L3255E's SR1 bit 6, the MT35XU's none),
 but the GD25Q256's sets SR1 bit 6 only for a JESD216 1.0 table (the
 GD25Q256C), so that entry has none. A SPI NAND entry's
 `SPINAND_HAS_QE_BIT` is bit 0 of its configuration register (feature 0xb0).
+Without it, `spinand_init_quad_enable()` clears that bit and the driver
+still reads on four lines where the entry has a quad op variant, so such an
+entry's bit is *none*. That is the driver's behaviour, not always the
+part's: XTX's XT26G0xD and XT26Q0xD have no `SPINAND_HAS_QE_BIT`, though
+their datasheet's feature 0xb0 bit 0 is a QE bit quad reads need (a
+[data issue](../issues/value.md) against {sfsrc}`rockchip`).
+
+The fixups that set a SPI NOR part's dies (`params->n_dice`) and die erase
+(`params->die_erase_opcode`) give the record's `dies` and its die erase:
+micron-st.c's MT25Q, N25Q00 and MT35XU parts (4 or 2 dies, Micron's 0xc4
+[DIE_ERASE](../opcodes/DIE_ERASE.md)), and spansion.c's 2 Gbit S25H and
+S28H parts (2 dies, the 4 their SFDP tables give corrected, with
+Infineon's 0x61 [DIE_ERASE_61](../opcodes/DIE_ERASE_61.md); the smaller
+parts' come from their SFDP tables alone, which Linux does not carry).
+Winbond's W25Q01JV and W25Q02JV have `size / SZ_64M` dies (2 and 4, by
+their density) and no die erase; the kernel selects each with 0xc2
+([DIE_SELECT](../opcodes/DIE_SELECT.md)) to poll it.
+
+A SPI NAND entry's `NAND_MEMORG` gives its spare area per page (`oob_size`),
+planes, most bad blocks per die and dies (LUNs per target times targets),
+and `NAND_ECCREQ` its ECC requirement. Its read-from-cache, write-cache and
+update-cache op variants, each file's `SPINAND_OP_VARIANTS` of the
+`SPINAND_*_OP` macros in {upstream}`linux:include/linux/mtd/spinand.h`, are
+its {ref}`SPI NAND operations <opcodes-nand>`, each read with its
+dummy clocks (the dummy bytes the variant passes, times 8, over the dummy
+phase's lines; of several variants of one operation, the most, which is the
+one without a clock limit). The double transfer rate variants have no
+operation here yet, nor do the continuous-read ones. The page read, program
+execute and feature commands its core sends every part are driver defaults.
+A part of two targets selects one with its `SPINAND_SELECT_TARGET`: the
+W25M02GV with 0xc2 and the die
+([NAND_DIE_SELECT](../opcodes/NAND_DIE_SELECT.md)), Micron's MT29F4G01ADAGD,
+MT29F8G01ADAFD and MT29F8G01ADBFD with bit 6 of feature 0xd0 (the record's
+`die_select_bit`). A part of several LUNs and one target (the W25N02JW,
+the GD5F4GQ6) has dies, but no select: they are row address bits.
 `USE_FSR`, `USE_CLSR` and `USE_CLPEF` are the flag status register and the
 error-clearing commands its driver sends.

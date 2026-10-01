@@ -261,3 +261,75 @@ Changes in data format 7 (register bits):
   description gains the QE bit (`QE SR2[1]`), and with `-v` the
   requirement and the protection bits; the site a Registers section on
   the chip pages, and a kind of data issue for two roles on one bit.
+
+Changes in data format 8 (SPI NAND geometry, dies, SPI NAND operations):
+
+- the records gain `"oob_size"` (spare bytes per page), `"planes"` (per
+  die), `"max_bad_blocks"` (per die) and `"ecc"`
+  (`{"strength_bits": 8, "step_bytes": 512}`, without `"step_bytes"` where
+  the source gives none), SPI NAND only; `"dies"`, SPI NOR and SPI NAND; and
+  `"die_select_bit"` (a register bit, `{"register": "nand-d0", "bit": 6}`),
+  each `null` where the entry says nothing. A `"via"` key may name `dies`
+  or `die_select_bit`;
+- a die erase layout (0xc4, 0x61) is no longer stored: it is derived from
+  `"dies"` and the stated die erase ({py:func}`~spiflash.derive.die_erasers`),
+  so {sfsrc}`flashrom`'s, {sfsrc}`flashprog`'s and {sfsrc}`dediprog`'s 0xc4
+  erasers are `"dies"` now, and {sfsrc}`qemu`'s `die_cnt` flag too;
+- the SPI NAND records gain SPI NAND's own operations ({ref}`opcodes-nand`),
+  each read with `"dummy_clocks"` where the entry states them
+  ({sfsrc}`linux`'s op variants, {sfsrc}`mediatek`'s I/O modes), and lose
+  {sfsrc}`dediprog`'s SPI NOR `RDID` (a SPI NAND part's read-id is derived
+  from its id method); {sfsrc}`mediatek`'s and {sfsrc}`rockchip`'s
+  `dual_read`, `quad_read` and `quad_pp` claims go, as their operations imply
+  them, and so do the flags and notes the new fields hold (MediaTek's
+  `sparesize`, `planes_per_die`, `ndies`, `select_die`, `read_from_cache` and
+  `program_load`; Rockchip's `max_ecc_bits` and planes note; IMSProg's
+  `ECCsize`; Linux's "OOB per page" note); {sfsrc}`linux`'s SPI NAND entries
+  without `SPINAND_HAS_QE_BIT` and with a quad op variant have
+  `"quad_enable": "none"`;
+- {py:class}`~spiflash.opcodes.Operation` has `flash_type`; new operations:
+  the `NAND_*` ones, [DIE_SELECT](opcodes/DIE_SELECT.md) and
+  [DIE_ERASE_61](opcodes/DIE_ERASE_61.md);
+  {py:class}`~spiflash.registers.Register` has `NAND_DIE`, and
+  {py:class}`~spiflash.enums.TimingSource` `LINUX_SPINAND`;
+- {py:class}`~spiflash.model.Record` has
+  {py:attr}`~spiflash.model.Record.oob_size`,
+  {py:attr}`~spiflash.model.Record.planes`,
+  {py:attr}`~spiflash.model.Record.dies_claim` (stored, JSON `"dies"`),
+  {py:attr}`~spiflash.model.Record.dies` (it, or its SFDP tables'),
+  {py:attr}`~spiflash.model.Record.die_select_bit`,
+  {py:attr}`~spiflash.model.Record.max_bad_blocks` and
+  {py:attr}`~spiflash.model.Record.ecc` (a new
+  {py:class}`~spiflash.model.EccRequirement`); a SPI NAND record's
+  {py:attr}`~spiflash.model.Record.opcodes` now has its derived read-id and
+  block erase, and its {py:attr}`~spiflash.model.Record.features` what its
+  operations imply;
+- {py:class}`~spiflash.model.Flash` has
+  {py:attr}`~spiflash.model.Flash.oob_size`,
+  {py:attr}`~spiflash.model.Flash.planes`,
+  {py:attr}`~spiflash.model.Flash.dies`,
+  {py:attr}`~spiflash.model.Flash.die_select_bit`,
+  {py:attr}`~spiflash.model.Flash.max_bad_blocks` and
+  {py:attr}`~spiflash.model.Flash.ecc`, and
+  {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>` gains them and
+  each operation's `"dummy_clocks"`;
+- {py:data}`~spiflash.model.COMPARED` gains them, the ECC requirement
+  compared by its strength and its step each on its own
+  (`Compared.PER_ROLE` is {py:attr}`Compared.PER_COMPONENT
+  <spiflash.model.Compared.PER_COMPONENT>`, its components in
+  {py:data}`~spiflash.model.COMPONENTS`), so
+  {py:data}`~spiflash.model.COMPARED_VALUES` has `"ecc.strength_bits"` and
+  `"ecc.step_bytes"`, which {py:meth}`Record.given
+  <spiflash.model.Record.given>` and {py:meth}`Flash.value
+  <spiflash.model.Flash.value>` read;
+- {py:class}`~spiflash.model.Claim` has a fifth field, `dummy_clocks`, and
+  {py:class}`~spiflash.model.SupportedOperation` has
+  {py:attr}`~spiflash.model.SupportedOperation.dummy_clocks` and
+  {py:meth}`~spiflash.model.SupportedOperation.dummy_clocks_given`;
+- {py:class}`~spiflash.sfdp.SfdpFacts` has `dies`, and
+  {py:func}`~spiflash.sfdp_tools.to_entry` stores them;
+- the command's description gains a SPI NAND part's spare area, block,
+  planes, dies and ECC requirement, and a SPI NOR part's dies, and its
+  opcode table a part's own dummy clocks; the site a NAND geometry (or
+  Dies) section and a Dummy column on the chip pages, a SPI NAND table on
+  [](opcodes.md), and data issues for the new values.
