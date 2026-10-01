@@ -74,7 +74,8 @@ MT35XU02G, which has four, the C of MT35XU02GCBA), and spansion.c's 2 Gbit S25H 
 S28H parts (2 dies, the 4 their SFDP tables give corrected, with
 Infineon's 0x61 [DIE_ERASE_61](../opcodes/DIE_ERASE_61.md); the smaller
 parts' come from their SFDP tables alone, which Linux does not carry).
-Winbond's W25Q01JV and W25Q02JV have `size / SZ_64M` dies (2 and 4, by
+`spi_nor_erase()` erases such a part die by die, and never sends its chip
+erase, so those records have no default chip erase. Winbond's W25Q01JV and W25Q02JV have `size / SZ_64M` dies (2 and 4, by
 their density) and no die erase; the kernel selects each with 0xc2
 ([DIE_SELECT](../opcodes/DIE_SELECT.md)) to poll it.
 

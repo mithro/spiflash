@@ -196,7 +196,9 @@ bad block marker.
 
 Its entries are not reviewed in the open, and some are wrong: an entry's
 read and program words swapped, a block size larger than the chip, several
-entries for one id with different sizes. A source listing a part several
+entries for one id with different sizes, a chip erase (0xc7) on the stacked
+MT25QL01GBBB and MT25QU01GB, which erase a die at a time and have none (left
+out, with a note). A source listing a part several
 times still has one vote when the sources disagree.
 [Its data issues page](../issues/source-dediprog.md) lists where it
 disagrees with the others.

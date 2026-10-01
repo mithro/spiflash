@@ -927,6 +927,13 @@ def test_opcodes_of_a_shipped_chip() -> None:
     for op in ("READ_1_1_1", "READ_1_1_4", "PP_1_1_1", "BE_4K", "SE", "CHIP_ERASE"):
         assert f.supports(op), op
     assert not f.supports("READ_1_1_8")
+    # An operation only a driver default gives is listed, but not supported:
+    # the stacked MT25QL02G erases a die at a time, and has no chip erase.
+    (mt,) = spiflash.lookup("20ba22")
+    assert mt.supports("DIE_ERASE")
+    for op in ("CHIP_ERASE", "CHIP_ERASE_ALT"):
+        assert not mt.supports(op)
+        assert mt.opcodes[op].assumed_by == mt.opcodes[op].sources == ("qemu",)
     se = f.opcodes["SE"]
     assert se.opcode == 0xD8
     assert se.name == "SE"

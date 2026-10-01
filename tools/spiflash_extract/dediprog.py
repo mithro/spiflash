@@ -423,6 +423,7 @@ def _record(line: int, chip: dict[str, str]) -> Record:
     page = int(chip["PageSizeInByte"])
     ops = Opcodes()
     command = int(chip["RDIDCommand"], 16)
+    erase_notes: list[str] = []
     # The command the entry names (0xaf alone is no operation spiflash has),
     # but read-id for a JEDEC id under 0x90. A SPI NAND part's read-id is
     # its id method's (spiflash.derive.NAND_ID_OPERATION).
@@ -456,7 +457,7 @@ def _record(line: int, chip: dict[str, str]) -> Record:
                 ops.add("BP" if byte_program else op, f"{word}={words[word]}", value=byte)
         # Not AddrWidth, which is 4 for some 32 KiB parts: the size, and
         # the operations, imply 4-byte addressing.
-        erasers = _erasers(chip, ops, size)
+        erasers = _erasers(chip, ops, size, erase_notes)
         # The status register bits to clear to unprotect the chip: BP0 to
         # BP4 are bits 2 to 6.
         if int(chip.get("ProtectBlockMask", "0"), 16) & 0x7C:
@@ -525,7 +526,13 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         listed_clock_hz=clock,
         timings=timings,
         opcodes=ops.to_json(),
-        notes=([description] if description else []) + qe_notes + legacy_notes + clock_notes,
+        notes=(
+            ([description] if description else [])
+            + qe_notes
+            + legacy_notes
+            + clock_notes
+            + erase_notes
+        ),
         **nand,
     )
 
@@ -673,7 +680,22 @@ def _opcodes(chip: dict[str, str], word: str, text: str) -> Iterator[tuple[int, 
         yield slot, byte, table[byte]
 
 
-def _erasers(chip: dict[str, str], ops: Opcodes, size: int) -> list[dict[str, Any]]:
+_STACKED = (
+    "the {part} is stacked dies, erased a die at a time with DIE ERASE (0xc4), and "
+    "has no chip (bulk) erase: its datasheet lists no 0xc7 ({sheet})"
+)
+
+#: Erase opcodes the part does not have, by entry and opcode, and why: the
+#: record leaves them out, with a note.
+ERASE_WRONG = {
+    ("MT25QL01GBBB", 0xC7): _STACKED.format(part="MT25QL01G", sheet="MT25QL01GBBB, command set"),
+    ("MT25QU01GB", 0xC7): _STACKED.format(part="MT25QU01G", sheet="as the MT25QL01GBBB's"),
+}
+
+
+def _erasers(
+    chip: dict[str, str], ops: Opcodes, size: int, notes: list[str]
+) -> list[dict[str, Any]]:
     """The erase layouts: chip erase; 0x20 over the ``SectorSizeInByte`` sectors; 0x52 over the SST
     parts' 32 KiB blocks, or an AT25F's ``SectorSizeInByte`` where that is
     not the template's 4096. Die erase has none: its layout is the dies'
@@ -685,6 +707,10 @@ def _erasers(chip: dict[str, str], ops: Opcodes, size: int) -> list[dict[str, An
     (the AMIC A25L..P parts)."""
     out: list[dict[str, Any]] = []
     for slot, byte, op in _opcodes(chip, "EraseCmd", chip["EraseCmd"]):
+        wrong = ERASE_WRONG.get((chip["TypeName"], byte))
+        if wrong is not None:
+            notes.append(f"EraseCmd={chip['EraseCmd']}'s 0x{byte:02x} left out: {wrong}")
+            continue
         ops.add(op, f"EraseCmd={chip['EraseCmd']}", value=byte)
         sectors = int(chip.get("SectorSizeInByte", "0"))
         if slot == 0:

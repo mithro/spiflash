@@ -40,6 +40,24 @@ def part_name(vendor: str, name: str) -> str:
     return name
 
 
+_STACKED = (
+    "the {part} is stacked dies, erased a die at a time with DIE ERASE (0xc4), and "
+    "has no chip (bulk) erase: its datasheet lists no 0xc7 ({sheet})"
+)
+
+#: Entries whose ``chip_erase_cmd`` the part does not have, by OpenOCD's
+#: name, and why: the record leaves it out, with a note.
+CHIP_ERASE_WRONG = {
+    "micron mt25ql01": _STACKED.format(part="MT25QL01G", sheet="MT25QL01GBBB, command set"),
+    "micron mt25qu01": _STACKED.format(part="MT25QU01G", sheet="as the MT25QL01GBBB's"),
+    "micron mt25ql02": _STACKED.format(
+        part="MT25QL02G",
+        sheet='MT25QL02GCBB, command set; its Rev. B history: "DIE ERASE instead BULK ERASE"',
+    ),
+    "micron mt25qu02": _STACKED.format(part="MT25QU02G", sheet="as the MT25QL02GCBB's"),
+}
+
+
 def device_id_hex(device_id: int) -> str:
     """The RDID bytes, as the chip sends them, of an OpenOCD ``device_id``."""
     cont = (device_id >> 24) & 0xFF
@@ -75,6 +93,11 @@ def extract(root: Path) -> list[Record]:
             erase, chip_erase, dev, page, sector, size = nums[3:]
             features: set[str] = set()
             _field(ops, notes, "erase_cmd", erase, ERASE_BY_OPCODE)
+            if full in CHIP_ERASE_WRONG:
+                notes.append(
+                    f"chip_erase_cmd 0x{chip_erase:02x} left out: {CHIP_ERASE_WRONG[full]}"
+                )
+                chip_erase = 0
             _field(ops, notes, "chip_erase_cmd", chip_erase, ERASE_BY_OPCODE)
             erasers = [{"opcode": erase, "blocks": [[sector, size // sector]]}] if sector else []
             if chip_erase:

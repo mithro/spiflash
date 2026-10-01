@@ -15,7 +15,9 @@ answer against it. Names are "vendor abbreviation, part"
 (`"mac 25l12845"` is the MX25L12845); the parser puts it back.
 
 It gives the read, quad read, page program, sector erase and chip erase
-opcodes per part, and no time: its drivers' timeouts are their own
+opcodes per part. Its chip erase, 0xc7, is wrong for Micron's stacked
+MT25QL01G, MT25QU01G, MT25QL02G and MT25QU02G, which have only a die erase
+(0xc4): it is left out, with a note. It gives no time: its drivers' timeouts are their own
 ([](../derived.md#times)). Its {upstream}`openocd:src/helper/jep106.inc`, a copy of
 [JEDEC's list](https://www.jedec.org/standards-documents/docs/jep-106ab), is
 where the [JEP106 manufacturer names](../jep106/index.md) come from.

@@ -1825,8 +1825,14 @@ class Flash:
         return self.sfdp_dumps[0].source if self.sfdp_dumps else None
 
     def supports(self, operation: str) -> bool:
-        """Whether any source says the chip has ``operation`` (``"READ_1_1_4"``)."""
-        return operation in self.opcodes
+        """Whether any source says the chip has ``operation``
+        (``"READ_1_1_4"``), stated or implied for the part: as a capability
+        is, an operation a source lists only as its driver's default
+        (:attr:`SupportedOperation.assumed_by`) does not count, so QEMU's
+        chip erase, which its model decodes for every part, is not the
+        MT25QL02G's. :attr:`opcodes` lists those too."""
+        found = self.opcodes.get(operation)
+        return found is not None and any(not c.assumed for c in found.because)
 
     def feature_sources(self, feature: Feature | str) -> tuple[FeatureSource, ...]:
         """The sources giving ``feature``, one each, in source priority

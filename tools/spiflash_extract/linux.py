@@ -343,6 +343,10 @@ def _nor_record(
         ops.add(op, f"{fixup} (spi_nor_global_block_unlock)", symbol)
         opcodes += ops.to_json()
     dies, die_ops, dies_via = _dies(fixup, name, fixups, symbols)
+    if any(o["op"] in derive.DIE_ERASES for o in die_ops):
+        # spi_nor_erase() erases a part of several dies die by die with its
+        # die_erase_opcode, and never sends the chip erase.
+        opcodes = [o for o in opcodes if o["op"] != "CHIP_ERASE"]
     opcodes += die_ops
     if otp is not None:
         ops = Opcodes(symbols)
