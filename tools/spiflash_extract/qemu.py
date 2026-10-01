@@ -40,10 +40,13 @@ SFDP_C = "hw/block/m25p80_sfdp.c"
 _FEATURES = {
     "ER_4K": "erase_4k",
     "ER_32K": "erase_32k",
-    "HAS_SR_TB": "lock",
-    "HAS_SR_BP3_BIT6": "lock",
     "EEPROM": "no_erase",
 }
+
+# The status register bits the model gives a part by its flags (write and
+# read of the status register, m25p80.c): TB at bit 5, BP3 at bit 6. BP0 to
+# BP2 at bits 2 to 4 it gives every part, so they are no part's own.
+_PROTECTION = {"HAS_SR_TB": ("tb", 5), "HAS_SR_BP3_BIT6": ("bp3", 6)}
 
 # (macro, ext_id bytes the macro keeps, has a die count)
 _MACROS = (("INFO_STACKED", 2, True), ("INFO6", 3, False), ("INFO", 2, False))
@@ -201,6 +204,11 @@ def _record(
             raise ValueError(msg)
         dump = dumps[reader]
         via["sfdp"] = f".sfdp_read = {reader}"
+    layout: dict[str, object] = {}
+    for flag, (role, bit) in _PROTECTION.items():
+        if flag in flags:
+            layout[role] = {"register": "sr1", "bit": bit}
+            via[f"protection.{role}"] = flag
 
     return make(
         "qemu",
@@ -217,6 +225,7 @@ def _record(
         features=features,
         flags=flags,
         via=via,
+        protection=layout or None,
         opcodes=ops.to_json(),
         sfdp=dump.hex() if dump else None,
         notes=notes,

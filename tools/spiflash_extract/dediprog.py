@@ -346,6 +346,9 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         flags.append(f"UniqueID={chip['UniqueID']}")
     flags += [key for key in _BOOLEANS if "true" in chip.get(key, "")]
     via = feature_via(claims)
+    quad_enable = _quad_enable(chip) if typ == "nor" and not dataflash else None
+    if quad_enable is not None:
+        via["quad_enable"] = f"QEbitAddr={chip['QEbitAddr']}"
     if command != 0x9F:
         # The command the id is read with, which id_method says.
         via["id_method"] = f"RDIDCommand={chip['RDIDCommand']}"
@@ -366,9 +369,34 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         features=features,
         flags=flags,
         via=via,
+        quad_enable=quad_enable,
         opcodes=ops.to_json(),
         notes=[description] if description else [],
     )
+
+
+#: ``QEbitAddr`` values that say nothing of the part: the template's 0x200
+#: (SR2 bit 1, given to 255 of 356 Macronix parts and 89 of 90 Micron ones,
+#: whose QE bit is elsewhere or none) and 0; and 0x80, SR1 bit 7, the
+#: status register protect bit (the MX25U51271G's).
+_QE_NOT_SAID = frozenset({0, 0x200, 0x80})
+
+# The status registers, in the order the mask's bytes are (0x05, 0x35, 0x15).
+_STATUS_REGISTERS = ("sr1", "sr2", "sr3")
+
+
+def _quad_enable(chip: dict[str, str]) -> dict[str, object] | None:
+    """The QE bit ``QEbitAddr`` gives: a one-bit mask over the status
+    registers, SR1 its low byte, then SR2 and SR3. ``None`` for a value of
+    :data:`_QE_NOT_SAID`."""
+    mask = int(chip.get("QEbitAddr") or "0", 16)
+    if mask in _QE_NOT_SAID:
+        return None
+    if mask & (mask - 1) or mask >> 8 * len(_STATUS_REGISTERS):
+        msg = f"QEbitAddr {chip['QEbitAddr']} is not one status register bit"
+        raise ValueError(msg)
+    bit = mask.bit_length() - 1
+    return {"register": _STATUS_REGISTERS[bit // 8], "bit": bit % 8}
 
 
 def _nand_size(chip: dict[str, str], size: int, page: int, block: int) -> int:

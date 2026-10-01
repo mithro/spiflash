@@ -339,7 +339,12 @@ def test_sfdp_encode(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None
     code, js = run(capsys, "sfdp-encode", "--json", "--revision", "1.5", "--assume", "ef4020")
     doc = json.loads(js)
     assert (doc["chip"], doc["revision"], doc["missing"]) == ("ef4020", "1.5", [])
-    assert any(a.startswith("DW15: the quad enable requirement") for a in doc["assumed"])
+    # Its quad enable requirement is known (QEMU's dump: S2B1v4): written,
+    # not assumed.
+    assert not any(a.startswith("DW15: the quad enable requirement") for a in doc["assumed"])
+    bfpt = parse(bytes.fromhex(doc["data"])).bfpt
+    assert bfpt is not None
+    assert bfpt.quad_enable == 4
     # A query naming several chips, or none, or a revision it cannot write.
     assert cli.main(["sfdp-encode", "W25Q512JV"]) == 2
     assert "names 2 SPI NOR chips, not one: ef4020 (W25Q512JV), ef7020" in (capsys.readouterr().err)

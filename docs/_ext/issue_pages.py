@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from issue_checks import ATTRIBUTES, IssueKind, find
+from issue_checks import IssueKind, find
 from page_markup import (
     EM_DASH,
     EM_SPACE,
@@ -29,6 +29,7 @@ from page_markup import (
 )
 from spiflash.enums import IdFamily, Source
 from spiflash.model import Eraser
+from spiflash.registers import NoQuadEnable, QuadEnableRequirement, RegisterBit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -56,9 +57,16 @@ KIND_NOTES = {
         "table may be another part's, copied by a board's porter: {sfsrc}`zephyr`'s "
         "wio_tracker_l1 gives its 2 MiB P25Q16H a 16 MiB part's BFPT, with DTR; and "
         "frdm_mcxe247's W25Q64 carries the MX25R6435F's byte for byte, which agrees "
-        "with the part's size and page, so is no issue here (its "
-        "[source notes](../sources/zephyr.md) say more). `spiflash sfdp-diff` "
+        "with the part's size and page but not with the quad enable requirement the "
+        "board gives it (its [source notes](../sources/zephyr.md) say more). "
+        "`spiflash sfdp-diff` "
         "compares tables field by field and dword by dword."
+    ),
+    IssueKind.SHARED_BIT: (
+        "Mostly two sources naming one bit by different roles: flashrom names a "
+        "bit by what it does (a BP3 that works as TB is its `tb`), openFPGALoader "
+        "by the datasheet's name. The chip page shows one source's whole layout "
+        "instead of the role-by-role answer."
     ),
     IssueKind.NAME_IDS: (
         "Some are one name for parts with different ids: a generic name, or a 3 V "
@@ -83,13 +91,23 @@ KIND_NOTES = {
 
 _TABLE = "sf-table sf-filterable sf-issues"
 
-#: The values sources are compared on, as headings.
+#: The values sources are compared on (:data:`spiflash.model.COMPARED`),
+#: as headings: a value compared role by role is one section.
 VALUE_TITLES = {
     "size": "Size",
     "page_size": "Page size",
     "sector_size": "Sector size",
     "voltage": "Supply voltage",
+    "quad_enable": "Quad enable bit",
+    "quad_enable_requirement": "Quad enable requirement",
+    "protection": "Block protection bits",
 }
+
+
+def value_of(attribute: str) -> str:
+    """The compared value an issue's attribute is of: ``"protection"`` for
+    ``"protection.tb"``."""
+    return attribute.partition(".")[0]
 
 
 #: The kinds of issue about a value, shown a section per value.
@@ -163,6 +181,12 @@ class _Render:
     def value(self, issue: Issue, v: Any) -> str:
         if isinstance(v, Eraser):
             return esc(eraser_text(v))
+        if issue.kind is IssueKind.SHARED_BIT:
+            role, bit = v
+            return f"{esc(role)}: {esc(str(bit))}"
+        if isinstance(v, RegisterBit | NoQuadEnable | QuadEnableRequirement):
+            role = (issue.attribute or "").partition(".")[2]
+            return esc(f"{role}: {v}" if role else str(v))
         if issue.attribute == "voltage":
             return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if v else volt(None)
         if issue.attribute:
@@ -198,12 +222,12 @@ class _Render:
         if kind not in BY_ATTRIBUTE or not issues:
             return self.table(kind, issues)
         out = []
-        for attr in ATTRIBUTES:
-            mine = [i for i in issues if i.attribute == attr]
+        for attr, heading in VALUE_TITLES.items():
+            mine = [i for i in issues if value_of(i.attribute or "") == attr]
             if mine:
                 if targets:
                     out.append(f"({attr_target(kind, attr)})=")
-                out.append(f"{'#' * level} {VALUE_TITLES[attr]} ({len(mine)})\n")
+                out.append(f"{'#' * level} {heading} ({len(mine)})\n")
                 out.append(self.table(kind, mine))
         return "\n".join(out)
 
@@ -242,6 +266,17 @@ class _Render:
                 ]
                 for i in issues
             ]
+        elif kind is IssueKind.SHARED_BIT:
+            header = ["Chip", "Parts", "Bit", "Roles on it, and who gives each"]
+            rows = [
+                [
+                    self.chip(i.flashes[0]),
+                    self.names(i.flashes[0]),
+                    esc(i.attribute or EM_DASH),
+                    self.answers(i),
+                ]
+                for i in issues
+            ]
         elif kind is IssueKind.NAME_IDS:
             header = ["Part", "Ids, and who lists each"]
             rows = [[esc(i.subject), self.answers(i, self.shown(i))] for i in issues]
@@ -275,7 +310,7 @@ class _Render:
 
 
 def _attr(issue: Issue) -> str:
-    about = (issue.attribute or "").replace("_", " ")
+    about = (issue.attribute or "").replace("_", " ").replace(".", ": ")
     return f"{about}: V min, V max" if issue.attribute == "voltage" else about
 
 
@@ -311,9 +346,9 @@ def index_page(r: _Render, issues: list[Issue]) -> str:
         rows.append(_summary_row(f"[{kind.heading}]({kind_page(kind)}.md)", found))
         if kind in BY_ATTRIBUTE:
             # A sub-row per value.
-            for attr in ATTRIBUTES:
-                mine = [i for i in found if i.attribute == attr]
-                title = VALUE_TITLES[attr]
+            for attr, heading in VALUE_TITLES.items():
+                mine = [i for i in found if value_of(i.attribute or "") == attr]
+                title = heading
                 if mine:  # only then has it a section to link to
                     title += f" <{kind_page(kind)}.html#{attr_target(kind, attr)}>"
                 rows.append(_summary_row(f"{{sfsub}}`{title}`", mine))

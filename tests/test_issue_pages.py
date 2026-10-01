@@ -8,6 +8,7 @@ from issue_pages import VALUE_TITLES, chip_issues, generate_all
 from page_markup import EM_SPACE, EN_DASH
 from spiflash import Database, Datasheet
 from spiflash.enums import Source
+from spiflash.model import COMPARED
 from test_db import rec
 from test_sfdp import MX25L25635E
 
@@ -33,6 +34,71 @@ def test_sources_disagree_on_a_value() -> None:
         (8 << 20, (Source.OPENOCD,)),
     ]
     assert issue.sources == (Source.LINUX, Source.OPENOCD)
+
+
+SR1 = "sr1"
+
+
+def bit(n: int, register: str = SR1) -> dict[str, object]:
+    return {"register": register, "bit": n}
+
+
+def test_quad_enable_bits_disagree() -> None:
+    db = Database(
+        [
+            rec(quad_enable=bit(1, "sr2")),
+            rec(source="openfpgaloader", name="GD25Q32C", quad_enable=bit(6)),
+        ]
+    )
+    (issue,) = find(db)
+    assert (issue.kind, issue.attribute) == (IssueKind.VALUE, "quad_enable")
+    assert [str(a.value) for a in issue.answers] == ["SR2 bit 1", "SR1 bit 6"]
+    page = generate_all(db, {id(f): f.key for f in db.flashes})["value.md"]
+    assert "## Quad enable bit (1)" in page
+    assert "**SR2 bit 1**" in page
+
+
+def test_protection_is_compared_role_by_role() -> None:
+    full = {"bp0": bit(2), "bp1": bit(3), "bp2": bit(4), "tb": bit(5), "srp": bit(7)}
+    # A source giving only TB agrees with a fuller one with the same TB.
+    agree = Database([rec(protection=full), rec(source="qemu", protection={"tb": bit(5)})])
+    assert find(agree) == []
+    (f,) = agree.flashes
+    assert f.protection is not None
+    assert f.protection.to_json() == full
+    # TB elsewhere: one issue, about that role only.
+    db = Database([rec(protection=full), rec(source="qemu", protection={"tb": bit(6)})])
+    (issue,) = find(db)
+    assert (issue.kind, issue.attribute) == (IssueKind.VALUE, "protection.tb")
+    page = generate_all(db, {id(f): f.key for f in db.flashes})["value.md"]
+    assert "## Block protection bits (1)" in page
+    assert "**tb: SR1 bit 5**" in page
+
+
+def test_two_roles_on_one_bit() -> None:
+    # flashrom's tb is the bit openFPGALoader calls BP3: role by role, the
+    # sources agree on each, but together they put two roles on SR1 bit 5.
+    flashrom = {"bp0": bit(2), "bp1": bit(3), "bp2": bit(4), "tb": bit(5)}
+    ofl = {"bp0": bit(2), "bp1": bit(3), "bp2": bit(4), "bp3": bit(5)}
+    db = Database(
+        [rec(source="flashrom", protection=flashrom), rec(source="openfpgaloader", protection=ofl)]
+    )
+    (f,) = db.flashes
+    assert f.shared_bits() == {"SR1 bit 5": ("bp3", "tb")}
+    # The chip's layout is then the best source's own.
+    assert f.protection is not None
+    assert f.protection.to_json() == flashrom
+    (issue,) = find(db)
+    assert (issue.kind, issue.attribute) == (IssueKind.SHARED_BIT, "SR1 bit 5")
+    assert sorted((a.value[0], a.sources) for a in issue.answers) == [
+        ("bp3", (Source.OPENFPGALOADER,)),
+        ("tb", (Source.FLASHROM,)),
+    ]
+    page = generate_all(db, {id(f): f.key for f in db.flashes})["shared-bit.md"]
+    assert "**tb: SR1 bit 5**" in page
+    # A quad enable bit on a protection role's bit is one too.
+    qe = Database([rec(source="flashrom", protection=flashrom), rec(quad_enable=bit(5))])
+    assert qe.flashes[0].shared_bits() == {"SR1 bit 5": ("quad_enable", "tb")}
 
 
 def test_one_source_two_values() -> None:
@@ -190,7 +256,11 @@ def test_values_grouped_by_what_disagrees() -> None:
         "## Page size",
         "## Sector size",
         "## Supply voltage",
+        "## Quad enable bit",
+        "## Block protection bits",
     ]
+    # A heading for every value compared, a layout's roles under one.
+    assert set(VALUE_TITLES) == set(COMPARED)
     # Each has a target, an HTML id as it is: no underscores.
     assert "(value-page-size)=" in page
     counts = sum(int(h.split("(")[1].rstrip(")")) for h in headings)

@@ -215,6 +215,8 @@ def _nor_record(values: list[int], symbols: dict[str, str | int]) -> dict[str, A
     if "FEA_4BYTE_ADDR_MODE" in bits:
         ops.add("EN4B", "FEA_4BYTE_ADDR_MODE", "CMD_ENTER_4BYTE_MODE")
 
+    quad_enable, via, notes_qe = _nor_quad_enable(chip_id, qe_bits, feature & mask, bits, ops)
+    notes += notes_qe
     size = SECTOR << density
     claims = [
         (feat, bit)
@@ -235,10 +237,76 @@ def _nor_record(values: list[int], symbols: dict[str, str | int]) -> dict[str, A
         ],
         "features": {feat for feat, _ in claims},
         "flags": [*bits, f"write_status={_WRITE_STATUS[feature & mask]}", f"QE_bits={qe_bits}"],
-        "via": feature_via(claims),
+        "via": feature_via(claims) | via,
+        "quad_enable": quad_enable,
         "opcodes": ops.to_json(),
         "notes": notes,
     }
+
+
+# The status registers snor_read_status() reads (0x05, 0x35, 0x15), by
+# index: what QE_bits >> 3 is.
+_STATUS_REGISTERS = ("sr1", "sr2", "sr3")
+
+# The sfc_nor.h name of each status register operation's opcode.
+_STATUS_COMMANDS = {
+    "RDSR2": "CMD_READ_STATUS2",
+    "RDSR3": "CMD_READ_STATUS3",
+    "WRSR2": "CMD_WRITE_STATUS2",
+    "WRSR3": "CMD_WRITE_STATUS3",
+    "WRSR_16": "CMD_WRITE_STATUS",
+}
+
+#: The entries whose QE bit snor_flash_info_adjust() changes: GD25Q256C
+#: (SFDP 1.0) has it at SR1 bit 6, the table's; the D and E (a BFPT of
+#: minor revision 6) at SR2 bit 1. Linux's gd25q256_post_bfpt() splits
+#: them alike.
+_QE_BY_REVISION = {
+    0xC84019: (
+        "no quad enable bit: snor_flash_info_adjust() makes QE_bits 9 (SR2 bit 1) "
+        "where the BFPT's minor revision is 6 (the GD25Q256D and E); the table's 6 "
+        "(SR1 bit 6) is the GD25Q256C's"
+    )
+}
+
+
+def _nor_quad_enable(
+    chip_id: int, qe_bits: int, write_status: int, bits: list[str], ops: Opcodes
+) -> tuple[str | dict[str, object] | None, dict[str, str], list[str]]:
+    """The quad enable bit of a ``struct flash_info`` (its ``via``, and any
+    note), and the operations setting it, added to ``ops``.
+
+    ``QE_bits`` is register ``n >> 3`` of those snor_read_status() reads
+    (0x05, 0x35, 0x15), bit ``n & 7``; 0 is no bit: the driver reads with
+    four lines (``FEA_4BIT_READ``) without setting one (snor_init). To
+    set it, snor_enable_QE() reads its register, then the entry's
+    ``write_status`` function writes it: ``snor_write_status`` with the
+    register's own command (0x01, 0x31 or 0x11, one byte);
+    ``snor_write_status1`` with a 2-byte 0x01 (SR1, SR2), reading SR2;
+    ``snor_write_status2`` (Macronix) with a 2-byte 0x01 (SR1, then the
+    configuration register, read with 0x15)."""
+    if chip_id in _QE_BY_REVISION:
+        return None, {}, [_QE_BY_REVISION[chip_id]]
+    via = {"quad_enable": f"QE_bits={qe_bits}"}
+    if not qe_bits:
+        return ("none", via, []) if "FEA_4BIT_READ" in bits else (None, {}, [])
+    reg = qe_bits >> 3
+    if reg >= len(_STATUS_REGISTERS):
+        msg = f"QE_bits {qe_bits}: no status register {reg + 1}"
+        raise ValueError(msg)
+    if "FEA_4BIT_READ" in bits:  # snor_enable_QE() is called for it only
+        writer = f"write_status={_WRITE_STATUS[write_status]}"
+        sent: tuple[str | None, ...] = ((None, "RDSR2", "RDSR3")[reg],)
+        if write_status == 0:
+            sent += ((None, "WRSR2", "WRSR3")[reg],)
+        elif write_status == 1:
+            sent += ("RDSR2", "WRSR_16")
+        else:
+            sent += ("RDSR3" if reg == 0 else None, "WRSR_16")
+        for op in sent:
+            if op is not None:
+                ops.add(op, writer, _STATUS_COMMANDS[op])
+    return {"register": _STATUS_REGISTERS[reg], "bit": qe_bits & 7}, via, []
 
 
 def extract_nand(root: Path) -> list[Record]:
@@ -300,6 +368,14 @@ def _nand_record(
     # GD5F1GQ5REYIG answers c8 41 (then c8 again, DS-00889 Table 8-1) and
     # the F50L2G41KA c8 41 7f, and the entries tell them apart by it.
     device = [id0, id1, id2] if id2 and id2 not in (id0, 0x7F) else [id0, id1]
+    # has_qe_bits: sfc_nand_enable_QE() sets bit 0 of feature 0xb0 before
+    # quad reads (FEA_4BIT_READ); without it, sfc_nand_init() reads with
+    # four lines setting nothing, as NOR's QE_bits 0 does.
+    quad_enable: str | dict[str, object] | None = None
+    if qe:
+        quad_enable = {"register": "nand-b0", "bit": 0}
+    elif "FEA_4BIT_READ" in bits:
+        quad_enable = "none"
     return {
         "type": "nand",
         "id": bytes(device).hex(),
@@ -309,7 +385,8 @@ def _nand_record(
         "page_size": page,
         "erasers": [derive.block_eraser(0xD8, page * ppb, size).to_json()],
         "features": {feat for feat, _ in claims},
-        "via": feature_via(claims),
+        "via": feature_via(claims) | ({"quad_enable": f"has_qe_bits={qe}"} if quad_enable else {}),
+        "quad_enable": quad_enable,
         "flags": [
             *bits,
             f"has_qe_bits={qe}",

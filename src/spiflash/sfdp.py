@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 from .enums import Feature, OperationKind
 from .opcodes import OPERATIONS, OpcodeUse
+from .registers import QUAD_ENABLE_REQUIREMENTS, NoQuadEnable, QuadEnableRequirement, RegisterBit
 from .units import human_size, human_time
 
 if TYPE_CHECKING:
@@ -156,16 +157,9 @@ _SR1_WRITE_ENABLE = {
     4: "mixed, WREN (0x06)",
 }
 
-#: The Quad Enable Requirements codes (BFPT DW15[22:20]).
-QUAD_ENABLE = {
-    0: "no QE bit",
-    1: "SR2 bit 1, written with a 2-byte WRSR (a 1-byte WRSR clears SR2)",
-    2: "SR1 bit 6, written with a 1-byte WRSR",
-    3: "SR2 bit 7, written with WRSR2 (0x3e), read with 0x3f",
-    4: "SR2 bit 1, written with a 2-byte WRSR (a 1-byte WRSR leaves SR2)",
-    5: "SR2 bit 1, written with a 2-byte WRSR, SR2 read with 0x35",
-    6: "SR2 bit 1, written with WRSR2 (0x31), read with 0x35",
-}
+#: The Quad Enable Requirements codes (BFPT DW15[22:20]), as JESD216B
+#: describes each (:data:`spiflash.registers.QUAD_ENABLE_REQUIREMENTS`).
+QUAD_ENABLE = QUAD_ENABLE_REQUIREMENTS
 
 _QPI_ENABLE = {
     4: "set QE, then 0x38",
@@ -542,6 +536,17 @@ class SfdpFacts:
     opcodes: tuple[OpcodeUse, ...]
     four_byte_enter: frozenset[FourByteMethod] = frozenset()
     octal_dtr: bool = False
+    #: The BFPT's quad enable requirement (DW15); ``None`` where the BFPT
+    #: is too short to have one, or gives the reserved code 7.
+    quad_enable_requirement: QuadEnableRequirement | None = None
+
+    @property
+    def quad_enable(self) -> RegisterBit | NoQuadEnable | None:
+        """Where :attr:`quad_enable_requirement` puts the QE bit
+        (:attr:`QuadEnableRequirement.bit
+        <spiflash.registers.QuadEnableRequirement.bit>`)."""
+        qer = self.quad_enable_requirement
+        return qer.bit if qer is not None else None
 
 
 @dataclass(frozen=True)
@@ -813,6 +818,9 @@ class Sfdp:
             opcodes=tuple(uses.values()),
             four_byte_enter=bfpt.four_byte_enter if bfpt and self.four_byte_mode else frozenset(),
             octal_dtr=self.profile1 is not None,
+            quad_enable_requirement=QuadEnableRequirement.from_code(
+                bfpt.quad_enable if bfpt else None
+            ),
         )
 
     def _dw1_erase(self) -> int | None:

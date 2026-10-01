@@ -390,6 +390,24 @@ def test_sfdp_to_entry_to_sfdp_loses_only_what_is_documented() -> None:
         }, (r.name, d.tables)
 
 
+def test_encode_writes_the_quad_enable_requirement() -> None:
+    # A requirement a source gives goes in DW15, and reads back.
+    r = rec(quad_enable_requirement="S2B1v4")
+    out = encode(r, assume=True)
+    bfpt = out.sfdp.bfpt
+    assert bfpt is not None
+    assert bfpt.quad_enable == 4
+    assert not any(line.startswith("DW15: the quad enable") for line in out.assumed)
+    back = Record.from_json(to_entry(out.sfdp) | IDENTITY)
+    assert (back.quad_enable_requirement, str(back.quad_enable)) == ("S2B1v4", "SR2 bit 1")
+    # Without assume, 1.0, which has no DW15: the requirement is listed lost.
+    assert "DW15: the quad enable requirement, S2B1v4, known but left out" in encode(r).missing
+    # None known: written as 0, and said so.
+    assert "DW15: the quad enable requirement, written as 0, no QE bit" in (
+        encode(rec(), assume=True).assumed
+    )
+
+
 def test_encode_never_invents() -> None:
     # A part with no page size: 1.0 without assume, and missing says why.
     r = rec(page_size=None, erasers=[{"opcode": 0x20, "blocks": [[4096, 4096]]}])

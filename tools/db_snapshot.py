@@ -25,8 +25,24 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
 
-#: The consensus values a chip has, compared one by one.
-VALUES = ("manufacturer", "name", "names", "size", "page_size", "sector_size", "voltage")
+#: The consensus values a chip has, compared one by one (those a commit's
+#: Flash has).
+VALUES = (
+    "manufacturer",
+    "name",
+    "names",
+    "size",
+    "page_size",
+    "sector_size",
+    "voltage",
+    "quad_enable",
+    "quad_enable_requirement",
+    "protection",
+)
+
+#: The values sources are compared on, where a commit has no
+#: spiflash.model.COMPARED_VALUES.
+COMPARED = ("size", "page_size", "sector_size", "voltage")
 
 
 def plain(value: Any) -> Any:
@@ -52,7 +68,7 @@ def plain(value: Any) -> Any:
 def chip(flash: Any) -> dict[str, Any]:
     """Everything the public API answers for one chip, by property."""
     out: dict[str, Any] = {f"json.{k}": plain(v) for k, v in flash.to_json().items()}
-    out |= {k: plain(getattr(flash, k)) for k in VALUES}
+    out |= {k: plain(getattr(flash, k)) for k in VALUES if hasattr(flash, k)}
     out["features"] = sorted(flash.features)
     out["feature_sources"] = {
         str(f): plain(flash.feature_sources(f)) for f in sorted(flash.features)
@@ -60,7 +76,8 @@ def chip(flash: Any) -> dict[str, Any]:
     out["opcodes"] = {name: plain(o.sources) for name, o in flash.opcodes.items()}
     out["opcode_reasons"] = {name: plain(o.because) for name, o in flash.opcodes.items()}
     out["conflicts"] = plain(flash.conflicts)
-    out["by_ext_id"] = {a: plain(flash.by_ext_id(a)) for a in VALUES[3:]}
+    compared = getattr(sys.modules[type(flash).__module__], "COMPARED_VALUES", COMPARED)
+    out["by_ext_id"] = {a: plain(flash.by_ext_id(a)) for a in compared}
     return out
 
 

@@ -49,6 +49,8 @@ from .sfdp import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from .registers import QuadEnableRequirement
+
 #: The revisions :func:`encode` writes: JESD216 (1.0, nine dwords), and
 #: JESD216A and B (1.5 and 1.6, sixteen).
 REVISIONS = ((1, 0), (1, 5), (1, 6))
@@ -110,7 +112,7 @@ ENCODE_LOSSES = {
     "chip_erase_us": "chip erase time (DW11)",
     "suspend_resume": "suspend and resume (DW12-13)",
     "deep_power_down": "deep power-down (DW14)",
-    "quad_enable": "the quad enable requirement (DW15)",
+    "quad_enable": "the quad enable requirement (DW15), where the BFPT gives the reserved 7",
     "qpi_enable": "the QPI enable sequence, in a revision encode cannot fill",
     "qpi_disable": "the QPI disable sequence, in a revision encode cannot fill",
     "mode_0_4_4": "0-4-4 (continuous read) mode (DW15), written as not supported",
@@ -161,6 +163,7 @@ class _Part:
     #: clocks a source gives it (``None``: none does).
     ops: dict[str, int | None]
     address_bytes: AddressBytes | None
+    quad_enable_requirement: QuadEnableRequirement | None = None
 
 
 def _uniform(erasers: Iterable[Eraser], size: int | None) -> list[tuple[int, int]]:
@@ -185,7 +188,15 @@ def _from_record(r: Record) -> _Part:
         if not u.assumed and ops.get(u.op) is None:
             ops[u.op] = u.dummy_clocks
     erasers = sorted(set(_uniform(r.erasers, r.size)), key=lambda e: (e[1], e[0]))
-    return _Part(r.name, r.size, r.page_size, erasers, ops, derive.address_bytes(r))
+    return _Part(
+        r.name,
+        r.size,
+        r.page_size,
+        erasers,
+        ops,
+        derive.address_bytes(r),
+        r.quad_enable_requirement,
+    )
 
 
 def _from_flash(f: Flash) -> _Part:
@@ -208,7 +219,7 @@ def _from_flash(f: Flash) -> _Part:
     )
     said = Counter(a for r in records if (a := derive.address_bytes(r)) is not None)
     address = said.most_common(1)[0][0] if said else None
-    return _Part(f.name, f.size, f.page_size, erasers, ops, address)
+    return _Part(f.name, f.size, f.page_size, erasers, ops, address, f.quad_enable_requirement)
 
 
 def _settings(opcode: int, mode: int, wait: int) -> int:
@@ -252,7 +263,8 @@ def encode(
 
     ``revision`` 1.5 and 1.6 add DW10 to DW16: erase and program times,
     suspend and resume, deep power-down, the quad enable requirement and
-    4-byte address mode, which the database does not hold. Without
+    4-byte address mode, which the database does not hold (but for a quad
+    enable requirement a source gives). Without
     ``assume``, ``encode`` then lowers the revision to 1.0, the highest it
     can fill, and lists what it left out in ``missing``; with ``assume``, it
     writes JESD216's "not supported" encodings or the shortest times, and
@@ -389,7 +401,11 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
     out.unknown.append(("DW11", "program and chip erase times", "written as the shortest"))
     out.unknown.append(("DW12-13", "suspend and resume", "written as not supported"))
     out.unknown.append(("DW14", "deep power-down", "written as not supported"))
-    out.unknown.append(("DW15", "the quad enable requirement", "written as 0, no QE bit"))
+    qer = part.quad_enable_requirement
+    if qer is None:
+        out.unknown.append(("DW15", "the quad enable requirement", "written as 0, no QE bit"))
+    else:
+        out.lost.append(("DW15", f"the quad enable requirement, {qer}"))
     out.unknown.append(("DW15", "0-4-4 mode", "written as not supported"))
     ops = part.ops
     # DW15[8:4], the 4-4-4 enable sequences: bit 5 is "issue 0x38", bit 6
@@ -425,7 +441,7 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
         0xFFFFFFFF,  # DW12: bit 31, suspend and resume not supported
         0xFFFFFFFF,  # DW13
         0xFFFFFFFF,  # DW14: bit 31, deep power-down not supported
-        0xFF000000 | enter << 4 | leave,  # DW15: QER 0
+        0xFF000000 | (qer.code if qer else 0) << 20 | enter << 4 | leave,  # DW15
         modes_in | modes_out | 1 << 7,  # DW16
     ]
     return out
@@ -467,8 +483,9 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
     """A record in the data's shape
     (:repo:`records.json <src/spiflash/data/records.json>`, this format) holding
     what ``sfdp`` says as stored values, so a dump can be read as one more
-    source: its size, page size and erasers, its operations with their dummy
-    clocks (not the erases its erasers give), and the capabilities only
+    source: its size, page size, quad enable requirement and erasers, its
+    operations with their dummy clocks (not the erases its erasers give), and
+    the capabilities only
     SFDP says (:func:`spiflash.derive.sfdp_claims`), with their reasons in
     ``via``. The identity (``source``, ``name``, ``id``, ...) is ``None``:
     ``Record.from_json(to_entry(s) | {"source": ..., ...})`` reads it."""
@@ -492,6 +509,11 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
         "flags": [],
         "via": {f"feature:{f}": why for f, why in sorted(claims.items())},
         "voltage": None,
+        "quad_enable": None,
+        "quad_enable_requirement": None
+        if facts.quad_enable_requirement is None
+        else str(facts.quad_enable_requirement),
+        "protection": None,
         "opcodes": [
             {
                 "op": u.op,

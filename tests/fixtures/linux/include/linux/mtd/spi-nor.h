@@ -22,3 +22,13 @@
 #define SPINOR_OP_AAI_WP	0xad	/* Auto address increment word program */
 #define SPINOR_OP_RDFSR		0x70	/* Read flag status register */
 #define SPINOR_OP_CLSR		0x30	/* Clear status register 1 */
+#define SPINOR_OP_GBULK		0x98    /* Global Block Unlock */
+#define SR_BP0			BIT(2)	/* Block protect 0 */
+#define SR_BP1			BIT(3)	/* Block protect 1 */
+#define SR_BP2			BIT(4)	/* Block protect 2 */
+#define SR_BP3			BIT(5)	/* Block protect 3 */
+#define SR_TB_BIT5		BIT(5)	/* Top/Bottom protect */
+#define SR_BP3_BIT6		BIT(6)	/* Block protect 3 */
+#define SR_TB_BIT6		BIT(6)	/* Top/Bottom protect */
+#define SR_SRWD			BIT(7)	/* SR write protect */
+#define SR2_CMP_BIT6		BIT(6)
