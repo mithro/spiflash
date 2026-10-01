@@ -6,8 +6,8 @@ id a chip answers, at load time.
 
 A fact is stored once. What follows from a record's stored fields is not
 stored: :mod:`spiflash.derive` works it out at load (the id operation from
-``id_method``, an erase operation from each eraser), and :func:`make` drops
-a stored value that duplicates it.
+``id_method``, an erase operation from each eraser, everything its SFDP
+tables say), and :func:`make` drops a stored value that duplicates it.
 
 Fields (``None`` / empty when the upstream does not say):
 
@@ -30,11 +30,14 @@ Fields (``None`` / empty when the upstream does not say):
     ``rdid`` (JEDEC 0x9f), or the legacy probe: ``rems``, ``res1``, ``res2``,
     ``at25f``, ``st95``, ...
 ``size``
-    Bytes; ``None`` where the upstream reads it from SFDP.
+    Bytes; ``None`` where the upstream reads it from SFDP, and where the
+    record's own SFDP tables give the same (``sfdp``, ``sfdp_tables``).
 ``page_size``
-    The program page, in bytes.
+    The program page, in bytes; ``None`` where its SFDP tables give the
+    same.
 ``erasers``
-    ``[{"opcode": 0x20, "blocks": [[4096, 4096]]}, ...]``. An upstream that
+    ``[{"opcode": 0x20, "blocks": [[4096, 4096]]}, ...]``, without those its
+    SFDP tables give. An upstream that
     gives an erase block size without a layout (Linux's and U-Boot's sector
     size, openFPGALoader's ``sector_erase``, a SPI NAND block) gives the
     eraser it describes (:func:`spiflash.derive.block_eraser`): the record's
@@ -67,13 +70,23 @@ Fields (``None`` / empty when the upstream does not say):
     ``[{"op": "READ_1_1_4", "via": "SPI_NOR_QUAD_READ"}, ...]``, ``op`` a name
     in ``spiflash.opcodes.OPERATIONS`` (which gives the opcode) and ``via``
     the upstream flag, field or default behind it. Those
-    :func:`spiflash.derive.opcodes` gives are not stored. A driver default
-    (an operation the upstream's driver issues to every part, or every part
-    of a class, whatever the entry says) has ``"assumed": true``, and
-    implies no capability.
+    :func:`spiflash.derive.opcodes` gives are not stored (its SFDP tables'
+    among them). A driver default (an operation the upstream's driver
+    issues to every part, or every part of a class, whatever the entry
+    says) has ``"assumed": true``, and implies no capability. A use may
+    give the part's ``"dummy_clocks"`` (none does yet).
 ``sfdp``
     Hex of the part's SFDP (JESD216) area, where the upstream carries a
     dump of it (QEMU's flash model does); :mod:`spiflash.sfdp` decodes it.
+    Its facts (:meth:`spiflash.sfdp.Sfdp.facts`) are derived at load: a
+    value the upstream states outside the dump is stored only where it
+    differs from the dump's (:meth:`spiflash.model.Record.sfdp_disagreements`).
+``sfdp_tables``
+    The part's SFDP parameter tables by id, each in hex, where the upstream
+    copies them without the area around them (Zephyr's ``sfdp-bfp``,
+    ``sfdp-ff05`` and ``sfdp-ff84``): ``{"ff00": "e520...", "ff84": ...}``,
+    ``{}`` when it has none. A record has this or ``sfdp``, not both, and
+    derives from it as from ``sfdp``.
 ``tested``
     The upstream's test status, verbatim.
 ``notes``
@@ -88,7 +101,7 @@ from typing import TYPE_CHECKING, Any
 from spiflash import derive
 from spiflash.enums import Feature, FlashType, OperationKind, Source
 from spiflash.model import Record as Model
-from spiflash.opcodes import OPERATIONS
+from spiflash.opcodes import OPERATIONS, OpcodeUse
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -114,6 +127,7 @@ KEYS = (
     "voltage",
     "opcodes",
     "sfdp",
+    "sfdp_tables",
     "tested",
     "notes",
 )
@@ -189,7 +203,7 @@ def check_via(rec: Record) -> None:
             ok = m[1] in rec["features"]
         else:
             field, component, member = m[2], m[3], m[4]
-            ok = field in VIA_FIELDS and rec[field] not in (None, [], "")
+            ok = field in VIA_FIELDS and rec[field] not in (None, [], "", {})
             if component is not None:
                 ok = ok and component in VIA_COMPONENTS.get(field, ())
             if member is not None:
@@ -233,8 +247,10 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     part numbers are upper case (:func:`part_case`). The capability claims
     :func:`spiflash.derive.features` gives, with their ``via`` keys, and the
     operations :func:`spiflash.derive.opcodes` gives are dropped, as the
-    record derives them at load. A sector size is refused: give the eraser
-    (:func:`spiflash.derive.block_eraser`)."""
+    record derives them at load; so are a size, page size or eraser its SFDP
+    tables give (:func:`_drop_sfdp`). A sector size is refused: give the
+    eraser (:func:`spiflash.derive.block_eraser`). A record cannot carry
+    both a whole SFDP dump and copied tables."""
     if "sector_size" in fields:
         msg = "sector_size is derived from the erasers: give the eraser instead"
         raise KeyError(msg)
@@ -261,10 +277,15 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         notes=[],
         opcodes=[],
         via={},
+        sfdp_tables={},
     )
     rec.update(fields)
+    if rec["sfdp"] and rec["sfdp_tables"]:
+        msg = f"{source} {name}: a whole SFDP dump and copied tables"
+        raise ValueError(msg)
     rec["features"] = sorted(set(rec["features"]))
     check_via(rec)
+    _drop_sfdp(rec)
     claimed = set(rec["features"])
     _drop_implied(rec)
     ops = [o["via"] for o in rec["opcodes"]]
@@ -276,7 +297,7 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
             via[key] = kept
     vias = ops + ["; ".join(v) for v in via.values()]
     flags = {f for f in rec["flags"] if not any(holds(v, f) for v in vias)}
-    _drop_derived(rec, set(rec["flags"]) - flags, via)
+    flags |= _drop_derived(rec, set(rec["flags"]) - flags, via)
     rec["flags"] = sorted(flags)
     rec["via"] = {key: "; ".join(via[key]) for key in sorted(via)}
     check_via(rec)
@@ -298,36 +319,74 @@ def _drop_implied(rec: Record) -> None:
     rec["via"] = {k: v for k, v in rec["via"].items() if k not in dropped}
 
 
-def _drop_derived(rec: Record, held: set[str], via: dict[str, list[str]]) -> None:
-    """Drop the operations ``rec`` derives at load. A flag (of ``held``)
-    that only a dropped erase operation's via held moves to ``via``, under
-    its eraser, ``erasers:0x<opcode>``, or ``erasers`` for a token that gives
-    several."""
+def _drop_sfdp(rec: Record) -> None:
+    """Drop the size, page size and erasers ``rec`` states that its own SFDP
+    tables give the same (:meth:`spiflash.sfdp.Sfdp.facts`): the record
+    derives them from the tables at load. A value that differs stays, as the
+    upstream's own (a :meth:`spiflash.model.Record.sfdp_disagreements`). The
+    ``via`` token of a dropped eraser goes back to the flags: no field holds
+    it now."""
+    if not (rec["sfdp"] or rec["sfdp_tables"]):
+        return
+    facts = Model.from_json(rec).sfdp_facts
+    if facts is None:
+        return
+    for name in ("size", "page_size"):
+        if rec[name] is not None and rec[name] == getattr(facts, name):
+            rec[name] = None
+    given = [e.to_json() for e in facts.erasers]
+    kept = [e for e in rec["erasers"] or () if e not in given]
+    rec["erasers"] = kept or None
+    members = _eraser_members(rec)
+    for key in [k for k in rec["via"] if k.startswith("erasers")]:
+        _, _, member = key.partition(":")
+        if (member and member not in members) or not kept:
+            rec["flags"] = [*rec["flags"], *tokens(rec["via"].pop(key))]
+
+
+def _same_use(stored: dict[str, Any], derived: OpcodeUse) -> bool:
+    """Whether a stored use is one ``derived`` gives: the same operation,
+    with no dummy clocks of its own or the same ones."""
+    clocks = stored.get("dummy_clocks")
+    return stored["op"] == derived.op and clocks in (None, derived.dummy_clocks)
+
+
+def _drop_derived(rec: Record, held: set[str], via: dict[str, list[str]]) -> set[str]:
+    """Drop the operations ``rec`` derives at load (a stored use with dummy
+    clocks other than the derived one's stays). A flag (of ``held``) that
+    only a dropped erase operation's via held moves to ``via``, under its
+    eraser, ``erasers:0x<opcode>``, or ``erasers`` for a token that gives
+    several; where the record stores no such eraser (its SFDP tables give
+    it), the flag stays a flag, and is returned."""
     model = Model.from_json(rec)
-    derived = {u.op for u in derive.opcodes(model)}
-    kept = [o["via"] for o in rec["opcodes"] if o["op"] not in derived]
+    derived = derive.opcodes(model)
+    dropped = [o for o in rec["opcodes"] if any(_same_use(o, u) for u in derived)]
+    kept = [o["via"] for o in rec["opcodes"] if o not in dropped]
     kept += ["; ".join(v) for v in via.values()]
     moved: dict[str, list[str]] = {}
-    for o in rec["opcodes"]:
-        if o["op"] not in derived:
-            continue
+    flags: set[str] = set()
+    members = _eraser_members(rec)
+    for o in dropped:
         for t in held:
             if holds(o["via"], t) and not any(holds(v, t) for v in kept):
                 if OPERATIONS[o["op"]].kind is not OperationKind.ERASE:
                     msg = f"{rec['source']} {rec['name']}: {t} would be lost with {o['op']}"
                     raise ValueError(msg)
-                key = f"erasers:0x{OPERATIONS[o['op']].opcode:02x}"
-                if key not in moved.setdefault(t, []):
-                    moved[t].append(key)
+                member = f"0x{OPERATIONS[o['op']].opcode:02x}"
+                if member not in members:
+                    flags.add(t)
+                elif f"erasers:{member}" not in moved.setdefault(t, []):
+                    moved[t].append(f"erasers:{member}")
     for t, keys in moved.items():
         key = keys[0] if len(keys) == 1 else "erasers"
         via.setdefault(key, []).append(t)
     stated = {o["op"] for o in rec["opcodes"]}
-    rec["opcodes"] = [o for o in rec["opcodes"] if o["op"] not in derived]
+    rec["opcodes"] = [o for o in rec["opcodes"] if o not in dropped]
     lost = stated - {u.op for u in Model.from_json(rec).opcodes}
     if lost:
         msg = f"{rec['source']} {rec['name']}: dropping derived operations lost {sorted(lost)}"
         raise AssertionError(msg)
+    return flags
 
 
 def _check_once(rec: Record) -> None:

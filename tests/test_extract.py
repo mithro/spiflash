@@ -25,7 +25,6 @@ from spiflash_extract import (
     qemu,
     record,
     rockchip,
-    sfdp,
     uboot,
     zephyr,
 )
@@ -1118,16 +1117,24 @@ def test_zephyr() -> None:
         "GD25LQ32D",
         "MX25L3233F",
     }
-    # nordic,qspi-nor with the chip's own SFDP table: size in bits, page and
-    # erase types from the table, readoc/writeoc as the modes used.
+    # nordic,qspi-nor with the chip's own SFDP table, which the record
+    # stores: its size (the node's, in bits, is the same), page and erase
+    # types are derived from the table; readoc/writeoc are the modes used.
     m = r["MX25R6435F"]
     assert (m["file"], m["line"]) == ("boards/nordic/nrf52840dk/nrf52840dk_nrf52840.dts", 20)
-    assert (m["id"], m["vendor"], m["size"], m["page_size"]) == ("c22817", None, 8 << 20, 256)
-    assert m["erasers"] == [
+    assert (m["id"], m["vendor"], m["size"], m["page_size"]) == ("c22817", None, None, None)
+    assert list(m["sfdp_tables"]) == ["ff00"]
+    assert m["sfdp_tables"]["ff00"].startswith("e520f1ff")
+    assert m["via"] == {"sfdp_tables": "sfdp-bfp"}
+    assert m["erasers"] is None
+    loaded = Record.from_json(m)
+    assert (loaded.size, loaded.page_size) == (8 << 20, 256)
+    assert [e.to_json() for e in loaded.erasers] == [
         {"opcode": 0x20, "blocks": [[4096, 2048]]},
         {"opcode": 0x52, "blocks": [[32768, 256]]},
         {"opcode": 0xD8, "blocks": [[65536, 128]]},
     ]
+    assert loaded.sfdp_disagreements() == ()
     assert features(m) == [
         "dual_read",
         "erase_32k",
@@ -1138,7 +1145,12 @@ def test_zephyr() -> None:
         "sfdp",
     ]
     assert {"has-dpd", "nordic,qspi-nor", "readoc=read4io", "writeoc=pp4io"} <= set(m["flags"])
-    assert ops(m)["READ_1_4_4"] == (0xEB, "sfdp-bfp: 1-4-4; readoc = read4io")
+    assert not [f for f in m["flags"] if f.startswith("sfdp-")]
+    # The table gives the 1-4-4 read readoc names, with its dummy clocks.
+    assert ops(m)["READ_1_4_4"] == (0xEB, "SFDP BFPT 1-4-4 fast read: 2 mode + 4 wait clocks")
+    assert [o["op"] for o in m["opcodes"]] == ["PP_1_4_4"]
+    (read,) = (u for u in loaded.opcodes if u.op == "READ_1_4_4")
+    assert (read.implied, read.dummy_clocks) == (True, 6)
     assert ops(m)["PP_1_4_4"] == (0x38, "writeoc = pp4io")
     assert m["notes"] == [
         "MX25R64 supports only pp and pp4io",
@@ -1171,7 +1183,8 @@ def test_zephyr() -> None:
     # Two boards with the same node are one record, which names the other.
     # Its table is JESD216's first: nine DWORDs, no page size.
     f = r["MX25L3233F"]
-    assert (f["size"], f["page_size"]) == (4 << 20, None)
+    assert (f["size"], f["page_size"]) == (None, None)
+    assert (Record.from_json(f).size, Record.from_json(f).page_size) == (4 << 20, None)
     assert f["notes"] == ["Also in boards/particle/boron/dts/mesh_feather.dtsi:21"]
 
 
@@ -1262,11 +1275,16 @@ def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
             page-size = <4096>;
         };""",
     )
+    # What the node states and the table does not is stored, and is the
+    # record's value; the two are disagreements, not notes.
     assert (r["size"], r["page_size"]) == (2 << 20, 4096)
-    assert r["notes"] == [
-        "sfdp-bfp gives 8388608 bytes, size 2097152",
-        "sfdp-bfp gives a 256-byte page, page-size 4096",
-    ]
+    assert r["notes"] == []
+    loaded = Record.from_json(r)
+    assert (loaded.size, loaded.page_size) == (2 << 20, 4096)
+    assert loaded.sfdp_disagreements() == (
+        ("size", 2 << 20, 8 << 20),
+        ("page_size", 4096, 256),
+    )
 
 
 def test_zephyr_skips(tmp_path: Path) -> None:
@@ -1349,21 +1367,6 @@ lbl: &ref { };
         dts.nodes("a = <1>")
 
 
-def test_sfdp_decode() -> None:
-    # JESD216's other density form (2^N bits), 4-byte addresses only, DTR,
-    # the 2-2-2 and 4-4-4 reads, and no erase types but DWORD 1's 4 KiB one.
-    dw1 = 0xE5 | 0x20 << 8 | 1 << 16 | 2 << 17 | 1 << 19
-    dws = [dw1, 1 << 31 | 28, 0, 0x3B00, 0x11, 0xBB << 24, 0xEB << 24, 0, 0]
-    b = sfdp.decode(b"".join(d.to_bytes(4, "little") for d in dws))
-    assert b.size == 32 << 20
-    assert (b.address_bytes, b.dtr) == ((4,), True)
-    assert b.reads == {"1-1-2": 0x3B, "2-2-2": 0xBB, "4-4-4": 0xEB}
-    assert b.erases == [(0x20, 4096)]
-    assert (b.page_size, b.quad_enable) == (None, None)
-    with pytest.raises(ValueError, match="at least 9 whole DWORDs"):
-        sfdp.decode(bytes(10))
-
-
 def test_zephyr_size_from_sfdp(tmp_path: Path) -> None:
     # No size property: the table's. 4-byte addresses only.
     dw1 = 0xE5 | 0x20 << 8 | 2 << 17
@@ -1374,7 +1377,8 @@ def test_zephyr_size_from_sfdp(tmp_path: Path) -> None:
         f'w25q256jv@0 {{ compatible = "jedec,spi-nor"; jedec-id = [ef 40 19]; '
         f"sfdp-bfp = [{table}]; }};",
     )
-    assert (r["size"], r["page_size"]) == (32 << 20, None)
+    assert (r["size"], r["page_size"]) == (None, None)
+    assert Record.from_json(r).size == 32 << 20
     assert features(r) == ["4byte_addr", "erase_4k", "sfdp"]
 
 
@@ -1448,11 +1452,17 @@ def test_qemu(tmp_path: Path) -> None:
     assert features(e) == ["no_erase"]  # fast read is the model's, for every part
     assert set(ops(e)) == {"READ_1_1_1", "READ_1_1_1_FAST", "PP_1_1_1"}
 
-    # INFO6: a three-byte ext_id; a dump: the SFDP-derived reads and erases.
+    # INFO6: a three-byte ext_id; a dump, which the record stores and
+    # derives its reads, erasers and size from: INFO's size and erasers are
+    # the dump's, so are not stored, and its tokens are flags again.
     m = r["MX25L25635E"]
     assert m["vendor"] == "Macronix"
     assert (m["id"], m["ext_id"]) == ("c22019", "c22019")
-    assert m["size"] == 32 << 20
+    assert (m["size"], m["erasers"]) == (None, None)
+    assert m["page_size"] == 256  # INFO's: the JESD216 (1.0) table has none
+    assert Record.from_json(m).size == 32 << 20
+    assert m["flags"] == ["ER_32K", "ER_4K"]
+    assert m["via"] == {"sfdp": ".sfdp_read = m25p80_sfdp_mx25l25635e"}
     assert m["sfdp"] is not None
     assert m["sfdp"].startswith("53464450000101ff")
     # The dump implies every one: none is stored.
@@ -1473,20 +1483,24 @@ def test_qemu(tmp_path: Path) -> None:
         "via": "m25p80 decodes it for every part",
         "assumed": True,
     }
-    # Read 0x03 a part with a BFPT has: its own.
-    read = next(o for o in m["opcodes"] if o["op"] == "READ_1_1_1")
-    assert "assumed" not in read
-    assert ops(m)["RDSFDP"] == (0x5A, ".sfdp_read = m25p80_sfdp_mx25l25635e")
+    # Read 0x03 a part with a BFPT has: its own, from the dump.
+    assert "READ_1_1_1" not in [o["op"] for o in m["opcodes"]]
+    assert ops(m)["READ_1_1_1"] == (0x03, "SFDP implied: a part with a BFPT supports read 0x03")
+    assert ops(m)["RDSFDP"] == (0x5A, "SFDP the table itself")
     assert ops(m)["READ_1_4_4"] == (0xEB, "SFDP BFPT 1-4-4 fast read: 2 mode + 4 wait clocks")
-    assert ops(m)["BE_32K"] == (0x52, "eraser: 1024 x 32768")  # derived, not stored
-    assert m["via"]["erasers:0x52"] == "ER_32K"
+    assert ops(m)["BE_32K"] == (0x52, "SFDP BFPT erase type 2: 32768 B")
+    # No SFDP operation is stored: only the model's every-part defaults.
+    assert {o["op"] for o in m["opcodes"]} == assumed(m)
     assert m["notes"] == []
 
     # Flags for the status register layout; the multi-line heading before Spansion.
     n = r["N25Q256A"]
     assert n["vendor"] == "Micron"
-    assert n["flags"] == []
-    assert n["via"] == {"erasers:0x20": "ER_4K", "feature:lock": "HAS_SR_BP3_BIT6; HAS_SR_TB"}
+    assert n["flags"] == ["ER_4K"]
+    assert n["via"] == {
+        "feature:lock": "HAS_SR_BP3_BIT6; HAS_SR_TB",
+        "sfdp": ".sfdp_read = m25p80_sfdp_n25q256a",
+    }
     assert n["features"] == ["lock"]
     assert n["sfdp"] is not None
     assert r["S25SL032P"]["vendor"] == "Spansion"
@@ -1512,8 +1526,8 @@ def test_qemu(tmp_path: Path) -> None:
     assert {"4byte_opcodes", "qpi", "quad_pp", "sfdp"} <= set(features(w))
     assert ops(w)["READ_1_4_4_4B"] == (0xEC, "SFDP 4BAIT bit 5: fast read 1-4-4, 4-byte address")
     assert ops(w)["EN4B"][0] == 0xB7
-    assert any(note.startswith("SFDP: 0xeb 4-4-4, no named operation") for note in w["notes"])
-    assert any(note.startswith("SFDP: 4BAIT claims") for note in w["notes"])
+    assert ops(w)["READ_4_4_4"] == (0xEB, "SFDP BFPT 4-4-4 fast read: 2 mode + 0 wait clocks")
+    assert not [note for note in w["notes"] if note.startswith("SFDP")]
 
     c = r["25CSM04"]
     assert c["vendor"] == "Microchip"

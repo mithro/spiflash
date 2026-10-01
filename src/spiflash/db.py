@@ -79,7 +79,10 @@ class SourceInfo:
 #: 5: ``sector_size`` dropped (derived from the erasers, which Linux, U-Boot,
 #: openFPGALoader and the SPI NAND records now give); implied capability
 #: claims dropped; ``opcodes`` gain ``assumed`` for driver defaults.
-FORMAT = 5
+#: 6: records gain ``sfdp_tables`` (Zephyr's copied tables); what a record's
+#: SFDP tables say is derived, not stored (QEMU's and Zephyr's decoded
+#: operations, capabilities, sizes, page sizes and erasers dropped).
+FORMAT = 6
 
 
 def _read(name: str) -> dict[str, Any]:
