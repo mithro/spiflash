@@ -142,11 +142,20 @@ ENCODE_LOSSES = {
         "rounded up to the next one it can write"
     ),
     "quad_enable": "the quad enable requirement (DW15), where it is the reserved 7",
-    "qpi_enable": "the QPI enable sequence, in a revision encode cannot fill",
-    "qpi_disable": "the QPI disable sequence, in a revision encode cannot fill",
+    "qpi_enable": (
+        "the QPI enable sequence: the database keeps its command (EQPI_38, EQPI_35), "
+        "not the QE step DW15 bit 4 puts before 0x38, nor a sequence of several commands"
+    ),
+    "qpi_disable": (
+        "the QPI disable sequence: the database keeps its command (RSTQIO_FF, RSTQIO_F5), "
+        "not a sequence of several"
+    ),
     "mode_0_4_4": "0-4-4 (continuous read) mode (DW15), written as not supported",
     "four_byte_enter": "4-byte mode entry (DW16), in a revision encode cannot fill",
-    "four_byte_exit": "4-byte mode exit (DW16), in a revision encode cannot fill",
+    "four_byte_exit": (
+        "the ways out of 4-byte mode (DW16), which the database does not hold: written "
+        "from EX4B and the registers it is entered by, never a reset"
+    ),
     "soft_reset": "soft reset (DW16)",
     "profile1": "the xSPI profile 1.0 table",
     "dice": "the multi-chip SCCR map",
@@ -1129,7 +1138,10 @@ def _fields(s: Sfdp) -> dict[str, Any]:
     for protocol, r in s.reads.items():
         out[f"reads.{protocol}"] = r
     for e in s.erase_types:
-        out[f"erase_types.{e.index}"] = (e.size, e.opcode, e.opcode_4b, e.typical_ns)
+        # By opcode, not index: encode writes them smallest first, and a
+        # reordering is no difference.
+        key = f"erase_types.0x{e.opcode:02x}"
+        out[key if key not in out else f"{key}/{e.size}"] = (e.size, e.opcode_4b, e.typical_ns)
     if bfpt is not None:
         out |= {
             "erase_multiplier": bfpt.erase_max_multiplier,
@@ -1168,18 +1180,26 @@ def _fields(s: Sfdp) -> dict[str, Any]:
     return out
 
 
-def _expected(path: str, a: Any, b: Any) -> str | None:
+def _expected(path: str, a: Any, b: Any, *, encoded: bool) -> str | None:
     """Why a field difference is one a round trip through the database
-    makes, or ``None``."""
-    reads = path.startswith("reads.") and a is not None and b is not None
+    makes, or ``None``; with ``encoded`` (one side is what :func:`encode`
+    wrote), every loss :data:`ENCODE_LOSSES` documents too."""
+    head = path.partition(".")[0]
+    reads = head == "reads" and a is not None and b is not None
     if reads and a.opcode == b.opcode and a.dummy_clocks == b.dummy_clocks:
         return f"the same {a.dummy_clocks} dummy clocks, split differently"
     if path in ("revision", "access_protocol") and (None in (a, b) or "unknown" in (a, b)):
         return "one is tables without their SFDP header"
-    return None
+    if not encoded or head == "reads":
+        return None
+    if head == "erase_types":
+        # Only an erase type's time is lost, not the type.
+        same_type = a is not None and b is not None and a[:2] == b[:2]
+        return ENCODE_LOSSES[head] if same_type else None
+    return ENCODE_LOSSES.get(head)
 
 
-def diff(a: Sfdp, b: Sfdp) -> SfdpDiff:
+def diff(a: Sfdp, b: Sfdp, *, encoded: bool = False) -> SfdpDiff:
     """What differs between SFDP areas ``a`` and ``b``: the parameter
     tables only one has (or has in another revision or length), each dword
     of the tables both have, and each decoded field (density, page size,
@@ -1189,7 +1209,11 @@ def diff(a: Sfdp, b: Sfdp) -> SfdpDiff:
     whose dummy clocks are the same in total but split differently between
     mode and wait clocks is still a difference, marked
     :attr:`FieldDiff.expected`: the database keeps the total, so
-    :func:`encode` cannot give the split back. ``diff(a, a)`` is empty."""
+    :func:`encode` cannot give the split back. With ``encoded`` (one side is
+    what :func:`encode` wrote: ``spiflash sfdp-diff ef4020 encoded:ef4020``),
+    every loss :data:`ENCODE_LOSSES` documents is marked expected too. Erase
+    types are compared by opcode (``erase_types.0x20``), as encode writes
+    them smallest first. ``diff(a, a)`` is empty."""
     tables: list[TableDiff] = []
     dwords: list[DwordDiff] = []
 
@@ -1228,5 +1252,6 @@ def diff(a: Sfdp, b: Sfdp) -> SfdpDiff:
         if u != v:
             shown_u = _read(u) if path.startswith("reads.") else u
             shown_v = _read(v) if path.startswith("reads.") else v
-            fields.append(FieldDiff(path, shown_u, shown_v, _expected(path, u, v)))
+            why = _expected(path, u, v, encoded=encoded)
+            fields.append(FieldDiff(path, shown_u, shown_v, why))
     return SfdpDiff(tuple(tables), tuple(dwords), tuple(fields))

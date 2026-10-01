@@ -399,7 +399,8 @@ def _sfdp_encode(db: Database, args: argparse.Namespace) -> int:
 def _sfdp_diff(db: Database, args: argparse.Namespace) -> int:
     """``spiflash sfdp-diff``: exit 0 when the two are the same, 1 when not."""
     (name_a, a), (name_b, b) = _sfdp_operand(db, args.a), _sfdp_operand(db, args.b)
-    found = diff(a, b)
+    encoded = any(side.startswith("encoded:") for side in (args.a, args.b))
+    found = diff(a, b, encoded=encoded)
     if args.json:
         json.dump({"a": name_a, "b": name_b, **found.to_json()}, sys.stdout, indent=1)
         sys.stdout.write("\n")

@@ -496,6 +496,12 @@ def test_sfdp_to_entry_to_sfdp_loses_only_what_is_documented() -> None:
             assert head in ENCODE_LOSSES, (r.name, x)
             if head == "reads":
                 assert x.expected or rest in reads_without_an_op, (r.name, x)
+            # Erase types by opcode: a reordering is no difference.
+            if head == "erase_types":
+                assert x.a[:2] == x.b[:2], (r.name, x)
+        # Against an encoding, each documented loss is marked expected.
+        for x in diff(s, back, encoded=True).unexpected:
+            assert x.path.removeprefix("reads.") in reads_without_an_op, (r.name, x)
         # The erase types are the same, smallest first, without their times.
         kept = {(e.size, e.opcode, e.opcode_4b) for e in back.erase_types}
         assert kept == {(e.size, e.opcode, e.opcode_4b) for e in s.erase_types}, r.name

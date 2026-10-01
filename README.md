@@ -356,7 +356,9 @@ decoded field and each dword that differ, and exits 1 when they differ, as
 `diff` does. A shipped dump against its chip's encoding shows what the
 database does not hold; the mode and wait clocks of a read are one of
 those, as the database keeps their total, so a split that differs is marked
-expected:
+expected, and so, against an `encoded:` side, is each loss `encode`
+documents (`spiflash.sfdp_tools.ENCODE_LOSSES`). Erase types are compared
+by opcode, as `encode` writes them smallest first:
 
 ```console
 $ spiflash sfdp-diff ef4020 encoded:ef4020
@@ -365,9 +367,9 @@ B: encoded ef4020
 tables:
     BFPT: 1.6, 16 dwords in A, 1.0, 9 dwords in B
 fields:
-    revision: 1.6 in A, 1.0 in B
-    page_size: 256 in A, none in B
-    dtr: True in A, False in B
+    revision: 1.6 in A, 1.0 in B  (expected: the revision: lowered to the highest one encode can fill)
+    page_size: 256 in A, none in B  (expected: the page size, in a revision encode cannot fill)
+    dtr: True in A, False in B  (expected: DTR reads, which have no operation here)
     reads.1-2-2: 0xbb, 2 mode + 2 wait clocks in A, 0xbb, 0 mode + 4 wait clocks in B  (expected: the same 4 dummy clocks, split differently)
 ...
 ```
