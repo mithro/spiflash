@@ -12,7 +12,8 @@ the record stores (:data:`~spiflash.model.CLAIMS`). They are:
 - each of its erasers with an opcode (:data:`ERASE_BY_OPCODE`, a SPI NAND
   one's :data:`NAND_ERASE_BY_OPCODE`) gives that erase operation;
 - its dies and the die erase it states give the die erase layout
-  (:func:`die_erasers`), which is never stored;
+  (:func:`die_erasers`), which is never stored; so do its size and the
+  chip erase it states give the chip erase layout (:func:`chip_erasers`);
 - its SFDP tables (an upstream's dump, or tables it copies) give what they
   say in the record's own terms (:meth:`Sfdp.facts
   <spiflash.sfdp.Sfdp.facts>`): the size, page size and quad enable
@@ -129,6 +130,28 @@ def die_erasers(record: Record) -> tuple[Eraser, ...]:
     return tuple(
         Eraser(OPERATIONS[op].opcode, (EraseBlock(size // dies, dies),)) for op in sorted(stated)
     )
+
+
+#: The chip erases: each erases the whole chip, in one block of its size
+#: (0xc7, 0x60, and Atmel's 0x62).
+CHIP_ERASES = frozenset({"CHIP_ERASE", "CHIP_ERASE_ALT", "CHIP_ERASE_ATMEL"})
+
+
+def chip_erasers(record: Record) -> tuple[Eraser, ...]:
+    """The layout of each chip erase ``record`` states (:data:`CHIP_ERASES`),
+    not as a driver default: one block of its size. The layout is never
+    stored, as the size and the operation say it (one that is not the
+    size's, which no record has, would be stored, and kept). None without
+    a size."""
+    from .model import EraseBlock, Eraser  # noqa: PLC0415 - model imports this module
+
+    size = record.size
+    if size is None:
+        return ()
+    stated = {u.op for u in record.stored("opcodes") if not u.assumed} & CHIP_ERASES
+    given = {e.opcode for e in record.stored("erasers")}
+    opcodes = sorted({OPERATIONS[op].opcode for op in stated} - given)
+    return tuple(Eraser(opcode, (EraseBlock(size, 1),)) for opcode in opcodes)
 
 
 def layout(eraser: Eraser) -> str:

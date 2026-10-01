@@ -621,7 +621,8 @@ class Record:
     size_claim: int | None
     #: The page size the entry states, likewise.
     page_size_claim: int | None
-    #: The erasers the entry states, but those its SFDP tables give.
+    #: The erasers the entry states, but those its SFDP tables give, and the
+    #: whole-die and whole-chip layouts its dies, size and operations give.
     eraser_claims: tuple[Eraser, ...]
     #: The capabilities the entry states.
     feature_claims: frozenset[Feature]
@@ -688,7 +689,9 @@ class Record:
     size: int | None = field(init=False, compare=False, repr=False)
     #: The page size: :attr:`page_size_claim`, or failing that its SFDP tables'.
     page_size: int | None = field(init=False, compare=False, repr=False)
-    #: Every eraser: :attr:`eraser_claims`, and those its SFDP tables give.
+    #: Every eraser: :attr:`eraser_claims`, those its SFDP tables give, and
+    #: the die and chip erase layouts (:func:`spiflash.derive.die_erasers`,
+    #: :func:`spiflash.derive.chip_erasers`).
     erasers: tuple[Eraser, ...] = field(init=False, compare=False, repr=False)
     #: Every capability: :attr:`feature_claims`, and what the other fields
     #: imply (:func:`spiflash.derive.features`): its operations other than
@@ -761,6 +764,7 @@ class Record:
         object.__setattr__(self, "quad_enable", qer.bit if qe is None and qer else qe)
         erasers += tuple(e for e in self.sfdp_erasers if e not in erasers)
         erasers += tuple(e for e in derive.die_erasers(self) if e not in erasers)
+        erasers += tuple(e for e in derive.chip_erasers(self) if e not in erasers)
         object.__setattr__(self, "erasers", erasers)
         features = self.feature_claims | derive.features(self)
         object.__setattr__(self, "features", features)

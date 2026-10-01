@@ -493,3 +493,16 @@ Changes in data format 10 (the timing model, and the listed clock):
 - the command's description gains a `timing:` line, and with `-v` every
   time and the clock Dediprog lists; the site a Timing section on the chip
   pages, and a TIMING kind of data issue.
+
+Changes in data format 11 (the final verification pass):
+
+- a chip erase's layout, one block of the part's size, is derived from the
+  chip erase operation and the size
+  ({py:func}`spiflash.derive.chip_erasers`, over
+  {py:data}`~spiflash.derive.CHIP_ERASES`), as a die erase's is from the
+  dies, and never stored: a record's `"erasers"` loses it, and its
+  `"opcodes"` keep the operation, with the upstream token as its `via`
+  ({sfsrc}`flashrom`'s `block_erasers (1 x ...)`, {sfsrc}`dediprog`'s
+  `EraseCmd`, {sfsrc}`openocd`'s `chip_erase_cmd`);
+  {py:attr}`Record.erasers <spiflash.model.Record.erasers>` gives it as
+  before. Every stored layout is over the record's size.

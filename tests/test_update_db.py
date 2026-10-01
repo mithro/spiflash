@@ -83,7 +83,7 @@ def test_remote_head_missing_branch(upstream: fetch.Upstream) -> None:
 
 
 def test_data_files_share_the_format() -> None:
-    assert update_db.FORMAT == db.FORMAT == 10
+    assert update_db.FORMAT == db.FORMAT == 11
     for name in ("records.json", "manufacturers.json", "sources.json", "datasheets.json"):
         assert json.loads((update_db.DATA / name).read_text())["format"] == db.FORMAT, name
 

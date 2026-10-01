@@ -477,6 +477,34 @@ def test_no_die_erase_layout_is_stored() -> None:
     assert found
 
 
+def test_no_chip_erase_layout_is_stored() -> None:
+    chip_erases = {OPERATIONS[op].opcode for op in derive.CHIP_ERASES}
+
+    def stored(r: dict[str, Any]) -> bool:
+        return any(e["opcode"] in chip_erases for e in r["erasers"] or ())
+
+    assert not [_where(r) for r in RECORDS if stored(r)]
+    # Every record with a size and a chip erase it states has the layout,
+    # derived; a driver default has none.
+    found = 0
+    for d in RECORDS:
+        r = Record.from_json(d)
+        stated = {u.op for u in r.opcode_claims if not u.assumed} & derive.CHIP_ERASES
+        layouts = {(e.opcode, e.blocks) for e in r.erasers if e.opcode in chip_erases}
+        if r.size is not None:
+            want = {(OPERATIONS[op].opcode, (EraseBlock(r.size, 1),)) for op in stated}
+            assert layouts == want, _where(d)
+            found += bool(want)
+    assert found
+
+
+def test_every_layout_is_over_the_size() -> None:
+    for d in RECORDS:
+        r = Record.from_json(d)
+        for e in r.eraser_claims:
+            assert r.size is None or sum(b.size * b.count for b in e.blocks) == r.size, _where(d)
+
+
 def test_a_die_is_selected_one_way() -> None:
     def both(r: dict[str, Any]) -> bool:
         ops = {o["op"] for o in r["opcodes"]}

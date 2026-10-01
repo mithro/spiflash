@@ -64,6 +64,12 @@ def features(rec: record.Record) -> list[str]:
     return sorted(Record.from_json(rec).features)
 
 
+def erasers(rec: record.Record) -> list[dict[str, object]]:
+    """A record's erasers as it loads: those it stores, and those derived
+    (the die and chip erase layouts, its SFDP tables')."""
+    return [e.to_json() for e in Record.from_json(rec).erasers]
+
+
 def sector(rec: record.Record) -> int | None:
     """A record's sector size as it loads, from its erasers."""
     return Record.from_json(rec).sector_size
@@ -664,13 +670,19 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
     ]
     # Its operations, erasers and protection bits imply the rest.
     assert e["features"] == ["otp"]
-    assert e["erasers"][0] == {"opcode": 0x20, "blocks": [[4096, 4096]]}
-    assert e["erasers"][3] == {
-        "opcode": None,
-        "blocks": [[4096, 2], [8192, 1]],
-        "function": "spi_block_erase_emulation",
-    }
-    assert len(e["erasers"]) == 4
+    # The chip erase's layout is its size: the operation is stored, and the
+    # layout derived, as a die erase's is.
+    assert e["erasers"] == [
+        {"opcode": 0x20, "blocks": [[4096, 4096]]},
+        {"opcode": 0xD8, "blocks": [[65536, 256]]},
+        {
+            "opcode": None,
+            "blocks": [[4096, 2], [8192, 1]],
+            "function": "spi_block_erase_emulation",
+        },
+    ]
+    assert erasers(e)[3] == {"opcode": 0xC7, "blocks": [[16 << 20, 1]]}
+    assert stored_ops(e)["CHIP_ERASE"] == "block_erasers (1 x 16777216)"
     assert e["voltage"] == [2700, 3600]
     assert e["tested"] == "TEST_OK_PREW"
     assert ops(e) == {
@@ -680,15 +692,16 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
         "READ_1_1_2": (0x3B, "FEATURE_FAST_READ_DOUT"),
         "BE_4K": (0x20, "eraser: 4096 x 4096"),
         "SE": (0xD8, "eraser: 256 x 65536"),
-        "CHIP_ERASE": (0xC7, "eraser: 1 x 16777216"),
+        "CHIP_ERASE": (0xC7, "block_erasers (1 x 16777216)"),
         "WRSR": (0x01, "FEATURE_WRSR_WREN"),
         "EQPI_38": (0x38, "FEATURE_QPI_38_FF"),
         "RSTQIO_FF": (0xFF, "FEATURE_QPI_38_FF"),
     }
     assert "EON_ID_NOPREFIX: EON, missing 0x7F prefix" in e["notes"]
     assert "supports SFDP" not in e["notes"]  # RDSFDP's via holds it
-    # The id read and the erases are derived, so not stored.
-    assert {o["op"] for o in e["opcodes"]}.isdisjoint({"RDID", "BE_4K", "SE", "CHIP_ERASE"})
+    # The id read and the block erases are derived, so not stored; the chip
+    # erase is stored, and its layout derived.
+    assert {o["op"] for o in e["opcodes"]}.isdisjoint({"RDID", "BE_4K", "SE"})
 
     s = r["S25FL128S_UL Uniform 128 kB Sectors"]
     assert s["id"] == "012018"
@@ -938,10 +951,12 @@ def test_openocd(tmp_path: Path) -> None:
         "READ_1_4_4": (0xEB, "qread_cmd"),
         "PP_1_1_1": (0x02, "pprog_cmd"),
         "SE": (0xD8, "eraser: 256 x 65536"),
-        "CHIP_ERASE": (0xC7, "eraser: 1 x 16777216"),
+        "CHIP_ERASE": (0xC7, "chip_erase_cmd"),
     }
     assert ops(r["IS25WP512M"])["READ_1_4_4_4B"] == (0xEC, "qread_cmd")
-    assert w["erasers"] == [
+    # The chip erase's layout is derived from the size.
+    assert w["erasers"] == [{"opcode": 0xD8, "blocks": [[65536, 256]]}]
+    assert erasers(w) == [
         {"opcode": 0xD8, "blocks": [[65536, 256]]},
         {"opcode": 0xC7, "blocks": [[16 << 20, 1]]},
     ]
@@ -2558,7 +2573,8 @@ def test_dediprog(tmp_path: Path) -> None:
     # 0xd8 has no layout, and gives no sector size: BlockSizeInByte is a
     # template's 64 KiB. Its 256-byte PageSizeInByte is the template's too.
     assert (w["size"], w["page_size"], sector(w)) == (16 << 20, None, None)
-    assert w["erasers"] == [{"opcode": 0xC7, "blocks": [[16 << 20, 1]]}]
+    # The chip erase's layout is derived from the size.
+    assert (w["erasers"], erasers(w)) == (None, [{"opcode": 0xC7, "blocks": [[16 << 20, 1]]}])
     # Only the single-line read and program of the packed words.
     assert set(ops(w)) == {"RDID", "READ_1_1_1_FAST", "PP_1_1_1", "SE", "CHIP_ERASE"}
     assert ops(w)["READ_1_1_1_FAST"] == (0x0B, "ReadCmd=0x006B3B0B")
@@ -2607,7 +2623,7 @@ def test_dediprog(tmp_path: Path) -> None:
     assert "RDID" in ops(r["MT25TL256B ( for one die)"])
     # A 64 KiB block on a 32 KiB part is no layout, and no sector size.
     cd = r["IS25CD025"]
-    assert (cd["erasers"], sector(cd)) == (
+    assert (erasers(cd), sector(cd)) == (
         [{"opcode": 0xC7, "blocks": [[32 << 10, 1]]}],
         None,
     )
@@ -2663,7 +2679,7 @@ def test_dediprog_classes(tmp_path: Path) -> None:
     assert {"opcode": 0x52, "blocks": [[32 << 10, 4]]} in at25f["erasers"]
     assert sector(at25f) == 32 << 10
     at25f2048 = r["AT25F2048"]
-    assert (at25f2048["erasers"], sector(at25f2048)) == (
+    assert (erasers(at25f2048), sector(at25f2048)) == (
         [{"opcode": 0x62, "blocks": [[256 << 10, 1]]}],
         None,
     )
