@@ -11,6 +11,7 @@ they are not part of the ``spiflash`` package.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import StrEnum
@@ -57,15 +58,17 @@ _ISSUE_TITLES = {
             "Two sources give one chip id a different size, page size, sector size, "
             "supply voltage, quad enable bit or requirement, block-protection bit, "
             "SPI NAND spare area, planes, bad blocks or ECC requirement, number of "
-            "dies, die select bit, OTP area, maximum clock, or erase, program or "
+            "dies, die select bit, OTP area, or erase, program or "
             "deep power-down time."
         ),
     ),
     IssueKind.SAME_SOURCE: (
         "One source, two values",
         (
-            "One source lists a chip id more than once, with different values, and "
-            "nothing in the id (no extended id) tells the entries apart."
+            "One source lists one part more than once at a chip id, with different "
+            "values, and nothing in the id (no extended id) tells the entries apart. "
+            "Entries for different parts sharing the id (the EN25Q32 and the EN25Q32C) "
+            "are not compared with each other."
         ),
     ),
     IssueKind.SUPPLY: (
@@ -346,12 +349,32 @@ def _values(flashes: Iterable[Flash]) -> Iterator[Issue]:
                 yield Issue(IssueKind.VALUE, f.key, (f,), answers, attribute=attr, note=note)
 
 
+#: An ordering code's package and temperature tail after a hyphen
+#: (W25Q512JV-IQ, -IN, -IM): the same part.
+_ORDER_TAIL = re.compile(r"-[A-Z]{2}$")
+
+
+def part_key(name: str) -> str:
+    """A part name as one source's entries are grouped by it for
+    :attr:`IssueKind.SAME_SOURCE`: upper case, without hyphens, underscores
+    and spaces, nor an ordering code's two-letter tail (``W25Q512JV-IQ``
+    is the W25Q512JV). A revision letter is kept: the EN25Q32 and EN25Q32C
+    are two parts."""
+    return re.sub(r"[-_ ]", "", _ORDER_TAIL.sub("", name.upper()))
+
+
 def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
+    """One source's entries for one part, at one id, that disagree: the
+    entries are grouped by source, extended id and part name
+    (:func:`part_key`), as parts sharing an id (the S25FL256S and the
+    S25FS256S, the AT25SF321 and the AT25SF321B) may each be right."""
     for f in flashes:
-        groups: dict[tuple[Source, bytes | None], list[Record]] = defaultdict(list)
+        groups: dict[tuple[Source, bytes | None, str], list[Record]] = defaultdict(list)
         for r in f.records:
-            groups[(r.source, r.ext_id)].append(r)
-        for (_source, _ext), records in sorted(groups.items(), key=lambda kv: kv[0][0].priority):
+            groups[(r.source, r.ext_id, part_key((r.part_names or (r.name,))[0]))].append(r)
+        for (_source, _ext, _part), records in sorted(
+            groups.items(), key=lambda kv: kv[0][0].priority
+        ):
             for attr in _compared(f):
                 answers = _value_answers(attr, records)
                 if len(answers) > 1:

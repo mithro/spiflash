@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import spiflash
-from issue_checks import EXPLAINED, IssueKind, find
+from issue_checks import EXPLAINED, IssueKind, find, part_key
 from issue_pages import VALUE_TITLES, chip_issues, generate_all
 from page_markup import EM_SPACE, EN_DASH
 from spiflash import Database, Datasheet
@@ -119,11 +119,26 @@ def test_two_roles_on_one_bit() -> None:
 
 
 def test_one_source_two_values() -> None:
-    db = Database([rec(page_size=256), rec(name="w25q128x", line=2, page_size=512)])
+    db = Database([rec(page_size=256), rec(line=2, page_size=512)])
     (issue,) = find(db)
     assert issue.kind is IssueKind.SAME_SOURCE
     assert issue.attribute == "page_size"
     assert issue.sources == (Source.LINUX,)
+
+
+def test_one_sources_parts_sharing_an_id_are_not_one_part() -> None:
+    # Two parts at one id (a revision letter apart) may each be right; an
+    # ordering code's tail and a parenthesised variant are the same part.
+    two = Database(
+        [rec(name="EN25Q32", page_size=256), rec(name="EN25Q32C", line=2, page_size=512)]
+    )
+    assert IssueKind.SAME_SOURCE not in kinds(two)
+    one = Database(
+        [rec(name="W25Q512JV", page_size=256), rec(name="W25Q512JV-IQ", line=2, page_size=512)]
+    )
+    assert IssueKind.SAME_SOURCE in kinds(one)
+    assert part_key("W25Q512JV-IQ") == part_key("w25q512jv")
+    assert part_key("W25Q128JW-DTR") != part_key("W25Q128JW")
 
 
 def test_extended_ids_tell_entries_apart() -> None:
