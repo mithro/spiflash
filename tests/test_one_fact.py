@@ -75,6 +75,8 @@ def test_via_keys_follow_the_scheme() -> None:
     ("source", "pattern"),
     [
         ("mediatek", r"\d+ B OOB per page; .*"),  # the flags hold the geometry
+        ("flashrom", r"\s*[Ss]upports SFDP\.?\s*"),  # RDSFDP's via holds it
+        ("flashprog", r"\s*[Ss]upports SFDP\.?\s*"),
     ],
 )
 def test_no_note_a_field_holds(source: str, pattern: str) -> None:

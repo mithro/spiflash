@@ -75,6 +75,8 @@ _FEATURES = [
     (re.compile(r"FEATURE_NO_ERASE"), "no_erase"),
 ]
 
+_SUPPORTS_SFDP = re.compile(r"\s*[Ss]upports SFDP\.?\s*")
+
 _SKIP_IDS = {"GENERIC_MANUF_ID", "PROGMANUF_ID", "GENERIC_DEVICE_ID", "SFDP_DEVICE_ID"}
 
 
@@ -211,8 +213,13 @@ def _record(
             feat = ERASE_FEATURES.get(e["blocks"][0][0])
             if feat:
                 features.add(feat)
-    if any(re.search(r"supports SFDP", n, re.IGNORECASE) for n in notes):
+    # Only a comment about the entry itself: "the latter supports SFDP", or
+    # "F model supports SFDP", is about another part of a multi-part entry.
+    # The RDSFDP operation's via holds the comment.
+    sfdp = [n for n in notes if _SUPPORTS_SFDP.fullmatch(n)]
+    if sfdp:
         features.add("sfdp")
+        notes = [n for n in notes if n not in sfdp]
     reg_bits = f.get("reg_bits", "")
     if re.search(r"\.bp\s*=", reg_bits):
         features.add("lock")

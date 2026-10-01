@@ -335,6 +335,7 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
         "RSTQIO_FF": (0xFF, "FEATURE_QPI_38_FF"),
     }
     assert "EON_ID_NOPREFIX: EON, missing 0x7F prefix" in e["notes"]
+    assert "supports SFDP" not in e["notes"]  # RDSFDP's via holds it
     # The id read and the erases are derived, so not stored.
     assert {o["op"] for o in e["opcodes"]}.isdisjoint({"RDID", "BE_4K", "SE", "CHIP_ERASE"})
 
@@ -361,6 +362,16 @@ def test_flashprog_single_file(tmp_path: Path) -> None:
     assert e["id"] == "1c7018"
     assert e["features"] == ["4byte_addr", "4byte_opcodes", "erase_64k"]
     assert e["flags"] == []  # READ_1_1_1_4B, EWSR and WRSR hold them
+
+
+@pytest.mark.parametrize("comment", ["the latter supports SFDP", "F model supports SFDP"])
+def test_flashrom_sfdp_comment_about_another_part(tmp_path: Path, comment: str) -> None:
+    eon = FLASHROM_EON.replace("/* supports SFDP */", f"/* {comment} */")
+    write(tmp_path, {**FLASHROM_HEADERS, "flashchips/eon.c": eon, "flashchips.c": ""})
+    e = by_name(flashrom.extract(tmp_path, "flashrom"))["EN25QH128"]
+    assert "sfdp" not in e["features"]
+    assert "RDSFDP" not in ops(e)
+    assert comment in e["notes"]
 
 
 def test_flashrom_errors(tmp_path: Path) -> None:
