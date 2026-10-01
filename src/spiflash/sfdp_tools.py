@@ -743,26 +743,50 @@ def _dw14(part: _Part, out: _Later) -> int | None:
 
 
 #: The DW15 QER code JESD216 reserves: what :func:`encode` writes where it
-#: knows the QE bit but not how it is written, as the decoders read it as no
-#: requirement (:meth:`QuadEnableRequirement.from_code
-#: <spiflash.registers.QuadEnableRequirement.from_code>`).
+#: does not know how the QE bit is written, or where it is, as the decoders
+#: read it as no requirement (:meth:`QuadEnableRequirement.from_code
+#: <spiflash.registers.QuadEnableRequirement.from_code>`), and Linux keeps
+#: its default for it (``spi_nor_parse_bfpt``: "BFPT QER reserved value
+#: used"). 0 would say the part has no QE bit, and Linux would then never
+#: set one.
 QER_RESERVED = 7
+
+#: How SR2 bit 1 is written, by the status-register operations the part has
+#: (JESD216B DW15[22:20]): a 2-byte WRSR with SR2 read with 0x35 (101b);
+#: WRSR2 (0x31) with SR2 read with 0x35 (110b); a 2-byte WRSR with no way to
+#: read SR2, written as 001b, the code under which a host always writes both
+#: bytes (100b would let it write one, which a part of 001b's kind answers
+#: by clearing SR2, the QE bit with it).
+_SR2_BIT1_WRITES = (
+    (frozenset({"RDSR2", "WRSR_16"}), QuadEnableRequirement.S2B1V5),
+    (frozenset({"RDSR2", "WRSR2"}), QuadEnableRequirement.S2B1V6),
+    (frozenset({"WRSR_16"}), QuadEnableRequirement.S2B1V1),
+)
 
 
 def _requirement(part: _Part, out: _Later) -> int:
     """The QER code DW15 is written with, and what is said of it in
     ``out``: the part's requirement; failing that, ``NONE`` for a part with
-    no QE bit, and ``S1B6`` for one at SR1 bit 6, the only code putting it
-    there; for one elsewhere (SR2 bit 1 has four codes, written
-    differently), the reserved 7, as any code would say more than the
-    database does (``out.blocked``); where nothing is known, 0."""
+    no QE bit, ``S1B6`` for one at SR1 bit 6, the only code putting it
+    there, and for one at SR2 bit 1 (four codes, written differently) the
+    code its status-register operations give (:data:`_SR2_BIT1_WRITES`),
+    each listed assumed. Where the QE bit is known but none of these says
+    how it is written, the reserved 7, as any code would say more than the
+    database does (``out.blocked``); where nothing is known of it, 7 too
+    (:data:`QER_RESERVED`), never 0, "no QE bit"."""
     qer, qe = part.quad_enable_requirement, part.quad_enable
     if qer is not None:
         out.lost.append(("DW15", f"the quad enable requirement, {qer}"))
         return qer.code
     if qe is None:
-        out.unknown.append(("DW15", "the quad enable requirement", "written as 0, no QE bit"))
-        return 0
+        out.unknown.append(
+            (
+                "DW15",
+                "the quad enable requirement",
+                f"written as the reserved {QER_RESERVED}, which says none (not 0, no QE bit)",
+            )
+        )
+        return QER_RESERVED
     if qe == QE_NONE:
         out.lost.append(("DW15", "the quad enable requirement: no QE bit"))
         return QuadEnableRequirement.NONE.code
@@ -771,6 +795,18 @@ def _requirement(part: _Part, out: _Later) -> int:
             ("DW15", "how the QE bit (SR1 bit 6) is written", "written as S1B6, a 1-byte WRSR")
         )
         return QuadEnableRequirement.S1B6.code
+    if qe.place == (Register.SR2, 1):
+        for needs, requirement in _SR2_BIT1_WRITES:
+            if needs <= part.ops.keys():
+                given = " and ".join(sorted(needs))
+                out.unknown.append(
+                    (
+                        "DW15",
+                        "how the QE bit (SR2 bit 1) is written",
+                        f"written as {requirement} ({requirement.description}), from {given}",
+                    )
+                )
+                return requirement.code
     out.blocked.append(
         ("DW15", f"the quad enable requirement: the QE bit is {qe}, but not how it is written")
     )

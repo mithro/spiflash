@@ -405,9 +405,14 @@ def test_encode_writes_the_quad_enable_requirement() -> None:
     assert (back.quad_enable_requirement, str(back.quad_enable)) == ("S2B1v4", "SR2 bit 1")
     # Without assume, 1.0, which has no DW15: the requirement is listed lost.
     assert "DW15: the quad enable requirement, S2B1v4, known but left out" in encode(r).missing
-    # None known: written as 0, and said so.
-    assert "DW15: the quad enable requirement, written as 0, no QE bit" in (
-        encode(rec(), assume=True).assumed
+    # None known: the reserved 7, which says no requirement (Linux keeps its
+    # default), never 0, which says there is no QE bit; and said so.
+    out = encode(rec(), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.quad_enable == 7
+    assert (
+        "DW15: the quad enable requirement, written as the reserved 7, which says none "
+        "(not 0, no QE bit)" in out.assumed
     )
 
 
@@ -430,8 +435,27 @@ def test_encode_writes_no_requirement_the_qe_bit_contradicts() -> None:
     assert out.sfdp.facts().quad_enable_requirement is None
     said = "DW15: the quad enable requirement: the QE bit is SR2 bit 1, but not how it is written"
     assert said in out.missing
-    # The shipped chips: c22018's SR1 bit 6, ef4018's SR2 bit 1.
-    for key, code in (("c22018", 2), ("ef4018", 7)):
+    # SR2 bit 1, with the status-register operations that say how it is
+    # written: the code JESD216 gives them, assumed.
+    for ops, code in (
+        (("RDSR2", "WRSR_16"), 5),
+        (("RDSR2", "WRSR2"), 6),
+        (("WRSR_16",), 1),
+        (("RDSR2",), 7),
+    ):
+        r = rec(
+            quad_enable={"register": "sr2", "bit": 1},
+            opcodes=[{"op": op, "via": "x"} for op in ops],
+        )
+        out = encode(r, assume=True)
+        assert out.sfdp.bfpt is not None
+        assert out.sfdp.bfpt.quad_enable == code, ops
+        assert any(a.startswith("DW15: how the QE bit (SR2 bit 1)") for a in out.assumed) == (
+            code != 7
+        )
+    # The shipped chips: c22018's SR1 bit 6, ef4018's SR2 bit 1 (with RDSR2
+    # and a 2-byte WRSR).
+    for key, code in (("c22018", 2), ("ef4018", 5)):
         bfpt = encode(chip(key), assume=True).sfdp.bfpt
         assert bfpt is not None
         assert bfpt.quad_enable == code, key
@@ -451,7 +475,10 @@ def test_encode_never_invents() -> None:
     # With assume, the later dwords are JESD216's "not supported", listed.
     out = encode(r, assume=True)
     assert out.revision == (1, 6)
-    assert "DW15: the quad enable requirement, written as 0, no QE bit" in out.assumed
+    assert any(
+        a.startswith("DW15: the quad enable requirement, written as the reserved 7")
+        for a in out.assumed
+    )
     assert out.missing == ()
     assert out.sfdp.bfpt is not None
     assert out.sfdp.bfpt.suspend_resume is False
@@ -698,7 +725,9 @@ def test_encode_never_says_a_part_that_suspends_cannot() -> None:
     out = encode(rec(timings=odd), assume=True)
     assert out.sfdp.bfpt is not None
     assert out.sfdp.bfpt.erase_suspend_ns == 26_000
-    assert any(a.startswith("DW12: the erase_suspend latency, written as 26 µs") for a in out.assumed)
+    assert any(
+        a.startswith("DW12: the erase_suspend latency, written as 26 µs") for a in out.assumed
+    )
     # An interval is typical, so only exactly: no DW12 at all, even with
     # assume, where one is not on the grid.
     odd = {**suspend, "erase_resume_to_suspend": {"typical": 450_000}}
