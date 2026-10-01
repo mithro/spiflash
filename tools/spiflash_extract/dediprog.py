@@ -204,6 +204,10 @@ ALTERNATIVE_WRONG = {
         "XM25QH128A",
         "0x2016",
     ): "the XM25QH128A answers REMS with 20 17 (its datasheet, Rev. H, Table 6)",
+    ("XM25QH128B", "0x2016"): (
+        "the XM25QH128B answers REMS (and RES) with device id 17h (its datasheet, Rev. 0.4, "
+        "Table 8.4)"
+    ),
     ("XM25QU128C", "0x2118"): (
         "the XM25QU128C answers REMS with 20 17 (its datasheet, Rev. 2.1, 7.1.1)"
     ),
