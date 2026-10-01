@@ -577,6 +577,8 @@ _TIMES = (
     "byte_program",
     "chip_erase_ns",
     "dpd_exit_delay",
+    "suspend",
+    "suspend_resume",
 )
 
 
@@ -653,3 +655,28 @@ def test_finest_units() -> None:
     assert derive.sfdp_time(derive.LATENCY_UNITS_NS, 32, 64_000) == (2, 7)
     assert derive.sfdp_time(derive.LATENCY_UNITS_NS, 32, 3_000) == (1, 2)
     assert derive.sfdp_time(derive.LATENCY_UNITS_NS, 32, 33_300) is None
+
+
+def test_encode_never_says_a_part_that_suspends_cannot() -> None:
+    suspend = {
+        "erase_suspend": {"maximum": 25_000},
+        "program_suspend": {"maximum": 25_000},
+        "erase_resume_to_suspend": {"typical": 448_000},
+        "program_resume_to_suspend": {"typical": 128_000},
+    }
+    out = encode(rec(timings=suspend), assume=True)
+    bfpt = out.sfdp.bfpt
+    assert bfpt is not None
+    assert bfpt.suspend_resume is True
+    assert (bfpt.erase_suspend_ns, bfpt.program_resume_to_suspend_ns) == (25_000, 128_000)
+    assert "DW13: the suspend and resume opcodes, written as 0x75 and 0x7a" in out.assumed
+    # A suspend time no DW12 can write: no DW12 at all, even with assume.
+    odd = {**suspend, "erase_suspend": {"maximum": 25_500}}
+    out = encode(rec(timings=odd), assume=True)
+    assert out.revision == (1, 0)
+    assert any(m.startswith("DW12-13: suspend and resume") for m in out.missing)
+    # Nothing known of suspend: written as not supported, and said so.
+    assert (
+        "DW12-13: suspend and resume, written as not supported"
+        in encode(rec(), assume=True).assumed
+    )

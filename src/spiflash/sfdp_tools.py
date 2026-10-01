@@ -131,8 +131,8 @@ ENCODE_LOSSES = {
     "page_program_ns": "program times (DW11), where the maxima are not one multiplier of them",
     "byte_program": "byte program times (DW11), likewise",
     "chip_erase_ns": "chip erase time (DW11), likewise",
-    "suspend_resume": "suspend and resume (DW12-13): no suspend operation is modelled",
-    "suspend": "the suspend latencies and intervals (DW12), with suspend and resume",
+    "suspend_resume": "suspend and resume (DW12-13), where the suspend times are not known",
+    "suspend": "the suspend latencies and intervals (DW12), likewise",
     "deep_power_down": "deep power-down (DW14), where it is not released with 0xab",
     "dpd_exit_delay": "the deep power-down exit delay (DW14), likewise",
     "quad_enable": "the quad enable requirement (DW15), where it is the reserved 7",
@@ -346,7 +346,10 @@ def encode(
     later = _later_dwords(part, assume=assume)
     if revision >= (1, 5):
         missing.extend(f"{dwords}: {what}" for dwords, what in later.blocked)
-        if assume:
+        # What no value can say without contradicting the database lowers
+        # the revision, even with assume.
+        missing.extend(f"{dwords}: {what}" for dwords, what in later.unwritable)
+        if assume and not later.unwritable:
             assumed.extend(f"{dwords}: {what}, {how}" for dwords, what, how in later.unknown)
             bfpt += later.dwords
         else:
@@ -442,6 +445,10 @@ class _Later:
     #: (dwords, what the database holds and these dwords cannot say without
     #: saying more): written as JESD216's reserved value, and missing.
     blocked: list[tuple[str, str]] = field(default_factory=list)
+    #: (dwords, what the database holds that no value of them can say
+    #: without contradicting it): the revision is lowered to 1.0, even
+    #: with ``assume``.
+    unwritable: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _later_dwords(part: _Part, *, assume: bool) -> _Later:
@@ -468,7 +475,7 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
         out.unknown.append(("DW11", "program and chip erase times", "written as the shortest"))
     else:
         out.lost.append(("DW11", "the program and chip erase times"))
-    out.unknown.append(("DW12-13", "suspend and resume", "written as not supported"))
+    dw12 = _dw12_13(part, out)
     dw14 = _dw14(part, out)
     qer = _requirement(part, out)
     out.unknown.append(("DW15", "0-4-4 mode", "written as not supported"))
@@ -507,8 +514,8 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
     out.dwords = [
         0x00000000 if dw10 is None else dw10,  # unknown: multiplier 2, every erase type 1 ms
         1 << 31 | (page.bit_length() - 1) << 4 | (dw11 or 0),  # DW11; unknown: the shortest
-        0xFFFFFFFF,  # DW12: bit 31, suspend and resume not supported
-        0xFFFFFFFF,  # DW13
+        0xFFFFFFFF if dw12 is None else dw12[0],  # DW12; bit 31: no suspend and resume
+        0xFFFFFFFF if dw12 is None else dw12[1],  # DW13
         0xFFFFFFFF if dw14 is None else dw14,  # DW14; bit 31: deep power-down not supported
         0xFF000000 | qer << 20 | enter << 4 | leave,  # DW15
         modes_in | modes_out | 1 << 7,  # DW16
@@ -605,6 +612,52 @@ def _dw11_times(part: _Part) -> int | None:
     (m,) = ratios
     assert m is not None
     return dword | (m // 2 - 1)
+
+
+#: The suspend and resume opcodes :func:`encode` writes in DW13 where the
+#: part can suspend: the commonest pair (Winbond's, GigaDevice's, ISSI's,
+#: Micron's), as no suspend operation is modelled; listed assumed.
+SUSPEND_OPCODES = (0x75, 0x7A)
+
+
+def _dw12_13(part: _Part, out: _Later) -> tuple[int, int] | None:
+    """DW12 and DW13, where the part's suspend times are known (so it can
+    suspend), each one a BFPT can write exactly: the latencies and
+    intervals, with what the database does not hold written as documented
+    values and listed in ``out``: the operations prohibited while
+    suspended (written as the most restrictive, 0b0100: no erase, no
+    program, no read in the suspended page) and the opcodes
+    (:data:`SUSPEND_OPCODES`). ``None`` (written as not supported, as the
+    database knows no suspend) otherwise."""
+    fields = (
+        (TimedEvent.PROGRAM_RESUME_TO_SUSPEND, Bound.TYPICAL, derive.RESUME_UNITS_NS, 16, 9, 0),
+        (TimedEvent.PROGRAM_SUSPEND, Bound.MAXIMUM, derive.LATENCY_UNITS_NS, 32, 13, 18),
+        (TimedEvent.ERASE_RESUME_TO_SUSPEND, Bound.TYPICAL, derive.RESUME_UNITS_NS, 16, 20, 0),
+        (TimedEvent.ERASE_SUSPEND, Bound.MAXIMUM, derive.LATENCY_UNITS_NS, 32, 24, 29),
+    )
+    given = [part.time(event, bound) for event, bound, *_ in fields]
+    if all(t is None for t in given):
+        out.unknown.append(("DW12-13", "suspend and resume", "written as not supported"))
+        return None
+    dword = 0b0100 | 0b0100 << 4 | 1 << 8  # bit 8 reserved
+    for (event, _, units, counts, count_lo, unit_lo), ns in zip(fields, given, strict=True):
+        bits = _place(units, counts, ns, count_lo, unit_lo)
+        if bits < 0:
+            # The part can suspend, so "not supported" would be wrong.
+            out.unwritable.append(
+                ("DW12-13", f"suspend and resume: its {event} time, unknown or not exact")
+            )
+            return None
+        dword |= bits
+    out.lost.append(("DW12", "the suspend latencies and resume-to-suspend intervals"))
+    out.unknown.append(
+        ("DW12", "the operations prohibited while suspended", "written as the most restrictive")
+    )
+    suspend, resume = SUSPEND_OPCODES
+    out.unknown.append(
+        ("DW13", "the suspend and resume opcodes", f"written as 0x{suspend:02x} and 0x{resume:02x}")
+    )
+    return dword, resume | suspend << 8 | resume << 16 | suspend << 24
 
 
 def _dw14(part: _Part, out: _Later) -> int | None:
@@ -718,9 +771,12 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
     source: its size, page size, quad enable requirement, dies, erasers and
     ways into 4-byte mode, its operations with their dummy clocks (not the
     erases its erasers give, nor the operations its ways into 4-byte mode
-    give), and the capabilities only SFDP says
-    (:func:`spiflash.derive.sfdp_claims`), with their reasons in ``via``.
-    The identity (``source``, ``name``, ``id``, ...) is ``None``:
+    give), the capabilities only SFDP says
+    (:func:`spiflash.derive.sfdp_claims`), with their reasons in ``via``,
+    and its times (DW10 to DW14, the maxima worked out as
+    :func:`spiflash.derive.sfdp_timings` does), under one ``via`` token: the
+    entry holds no tables, so it states what they gave, as a source
+    describing the part would. The identity (``source``, ``name``, ``id``, ...) is ``None``:
     ``Record.from_json(to_entry(s) | {"source": ..., ...})`` reads it."""
     facts = sfdp.facts()
     erase_ops = {derive.ERASE_BY_OPCODE.get(e.opcode) for e in facts.erasers if e.opcode}
@@ -740,7 +796,10 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
         "erasers": [e.to_json() for e in facts.erasers] or None,
         "features": sorted(claims),
         "flags": [],
-        "via": {f"feature:{f}": why for f, why in sorted(claims.items())},
+        "via": {
+            **{f"feature:{f}": why for f, why in sorted(claims.items())},
+            **({"timings": "SFDP BFPT DW10-14"} if facts.timings else {}),
+        },
         "voltage": None,
         "supply_mv": None,
         "quad_enable": None,
@@ -757,7 +816,7 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
         "four_byte_modes": sorted(facts.four_byte_modes),
         "otp": None,
         "legacy_ids": [],
-        "max_clock_hz": None,
+        "listed_clock_hz": None,
         "timings": facts.timings.to_json(),
         "opcodes": [
             {
