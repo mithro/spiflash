@@ -46,10 +46,16 @@ class Register(StrEnum):
         return _READ[self][1]
 
     @property
+    def read_with(self) -> str:
+        """How it is read: ``0x35``, ``GET FEATURE (0x0f) at 0xb0``."""
+        if self is Register.NAND_CONFIG:
+            return "GET FEATURE (0x0f) at 0xb0"
+        return f"0x{self.read_opcode:02x}"
+
+    @property
     def description(self) -> str:
-        """``SR2 (read with 0x35)``."""
-        how = "GET FEATURE (0x0f) at 0xb0" if self is Register.NAND_CONFIG else None
-        return f"{self.label} (read with {how or f'0x{self.read_opcode:02x}'})"
+        """``SR2, read with 0x35``."""
+        return f"{self.label}, read with {self.read_with}"
 
 
 _READ = {

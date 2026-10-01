@@ -29,8 +29,8 @@ SR1, SR2 = Register.SR1, Register.SR2
 
 def test_a_register_is_named_by_the_command_reading_it() -> None:
     assert [r.read_opcode for r in Register] == [0x05, 0x35, 0x15, 0x48, 0x2B, 0x0F]
-    assert Register.SR3.description == "SR3 (read with 0x15)"
-    assert Register.NAND_CONFIG.description.endswith("(read with GET FEATURE (0x0f) at 0xb0)")
+    assert Register.SR3.description == "SR3, read with 0x15"
+    assert Register.NAND_CONFIG.description.endswith(", read with GET FEATURE (0x0f) at 0xb0")
 
 
 def test_register_bit() -> None:

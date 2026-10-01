@@ -98,8 +98,21 @@ def test_a_value_from_a_records_own_tables_is_marked() -> None:
     text = nor_page("ef4020")
     sources = text[text.index("## What each source says") :]
     qemu = next(line for line in sources.split("* - ") if line.startswith("{sfsrc}`qemu`"))
-    assert qemu.count("*(SFDP)*") == 3  # size, page and sector
+    assert qemu.count("*(SFDP)*") == 4  # size, page, sector and QE bit
     layouts = text[text.index("## Erase layouts") : text.index("## What each source says")]
     assert "*(SFDP)*" in layouts
     # QEMU's ER_4K states the 4 KiB eraser its dump gives: its provenance.
     assert "[`BE_4K`](../opcodes/BE_4K.md) *(SFDP)*, from `ER_4K`" in layouts
+
+
+def test_registers() -> None:
+    text = nor_page("c84016")
+    regs = text[text.index("## Registers") : text.index("## Opcodes")]
+    # Each value, its register as read, and who gives it; the chip's marked.
+    assert "SR2 bit 1 (SR2, read with 0x35) {bdg-primary}`chip`" in regs
+    assert "SR1 bit 6 (SR1, read with 0x05)" in regs
+    assert "Protection: tb" in regs
+    # flashrom's tb is openFPGALoader's bp3: two roles on one bit.
+    assert "put bp3 and tb on one bit, SR1 bit 5" in regs
+    # A chip no source gives a register bit has no section.
+    assert "## Registers" not in nor_page("1f6601")
