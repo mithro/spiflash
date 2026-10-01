@@ -62,9 +62,12 @@ clocks, which `mtk_snand_read_cache()` writes to the controller as its
 one of the record's {ref}`SPI NAND operations <opcodes-nand>`, with
 those dummy clocks (the `quad_q2d` table's quad I/O read takes 2, the
 `quad_a8d` table's every read 8), and its table is the operation's `via`.
-Its 1-1-1 read is the fast read, 0x0b. They imply the record's `dual_read`,
-`quad_read`, `quad_pp` and `fast_read`. The page read, program execute and
-feature commands it sends every part are driver defaults.
+Every table has the one-line mode, the fast read 0x0b and the load 0x02
+(mtk-snand-ids.c:32-77), so those two are the driver's defaults, which
+imply no `fast_read`; the others imply the record's `dual_read`,
+`quad_read` and `quad_pp`. (Every read table has the quad output read too,
+but which table a part has is its entry's choice.) The page read, program
+execute and feature commands it sends every part are driver defaults too.
 
 A part of two dies selects one with `select_die`: Winbond's
 (`mtk_snand_winbond_select_die`) sends 0xc2 and the die

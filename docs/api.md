@@ -283,10 +283,8 @@ Changes in data format 8 (SPI NAND geometry, dies, SPI NAND operations):
   `dual_read`, `quad_read` and `quad_pp` claims go, as their operations imply
   them, and so do the flags and notes the new fields hold (MediaTek's
   `sparesize`, `planes_per_die`, `ndies`, `select_die`, `read_from_cache` and
-  `program_load`; Rockchip's `max_ecc_bits` and planes note; IMSProg's
-  `ECCsize`; Linux's "OOB per page" note); {sfsrc}`linux`'s SPI NAND entries
-  without `SPINAND_HAS_QE_BIT` and with a quad op variant have
-  `"quad_enable": "none"`;
+  `program_load`; Rockchip's `max_ecc_bits` and planes note; Linux's "OOB
+  per page" note);
 - {py:class}`~spiflash.opcodes.Operation` has `flash_type`; new operations:
   the `NAND_*` ones, [DIE_SELECT](opcodes/DIE_SELECT.md) and
   [DIE_ERASE_61](opcodes/DIE_ERASE_61.md);

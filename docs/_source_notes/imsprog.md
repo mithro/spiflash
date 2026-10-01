@@ -43,12 +43,13 @@ and its link goes to the file itself.
   `0x21` Spansion's bank register; SPI NAND entries set it too, to values
   the README does not explain), `algorithmCode`, which of its routines
   reads the security registers (and, for SPI NAND, the status registers),
-  and `delay`, a factor on the bus speed, in thousandths. A SPI NAND
-  entry's `ECCsize`, its spare bytes per page in 64-byte units, is the
-  record's `oob_size`: it agrees with the other sources on 63 of the 79
-  chips they give one for; most of the rest are 192 against 256 bytes on a
-  4 KiB-page part, or 64 against 128 on a 2 KiB one (each a
-  [data issue](../issues/value.md)).
+  `delay`, a factor on the bus speed, in thousandths, and for SPI NAND
+  `ECCsize`. That is how much of each page's spare area its raw mode reads
+  and writes, which its GUI sets in 64-byte steps
+  (`comboBox_ECC * 64`, mainwindow.cpp:632, offering 64, 128 and "256",
+  whose value 3 is 192 bytes): a programmer setting, not the part's spare
+  area, so not the record's `oob_size`. It is 192 on several 4 KiB-page
+  parts whose spare area is 256 bytes.
 - The opcodes are what {upstream}`imsprog:IMSProg_programmer/spi_nor_flash.c`
   sends to a SPI NOR part: read, page program, the 0xd8 block erase (its
   erase is a loop of those; its chip-erase routine is never called), and,

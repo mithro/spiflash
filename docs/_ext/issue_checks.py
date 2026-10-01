@@ -103,6 +103,41 @@ _ISSUE_TITLES = {
 #: a protection layout role by role (``"protection.tb"``).
 ATTRIBUTES = COMPARED_VALUES
 
+_TWO_PARTS = (
+    "Two parts share this id: the N25Q00AA (four 256 Mbit dies) and the {part} "
+    "(two 512 Mbit dies), and the sources' entries give each its own: no "
+    "source is wrong."
+)
+_LUNS = (
+    "Rockchip's FTL takes every part as one die (its die_num is 1), so its "
+    "plane_per_die on this two-LUN part counts the LUNs too; Linux gives one "
+    "plane in each of two LUNs."
+)
+
+#: What is known of an issue, by its chip and value: why the sources
+#: disagree where that is not plain from their answers.
+EXPLAINED = {
+    ("20ba21", "dies"): _TWO_PARTS.format(part="MT25QL01GBBB"),
+    ("20bb21", "dies"): _TWO_PARTS.format(part="MT25QU01GBBB"),
+    ("20ba22", "dies"): (
+        'The MT25QL02G has four 512 Mbit dies (its datasheet: "Stacked device (four '
+        "512Mb die)\"): QEMU's die_cnt of 2 is wrong."
+    ),
+    ("20bb22", "dies"): (
+        "The MT25QU02G has four 512 Mbit dies, as the MT25QL02G: QEMU's die_cnt of 2 is wrong."
+    ),
+    ("2c5b1c", "dies"): (
+        "The MT35XU02G has four dies (the C of its part number, MT35XU02GCBA, is "
+        "four dies): Linux's two-die fixup for it (micron-st.c, mt35_two_die_fixups) "
+        "is wrong."
+    ),
+    ("c845", "planes"): _LUNS,
+    ("c855", "planes"): _LUNS,
+    ("0b51", "oob_size"): (
+        "The XT26Q01D datasheet gives 128 B of spare per page: Dediprog's 64 is wrong."
+    ),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class Answer:
@@ -141,6 +176,8 @@ class Issue:
     #: For :attr:`IssueKind.DATASHEET`: the part, and its datasheets.
     part: str | None = None
     datasheets: tuple[Datasheet, ...] = ()
+    #: Why the sources disagree, where that is known (:data:`EXPLAINED`).
+    note: str | None = None
 
     @property
     def sources(self) -> tuple[Source, ...]:
@@ -191,7 +228,8 @@ def _values(flashes: Iterable[Flash]) -> Iterator[Issue]:
                     disagree.update((id(r), r) for r in variant)
             if disagree:
                 answers = _answers((r.compared(attr), r) for r in disagree.values())
-                yield Issue(IssueKind.VALUE, f.key, (f,), answers, attribute=attr)
+                note = EXPLAINED.get((f.key, attr))
+                yield Issue(IssueKind.VALUE, f.key, (f,), answers, attribute=attr, note=note)
 
 
 def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
@@ -203,7 +241,10 @@ def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
             for attr in ATTRIBUTES:
                 answers = _answers((r.compared(attr), r) for r in records)
                 if len(answers) > 1:
-                    yield Issue(IssueKind.SAME_SOURCE, f.key, (f,), answers, attribute=attr)
+                    note = EXPLAINED.get((f.key, attr))
+                    yield Issue(
+                        IssueKind.SAME_SOURCE, f.key, (f,), answers, attribute=attr, note=note
+                    )
 
 
 def _sfdp(flashes: Iterable[Flash]) -> Iterator[Issue]:

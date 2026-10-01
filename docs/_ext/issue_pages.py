@@ -252,7 +252,8 @@ class _Render:
             volts = issues[0].attribute == "voltage"
             header = ["Chip", "Parts", "Answers: V min, V max" if volts else "Answers"]
             rows = [
-                [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i)] for i in issues
+                [self.chip(i.flashes[0]), self.names(i.flashes[0]), self.answers(i) + _note(i)]
+                for i in issues
             ]
         elif kind is IssueKind.SAME_SOURCE:
             volts = issues[0].attribute == "voltage"
@@ -262,7 +263,7 @@ class _Render:
                     self.chip(i.flashes[0]),
                     self.names(i.flashes[0]),
                     self.who(i.answers[0].records[:1]),
-                    self.answers(i, by_entry=True),
+                    self.answers(i, by_entry=True) + _note(i),
                 ]
                 for i in issues
             ]
@@ -320,6 +321,11 @@ class _Render:
             return " {bdg-success}`datasheet`" if gives else ""
 
         return mark
+
+
+def _note(issue: Issue) -> str:
+    """Why the sources disagree, where it is known, after the answers."""
+    return f"\n\n*{esc(issue.note)}*" if issue.note else ""
 
 
 def _attr(issue: Issue) -> str:
@@ -463,7 +469,9 @@ def chip_issues(db: Database, slugs: dict[int, str], f: Flash, issues: list[Issu
         else:
             about = _attr(i)
             answer = r.answers(i)
-        rows.append([f"[{i.kind.heading}](../issues/{kind_page(i.kind)}.md)", about, answer])
+        rows.append(
+            [f"[{i.kind.heading}](../issues/{kind_page(i.kind)}.md)", about, answer + _note(i)]
+        )
     return [
         "### Conflicts and errors\n",
         (

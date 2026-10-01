@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import spiflash
-from issue_checks import IssueKind, find
+from issue_checks import EXPLAINED, IssueKind, find
 from issue_pages import VALUE_TITLES, chip_issues, generate_all
 from page_markup import EM_SPACE, EN_DASH
 from spiflash import Database, Datasheet
@@ -340,3 +340,17 @@ def test_parts_an_extended_id_tells_apart_are_not_compared() -> None:
     assert ("010220", "voltage") not in found
     # The GD5F1GQ5RE (1 Gbit) and the F50L2G41KA (2 Gbit) at c8 41.
     assert ("c841", "size") not in found
+
+
+def test_a_known_cause_is_said() -> None:
+    # Two parts at one id are no source's error, and the issue says so.
+    found = {(i.kind, i.subject, i.attribute): i.note for i in find()}
+    note = found[(IssueKind.VALUE, "20ba21", "dies")]
+    assert note is not None
+    assert "Two parts share this id" in note
+    assert "MT25QL01GBBB" in note
+    db = spiflash.database()
+    slugs = {id(f): f.key for f in db.flashes}
+    assert "Two parts share this id" in generate_all(db, slugs)["value.md"]
+    # Every explained issue is one the checks find.
+    assert set(EXPLAINED) <= {(s, a) for _, s, a in found}

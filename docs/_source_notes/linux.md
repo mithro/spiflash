@@ -60,17 +60,17 @@ bit. A per-part fixup does (the MX25L3255E's SR1 bit 6, the MT35XU's none),
 but the GD25Q256's sets SR1 bit 6 only for a JESD216 1.0 table (the
 GD25Q256C), so that entry has none. A SPI NAND entry's
 `SPINAND_HAS_QE_BIT` is bit 0 of its configuration register (feature 0xb0).
-Without it, `spinand_init_quad_enable()` clears that bit and the driver
-still reads on four lines where the entry has a quad op variant, so such an
-entry's bit is *none*. That is the driver's behaviour, not always the
-part's: XTX's XT26G0xD and XT26Q0xD have no `SPINAND_HAS_QE_BIT`, though
-their datasheet's feature 0xb0 bit 0 is a QE bit quad reads need (a
-[data issue](../issues/value.md) against {sfsrc}`rockchip`).
+Without it, `spinand_init_quad_enable()` clears that bit on every part
+(core.c:1794-1802): the core's default, which says nothing of the part's
+bit, so the entry gives none. On some it is wrong: XTX's XT26G0xD and
+XT26Q0xD have no `SPINAND_HAS_QE_BIT`, though their datasheets' feature
+0xb0 bit 0 is a QE bit that must be set for quad reads.
 
 The fixups that set a SPI NOR part's dies (`params->n_dice`) and die erase
 (`params->die_erase_opcode`) give the record's `dies` and its die erase:
 micron-st.c's MT25Q, N25Q00 and MT35XU parts (4 or 2 dies, Micron's 0xc4
-[DIE_ERASE](../opcodes/DIE_ERASE.md)), and spansion.c's 2 Gbit S25H and
+[DIE_ERASE](../opcodes/DIE_ERASE.md); its two-die fixup is wrong for the
+MT35XU02G, which has four, the C of MT35XU02GCBA), and spansion.c's 2 Gbit S25H and
 S28H parts (2 dies, the 4 their SFDP tables give corrected, with
 Infineon's 0x61 [DIE_ERASE_61](../opcodes/DIE_ERASE_61.md); the smaller
 parts' come from their SFDP tables alone, which Linux does not carry).
@@ -80,7 +80,11 @@ their density) and no die erase; the kernel selects each with 0xc2
 
 A SPI NAND entry's `NAND_MEMORG` gives its spare area per page (`oob_size`),
 planes, most bad blocks per die and dies (LUNs per target times targets),
-and `NAND_ECCREQ` its ECC requirement. Its read-from-cache, write-cache and
+and `NAND_ECCREQ` its ECC requirement. Its oobsize is not always the
+parameter page's spare area, the record's `oob_size`
+([](../derived.md#spi-nand-geometry)): the MX35LF2GE4AD's and
+MX35LF4GE4AD's are the spare left with the ECC on, the W25N01KV's the spare
+and its ECC parity area; those three are notes instead. Its read-from-cache, write-cache and
 update-cache op variants, each file's `SPINAND_OP_VARIANTS` of the
 `SPINAND_*_OP` macros in {upstream}`linux:include/linux/mtd/spinand.h`, are
 its {ref}`SPI NAND operations <opcodes-nand>`, each read with its

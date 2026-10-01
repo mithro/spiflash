@@ -126,7 +126,9 @@ capability:
 - {sfsrc}`imsprog`: every read, page program and 0xd8 erase;
 - for SPI NAND, {sfsrc}`linux`, {sfsrc}`mediatek` and {sfsrc}`rockchip`: the
   page read, program execute and feature commands their drivers send every
-  part, and Rockchip's 0x03 read from cache and 0x02 program load;
+  part, Rockchip's 0x03 read from cache and 0x02 program load, and
+  MediaTek's one-line read from cache (0x0b) and program load (0x02), which
+  every one of its I/O tables has;
 
 and the 4-byte-address form of each. So an AT45DB DataFlash part, which
 has a fast read, does not show one: the only sources listing it for those
@@ -184,13 +186,13 @@ bit. That the driver sets nothing is not always that the part has no bit:
 {sfsrc}`linux` sets bit 0 of their configuration register, a HOLD_D bit its
 {upstream}`toshiba.c <linux:drivers/mtd/nand/spi/toshiba.c>` calls the
 equivalent of the QE bit; the two are a [data issue](issues/value.md).
-{sfsrc}`linux`'s SPI NAND core is the same: for an entry without
-`SPINAND_HAS_QE_BIT`, `spinand_init_quad_enable()` clears the bit, and the
-driver still reads on four lines where the entry has a quad op variant, so
-that entry's bit is *none*. XTX's XT26G0xD and XT26Q0xD are such entries,
-though their datasheet's feature 0xb0 bit 0 is a QE bit quad reads need
-({sfsrc}`rockchip` sets it): Linux's entries are wrong, and a
-[data issue](issues/value.md).
+Rockchip's `has_qe_bits=0` is a field each entry sets. {sfsrc}`linux`'s
+SPI NAND core, on the other hand, clears the bit on every part without
+`SPINAND_HAS_QE_BIT` (`spinand_init_quad_enable()`), and reads on four
+lines anyway: the core's default, not a statement about the part, so such
+an entry gives no bit. It is wrong on some: XTX's XT26G0xD and XT26Q0xD
+have no `SPINAND_HAS_QE_BIT`, though their datasheets' feature 0xb0 bit 0
+is a QE bit that "must be set" for quad reads, as {sfsrc}`rockchip` says.
 
 JESD216's quad enable requirement (QER, BFPT DWORD 15: a record's
 `quad_enable_requirement`) says where the bit is and how it is written.
@@ -270,6 +272,18 @@ requirement's strength and step each on its own, and a source giving no step
 does not vote on it, so Rockchip's 8 bits agrees with Linux's 8 bits per
 512 bytes.
 
+`oob_size` is one thing: the spare bytes per page the part's ONFI
+parameter page gives (bytes 84 and 85), its spare area with the on-die ECC
+disabled, without any ECC parity area of its own. The sources do not all
+give that. {sfsrc}`linux`'s `NAND_MEMORG` mixes views: its MX35LF2GE4AD
+and MX35LF4GE4AD give the spare left with the ECC on (64 and 128 bytes,
+where the parameter page gives 128 and 256), its W25N01KV the spare and
+the parity area together (96, where the parameter page gives 64). Those are
+noted on the record, not stored as its `oob_size`
+(`_OOB_OTHER_VIEW` in {repo}`tools/spiflash_extract/linux.py`). {sfsrc}`imsprog`'s
+`ECCsize` is not a spare size at all: it is how much spare its raw mode
+reads, set in 64-byte steps, and stays a flag.
+
 ## Dies
 
 A part's `dies` are how many it has in its package, SPI NOR or SPI NAND, as
@@ -299,7 +313,13 @@ a part's own are its sources', stored with the operation wherever an entry
 states them, even where they are the usual number
 ({py:attr}`OpcodeUse.dummy_clocks <spiflash.opcodes.OpcodeUse.dummy_clocks>`):
 {sfsrc}`linux`'s SPI NAND op variants (dummy bytes, times 8, over the dummy
-phase's lines) and {sfsrc}`mediatek`'s `SNAND_OP`s. Those a part's SFDP
+phase's lines) and {sfsrc}`mediatek`'s `SNAND_OP`s. They are not compared
+for data issues: a part takes fewer dummy clocks at a lower clock (Linux
+lists a variant per clock limit, and keeps the most), and which clock a
+source's numbers are for is not said, so two numbers need not disagree. The
+chip pages show each source's, where they differ (the Paragon PN26G01A's
+quad I/O read: Linux 4, MediaTek 2); comparing them waits for the timing
+model. Those a part's SFDP
 tables give are derived from them, and a stored use giving the same as its
 tables is not stored. {sfsrc}`rockchip`'s 8 for every SPI NAND read is its
 driver's, no part's. {sfsrc}`flashprog`'s `.dc` bits are not dummy clocks:

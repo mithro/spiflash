@@ -78,7 +78,9 @@ For an SPI NAND entry, `sfc_nand_init()` in sfc_nand.c:
   blocks, which `density` agrees with in every entry;
 - the record's `planes` is `plane_per_die`, which also sets the plane bit
   of the column address; Rockchip states no dies (its FTL's `die_num` is 1
-  for every part);
+  for every part), so on a part of two LUNs (the GD5F4GQ6) its
+  `plane_per_die` of 2 stands for the LUNs, where {sfsrc}`linux` gives one
+  plane in each of two;
 - its `ecc` is `max_ecc_bits`, which the driver passes to its FTL with no
   step: 8 bits, not 8 bits per 512 bytes;
 - the driver reads from cache with 0x03 and loads with 0x02, then for
