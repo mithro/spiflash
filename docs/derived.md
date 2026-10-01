@@ -25,9 +25,49 @@ blocks of one size, and not a chip erase (0xc7, 0x60, 0x62) or die erase
 SPI NAND part's block erase implies none of them, as its operations are
 not the SPI NOR ones.
 
-The capabilities a part's SFDP tables support are implied too, where a
-source carries the tables (the {sfsrc}`qemu` dumps), and the operations they
-list are the part's own.
+## SFDP tables
+
+Where a source carries a part's SFDP
+([JESD216](https://www.jedec.org/standards-documents/docs/jesd216b)) tables,
+its record stores them as they are: {sfsrc}`qemu`'s whole dumps (a record's
+`sfdp`), and the Basic Flash Parameter, 4-byte instruction and xSPI tables
+{sfsrc}`zephyr`'s boards copy (`sfdp-bfp`, `sfdp-ff84`, `sfdp-ff05`: its
+`sfdp_tables`). What they say is worked out from them when the data is
+loaded ({py:meth}`Sfdp.facts <spiflash.sfdp.Sfdp.facts>`), and not stored
+again:
+
+- the size (the density) and the page size, where the entry gives none;
+- an eraser for each erase type over the whole part, one for each 4-byte
+  erase opcode of the 4-byte instruction table, and the 4 KiB erase of
+  BFPT DWORD 1 where no erase type has it;
+- each operation the tables name, the part's own: its fast reads, each with
+  the dummy clocks the tables give it, the erases, the 4-byte forms the
+  instruction table lists (a read only where the BFPT lists its 3-byte form,
+  as Linux takes them), the ways into and out of 4-byte mode (DWORD 16), the
+  read 0x03 JESD216 guarantees, and RDSFDP itself.
+
+Those operations and erasers imply capabilities by the rules above, the same
+as a source's. Three things only SFDP says imply them too: the BFPT's address
+bytes (3 or 4, or 4) and its ways into 4-byte mode imply `4byte_addr`;
+DWORD 16 bit 29, dedicated 4-byte opcodes, implies `4byte_opcodes`; and an
+xSPI profile 1.0 table implies `octal_dtr_read` and `octal_dtr_pp`, whose
+opcodes have no name here.
+
+A 3-byte part's DWORD 16 often has every way into and out of 4-byte mode set
+(Macronix's MX25R6435F: all ones), which says nothing. Its 4-byte fields are
+read only for a part with a 4-byte mode: one whose BFPT allows 4-byte
+addresses, as Zephyr's `spi_nor_process_bfp()` reads them, or one over
+16 MiB.
+
+A value the source also gives outside its tables is stored only where it
+differs from theirs, and is then the record's value, as it is the one the
+source's own code uses: {sfsrc}`qemu`'s model takes the geometry of its
+`INFO()` line, and {sfsrc}`zephyr`'s `spi_nor` driver refuses a size its BFPT
+contradicts, while its other drivers use `page-size` as the controller's
+write chunk. Each such value is a [data issue](issues/sfdp.md)
+({py:meth}`Record.sfdp_disagreements
+<spiflash.model.Record.sfdp_disagreements>`). A chip page marks a value a
+record has from its own tables "(SFDP)".
 
 ### What SFDP says of fast read
 
@@ -52,7 +92,10 @@ and will be revisited if someone supplies the text:
 
 So on a part with SFDP tables only the read 0x03 is taken as the part's own
 (with RDSFDP, 0x5a, the table itself); {sfsrc}`qemu`'s fast read and page
-program, which its model decodes for every part, stay driver defaults.
+program, which its model decodes for every part, stay driver defaults. The
+4-byte instruction table is another matter: its fast read (0x0c) and page
+program (0x12) bits are the part's own 4-byte forms, so they imply
+`fast_read` as any source's `READ_1_1_1_FAST_4B` does.
 
 ## Driver defaults imply nothing
 

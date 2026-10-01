@@ -28,7 +28,9 @@ Facts about chips:
   ([JESD216](https://www.jedec.org/standards-documents/docs/jesd216b)) tables its
   flash model answers for thirteen parts, kept whole (the `sfdp` of those
   records): byte for byte what those parts answer to the SFDP command, as
-  {sfsrc}`qemu` records them, which is data rather than code.
+  {sfsrc}`qemu` records them, which is data rather than code. Those and the
+  tables {sfsrc}`zephyr`'s boards copy are kept as they are, and what they
+  say is worked out from them ([](derived.md#sfdp-tables)).
 
 The [JEP106 manufacturer names](jep106/index.md) come from {sfsrc}`openocd`'s copy of the
 [JEDEC list](https://www.jedec.org/standards-documents/docs/jep-106ab)

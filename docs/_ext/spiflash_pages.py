@@ -806,8 +806,15 @@ def derived_table(db: Database) -> str:
             why.append(
                 "a size over 16 MiB, or "
                 + ops(derive.FOUR_BYTE_ADDRESS_OPS[-4:])
-                + ", or any `_4B` operation ({py:func}`~spiflash.derive.address_bytes`)"
+                + ", or any `_4B` operation, or SFDP tables saying the part takes "
+                "4-byte addresses or has a way into 4-byte mode "
+                "({py:func}`~spiflash.derive.address_bytes`)"
             )
+        why.extend(
+            f"SFDP tables: {what}"
+            for what, feats in derive.SFDP_FEATURES.items()
+            if Feature(feat) in feats
+        )
         rows.append(
             [
                 badge(*FEATURE_TEXT[feat]),

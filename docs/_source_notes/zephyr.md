@@ -12,10 +12,16 @@ some with placeholder ids.
   uses (`readoc`, `writeoc`, the MSPI I/O mode) and what the chip needs
   (`has-dpd`, `quad-enable-requirements`, `enter-4byte-addr`, ...), kept in
   the record's `flags`.
-- About a quarter of the nodes carry a copy of the chip's own SFDP Basic
-  Flash Parameter table (`sfdp-bfp`), which gives its density, fast reads,
-  erase types and page size as the chip itself reports them; where the
-  board's own values disagree with it, the record's `notes` say so.
+- About a fifth of the nodes carry a copy of the chip's own SFDP Basic
+  Flash Parameter table (`sfdp-bfp`), and a few its 4-byte instruction and
+  xSPI profile tables (`sfdp-ff84`, `sfdp-ff05`). The record stores them (its
+  `sfdp_tables`) and works out from them its density, fast reads with their
+  dummy clocks, erase types and page size as the chip itself reports them
+  ([](../derived.md#sfdp-tables)). A size or page size the node gives too is
+  stored only where it differs from the table's, and is then a
+  [data issue](../issues/sfdp.md): the `spi_nor` driver refuses a size its
+  table contradicts, and other drivers use `page-size` as their controller's
+  write chunk rather than the part's page.
 - Devicetree has no field for the part name: it is the node's name, a label,
   a comment on the `jedec-id` line or a descriptive `compatible`, whichever
   first looks like a part number, and a node none of them names is left out.

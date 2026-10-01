@@ -760,7 +760,8 @@ class OpcodeUse:
     the part needs for this operation, where its source says
     (:meth:`Sfdp.facts <spiflash.sfdp.Sfdp.facts>` gives each read's from
     its SFDP tables); ``None`` where it does not, and
-    :attr:`Operation.dummy_clocks` is the usual number. Data ``"dummy_clocks"``."""
+    :attr:`Operation.dummy_clocks` is the usual number. The data stores it as
+    a use's ``"dummy_clocks"``, where a source gives it."""
 
     op: str
     via: str

@@ -17,11 +17,15 @@ It is alone, though, in carrying complete SFDP
 ([JESD216](https://www.jedec.org/standards-documents/docs/jesd216b)) dumps:
 thirteen entries point at the tables in
 {upstream}`qemu:hw/block/m25p80_sfdp.c`. Those records keep the dump whole
-(their `sfdp`): byte for byte what those parts answer to the SFDP command,
-which is data rather than code. From them come the fast reads with the
-part's own dummy clocks, the erase types, the 4-byte-address opcodes and the
-quad enable method, and the page size where the table has it, and the
-capabilities they imply; the read 0x03 a part with a BFPT has is those parts'
-own, but SFDP gives no sign of fast read 0x0b or page program 0x02, so those
-stay the model's defaults ([](../derived.md)). The chip pages
-show each dump decoded.
+(their `sfdp`, with the `.sfdp_read` function serving it as its `via`):
+byte for byte what those parts answer to the SFDP command, which is data
+rather than code. Everything the dump says is worked out from it when the
+data is loaded, not stored again: the fast reads with the part's own dummy
+clocks, the erase types, the 4-byte-address opcodes, the page size where the
+table has it, and the capabilities they imply; the read 0x03 a part with a
+BFPT has is those parts' own, but SFDP gives no sign of fast read 0x0b or
+page program 0x02, so those stay the model's defaults
+([](../derived.md#sfdp-tables)). The entry's own geometry, which the model
+uses, is stored only where it differs from the dump's: on every one of the
+thirteen it agrees, so their size and erase layouts come from the dumps, and
+`ER_4K` and `ER_32K` stay flags. The chip pages show each dump decoded.
