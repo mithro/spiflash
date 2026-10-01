@@ -98,6 +98,7 @@ select = [
 [tool.mypy]
 files = [
     "src/spiflash", "tools/spiflash_extract", "tools/update_db.py",
+    "tools/db_snapshot.py", "tools/db_diff.py",
     "docs/conf.py", "docs/_ext", "docs/check_links.py",
     "docs/check_link_targets.py",
 ]
