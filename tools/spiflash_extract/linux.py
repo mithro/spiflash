@@ -512,6 +512,40 @@ def _nand_manufacturers(
     return at
 
 
+#: The entries whose ``NAND_MEMORG`` oobsize is not the record's
+#: ``oob_size``, the spare bytes per page the part's parameter page gives:
+#: their oobsize is another view of the spare area, and is noted instead.
+#: Each is keyed by the part, with the oobsize it gives (a changed one
+#: raises, to be looked at again).
+_OOB_OTHER_VIEW = {
+    # Datasheet Rev. 1.6, Table 8: 2048+64 with ECC enabled, 2048+128 with
+    # it disabled; the parameter page's spare bytes per page: 128.
+    "MX35LF2GE4AD": (
+        64,
+        (
+            "oobsize 64 B is the spare left with the on-die ECC enabled; "
+            "its parameter page gives 128 B (datasheet Table 8)"
+        ),
+    ),
+    "MX35LF4GE4AD": (
+        128,
+        (
+            "oobsize 128 B is the spare left with the on-die ECC enabled; "
+            "its parameter page gives 256 B (datasheet Table 8)"
+        ),
+    ),
+    # Datasheet Rev. H: 64 B of spare (0x800-0x83f), then 32 B of ECC
+    # parity (0x840-0x85f); the parameter page's spare bytes per page: 0x40.
+    "W25N01KV": (
+        96,
+        (
+            "oobsize 96 B is the spare area and the ECC parity area; "
+            "its parameter page gives 64 B of spare"
+        ),
+    ),
+}
+
+
 class _Shape(NamedTuple):
     """What one ``SPI_MEM_OP`` macro puts on the bus, single transfer rate:
     the opcode (an expression of the macro's parameters, ``reset ? 0x02 :
@@ -664,14 +698,13 @@ def _nand_ops(
     args: list[str],
     tables: dict[str, list[str]],
     shapes: dict[str, _Shape | None],
-) -> tuple[list[dict[str, object]], bool]:
+) -> list[dict[str, object]]:
     """An entry's operations: those of its read from cache, write to cache
     and update cache op variants (``SPINAND_INFO_OP_VARIANTS``; the
     continuous read ones ``_WITH_CONT`` adds are the same opcodes, read
     another way, and not taken), each with the most dummy clocks its
     variants give it (the variant without a clock limit; a part may take
-    fewer below a lower clock), and the core's defaults. Also whether any
-    of them moves data on four lines."""
+    fewer below a lower clock), and the core's defaults."""
     found = [cparse.macro_call(a, "SPINAND_INFO_OP_VARIANTS") for a in args] + [
         cparse.macro_call(a, "SPINAND_INFO_OP_VARIANTS_WITH_CONT") for a in args
     ]
@@ -680,13 +713,11 @@ def _nand_ops(
         msg = "no SPINAND_INFO_OP_VARIANTS"
         raise ValueError(msg)
     out: list[dict[str, object]] = []
-    quad = False
     for table in (n.strip().lstrip("&") for n in names[:3]):
         clocks: dict[str, int | None] = {}
         for v in (v for c in tables[table] if (v := _variant(c, shapes)) is not None):
             given = clocks.get(v.op)
             clocks[v.op] = v.dummy_clocks if given is None else max(given, v.dummy_clocks or 0)
-            quad |= OPERATIONS[v.op].lines[2] == 4
         for op, n in clocks.items():
             if any(o["op"] == op for o in out):
                 continue
@@ -698,7 +729,7 @@ def _nand_ops(
             raise ValueError(msg)
         op = _nand_operation(cparse.evaluate(shape.opcode), shape)
         out.append({"op": op, "via": f"every part ({macro})", "assumed": True})
-    return out, quad
+    return out
 
 
 def extract_nand(root: Path) -> list[Record]:
@@ -749,8 +780,7 @@ def extract_nand(root: Path) -> list[Record]:
                     name,
                     vendor=vendor,
                     id=bytes([mfr_id, *fields.pop("device")]).hex(),
-                    notes=cparse.comments(raw[start:end]),
-                    **fields,
+                    **{**fields, "notes": [*cparse.comments(raw[start:end]), *fields["notes"]]},
                 )
             )
     return records
@@ -781,20 +811,27 @@ def _nand_fields(
     # The flags are SPINAND_INFO's sixth argument, after the model, id,
     # memory organisation, ECC requirement and op variants.
     flags = cparse.flag_names(args[5]) if len(args) > 5 else []
-    opcodes, quad = _nand_ops(args, tables, shapes)
+    opcodes = _nand_ops(args, tables, shapes)
     via: dict[str, str] = {}
     # spinand_init_quad_enable() (core.c:1794-1802) sets CFG_QUAD_ENABLE,
     # bit 0 of the configuration register (REG_CFG, feature 0xb0), for
-    # SPINAND_HAS_QE_BIT where an op variant moves data on four lines, and
-    # clears it otherwise: without the flag, a part with such a variant
-    # reads on four lines setting nothing.
-    quad_enable: str | dict[str, object] | None = None
+    # SPINAND_HAS_QE_BIT where an op variant moves data on four lines. It
+    # clears the bit on every other part: the core's default, not the
+    # part's (the XT26G01D has the flag absent and a QE bit quad reads
+    # need), so without the flag the entry says nothing of one.
+    quad_enable: dict[str, object] | None = None
     if "SPINAND_HAS_QE_BIT" in flags:
         quad_enable = {"register": "nand-b0", "bit": 0}
         via["quad_enable"] = "SPINAND_HAS_QE_BIT"
-    elif quad:
-        quad_enable = "none"
-        via["quad_enable"] = "no SPINAND_HAS_QE_BIT: spinand_init_quad_enable(false)"
+    notes: list[str] = []
+    oob_size: int | None = oob
+    other = _OOB_OTHER_VIEW.get(cparse.c_string(args[0]))
+    if other is not None:
+        if other[0] != oob:
+            msg = f"NAND_MEMORG oobsize {oob}, not {other[0]}: remove it from _OOB_OTHER_VIEW"
+            raise ValueError(msg)
+        notes.append(other[1])
+        oob_size = None
     die_select_bit = None
     for a in args[6:]:
         target = cparse.macro_call(a, "SPINAND_SELECT_TARGET")
@@ -825,7 +862,7 @@ def _nand_fields(
         "size": size,
         "page_size": page,
         "erasers": [derive.block_eraser(0xD8, page * ppb, size).to_json()],
-        "oob_size": oob,
+        "oob_size": oob_size,
         "planes": planes,
         "dies": luns * targets,
         "die_select_bit": die_select_bit,
@@ -835,6 +872,7 @@ def _nand_fields(
         "via": via,
         "quad_enable": quad_enable,
         "opcodes": sorted(opcodes, key=lambda o: sort_key(str(o["op"]))),
+        "notes": notes,
     }
 
 

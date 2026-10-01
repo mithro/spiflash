@@ -83,7 +83,10 @@ Fields (``None`` / empty when the upstream does not say):
     the quad enable bit, on one bit.
 ``oob_size``, ``planes``, ``max_bad_blocks``, ``ecc``
     A SPI NAND part's geometry, as the entry states it: the spare
-    (out-of-band) bytes of each page, the planes of each die, the most
+    (out-of-band) bytes of each page, as the part's ONFI parameter page
+    gives them (its spare area with the on-die ECC disabled, without an ECC
+    parity area of its own; a source giving another view of it, Linux's
+    for a few parts, has a note instead), the planes of each die, the most
     blocks of each die that may be bad, and the error correction it needs
     (``{"strength_bits": 8, "step_bytes": 512}``, without ``"step_bytes"``
     where the entry gives none). SPI NAND only. What follows from them
