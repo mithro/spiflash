@@ -1190,6 +1190,27 @@ EDIT_COST = 4
 TAIL_COST = 1
 
 
+#: An ordering code's package and temperature tail after a hyphen
+#: (W25Q512JV-IQ, -IN, -IM): the same part.
+_ORDER_TAIL = re.compile(r"-[A-Z]{2}$")
+
+
+def part_key(name: str) -> str:
+    """A part number as one source's entries for one part are told from
+    its entries for others at the same id: upper case, without hyphens,
+    underscores and spaces, nor an ordering code's two-letter tail
+    (``W25Q512JV-IQ`` is the W25Q512JV). A revision letter is kept: the
+    EN25Q32 and EN25Q32C are two parts. :func:`record_part` applies it to a
+    record."""
+    return re.sub(r"[-_ ]", "", _ORDER_TAIL.sub("", name.upper()))
+
+
+def record_part(r: Record) -> str:
+    """:func:`part_key` of a record's first part number (its name without a
+    parenthesised variant: ``GD25Q64C(HD)`` is the GD25Q64C)."""
+    return part_key((r.part_names or (r.name,))[0])
+
+
 def _spelling(name: str) -> str:
     """A part name without its hyphens, underscores and spaces, which
     sources write differently (``CS11G1-T0A0AA``, ``CS11G1T0A0AA``)."""
@@ -1245,6 +1266,27 @@ def name_distance(query: str, name: str) -> tuple[int, int]:
     while common < min(len(a), len(b)) and same(common, common):
         common += 1
     return cost, common
+
+
+def _disagree(records: Iterable[Record], attr: str) -> bool:
+    """Whether two of ``records`` give ``attr`` different values (as they
+    are compared), from two sources, or from one source for one part
+    (:func:`record_part`)."""
+    given: dict[Any, set[tuple[Source, str]]] = {}
+    for r in records:
+        v = r.compared(attr)
+        if v is not None:
+            given.setdefault(v, set()).add((r.source, record_part(r)))
+    if len(given) < 2:
+        return False
+    whose = list(given.values())
+    return any(
+        a[0] != b[0] or a == b
+        for i, xs in enumerate(whose)
+        for ys in whose[i + 1 :]
+        for a in xs
+        for b in ys
+    )
 
 
 def _consensus(values: Iterable[tuple[T | None, Source]]) -> T | None:
@@ -1815,13 +1857,16 @@ class Flash:
     def conflicts(self) -> dict[str, dict[Any, tuple[Source, ...]]]:
         """The values (:data:`COMPARED_VALUES`) the sources disagree on,
         for one part: records that extended ids tell apart
-        (:attr:`variants`) are not compared."""
+        (:attr:`variants`) are not compared, and nor are one source's
+        entries for different parts sharing the id (:func:`record_part`:
+        Dediprog's W25Q128BV, FV and JV, each with its own chip erase
+        time). Two sources giving different values are a disagreement."""
         out = {}
         timed = any(r.timings for r in self.records)
         for attr in COMPARED_VALUES:
             if attr.startswith("timings.") and not timed:
                 continue
-            if any(len({r.compared(attr) for r in v} - {None}) > 1 for v in self.variants):
+            if any(_disagree(v, attr) for v in self.variants):
                 out[attr] = self.values(attr)
         return out
 

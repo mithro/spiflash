@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import spiflash
-from issue_checks import EXPLAINED, IssueKind, find, part_key
+from issue_checks import EXPLAINED, IssueKind, find
 from issue_pages import VALUE_TITLES, chip_issues, generate_all
 from page_markup import EM_SPACE, EN_DASH
 from spiflash import Database, Datasheet
 from spiflash.enums import Source
-from spiflash.model import COMPARED
+from spiflash.model import COMPARED, part_key
 from spiflash.registers import Register, RegisterBit
 from test_db import rec
 from test_sfdp import MX25L25635E

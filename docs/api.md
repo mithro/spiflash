@@ -484,7 +484,12 @@ Changes in data format 10 (the timing model, and the listed clock):
 - the data issues compare one source's entries with each other only within
   one part (source, extended id and part number: the EN25Q32 and EN25Q32C
   are two parts, W25Q512JV and W25Q512JV-IQ one), so SAME_SOURCE goes from
-  73 issues to 4 before the new fields;
+  73 issues to 4 before the new fields; {py:attr}`Flash.conflicts
+  <spiflash.model.Flash.conflicts>` likewise, so it loses five conflicts of
+  one source's different parts (sizes on d5b2, 966018 and 9d4010,
+  flashprog's `protection.wps` on 0b4018 and `protection.cmp` on a14014);
+  {py:func}`~spiflash.model.part_key` and
+  {py:func}`~spiflash.model.record_part` are new;
 - the command's description gains a `timing:` line, and with `-v` every
   time and the clock Dediprog lists; the site a Timing section on the chip
   pages, and a TIMING kind of data issue.

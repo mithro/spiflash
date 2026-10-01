@@ -1404,6 +1404,26 @@ def test_timing_consensus_per_bound() -> None:
     assert f.to_json()["timings"]["dpd_exit"]["maximum"]["value"] == 35_000
 
 
+def test_one_sources_parts_sharing_an_id_do_not_conflict() -> None:
+    def flash(*given: tuple[str, str, int]) -> Flash:
+        recs = tuple(
+            rec(source=s, name=n, line=i, timings={"chip_erase": {"unspecified": t * 10**9}})
+            for i, (s, n, t) in enumerate(given)
+        )
+        return Flash(b"\xef\x40\x18", FlashType.NOR, recs)
+
+    attr = "timings.chip_erase.unspecified"
+    # Dediprog's W25Q128BV, FV and JV: three parts, each its own time.
+    parts = flash(("dediprog", "W25Q128BV", 40), ("dediprog", "W25Q128FV", 200))
+    assert attr not in parts.conflicts
+    # One part twice (an ordering code's tail is the same part), or two
+    # sources: a disagreement.
+    assert attr in flash(("dediprog", "W25Q128JV", 50), ("dediprog", "W25Q128JV-IQ", 200)).conflicts
+    assert attr in flash(("dediprog", "W25Q128BV", 40), ("flashrom", "W25Q128FV", 200)).conflicts
+    (shipped,) = spiflash.lookup("ef4018")
+    assert attr not in shipped.conflicts
+
+
 def test_times_are_compared_at_sfdp_resolution() -> None:
     def flash(*ns: int) -> Flash:
         recs = tuple(

@@ -11,7 +11,6 @@ they are not part of the ``spiflash`` package.
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import StrEnum
@@ -19,7 +18,12 @@ from typing import TYPE_CHECKING, Any
 
 from spiflash import database
 from spiflash.enums import IdFamily, Source
-from spiflash.model import COMPARED_VALUES, register_bits, same_supply_part
+from spiflash.model import (
+    COMPARED_VALUES,
+    record_part,
+    register_bits,
+    same_supply_part,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -349,29 +353,16 @@ def _values(flashes: Iterable[Flash]) -> Iterator[Issue]:
                 yield Issue(IssueKind.VALUE, f.key, (f,), answers, attribute=attr, note=note)
 
 
-#: An ordering code's package and temperature tail after a hyphen
-#: (W25Q512JV-IQ, -IN, -IM): the same part.
-_ORDER_TAIL = re.compile(r"-[A-Z]{2}$")
-
-
-def part_key(name: str) -> str:
-    """A part name as one source's entries are grouped by it for
-    :attr:`IssueKind.SAME_SOURCE`: upper case, without hyphens, underscores
-    and spaces, nor an ordering code's two-letter tail (``W25Q512JV-IQ``
-    is the W25Q512JV). A revision letter is kept: the EN25Q32 and EN25Q32C
-    are two parts."""
-    return re.sub(r"[-_ ]", "", _ORDER_TAIL.sub("", name.upper()))
-
-
 def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
     """One source's entries for one part, at one id, that disagree: the
-    entries are grouped by source, extended id and part name
-    (:func:`part_key`), as parts sharing an id (the S25FL256S and the
-    S25FS256S, the AT25SF321 and the AT25SF321B) may each be right."""
+    entries are grouped by source, extended id and part number
+    (:func:`spiflash.model.record_part`), as parts sharing an id (the
+    S25FL256S and the S25FS256S, the AT25SF321 and the AT25SF321B) may each
+    be right."""
     for f in flashes:
         groups: dict[tuple[Source, bytes | None, str], list[Record]] = defaultdict(list)
         for r in f.records:
-            groups[(r.source, r.ext_id, part_key((r.part_names or (r.name,))[0]))].append(r)
+            groups[(r.source, r.ext_id, record_part(r))].append(r)
         for (_source, _ext, _part), records in sorted(
             groups.items(), key=lambda kv: kv[0][0].priority
         ):
