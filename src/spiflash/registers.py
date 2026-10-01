@@ -234,7 +234,12 @@ class Protection:
     ``tb``, sector/block ``sec``, complement ``cmp``, the status register
     protect and lock bits ``srp`` and ``srl``, and write-protect selection
     ``wps``. A role is ``None`` where the source does not say. No two
-    roles share a bit."""
+    roles share a bit.
+
+    ``partial`` says the block-protect bits given may not be all the
+    part's: a driver that knows only its own (U-Boot's BP0 to BP2 for
+    every ``SPI_NOR_HAS_LOCK`` part, where a Winbond W25Q01JV has BP3 too)
+    gives them so. A layout without it gives every BP bit the part has."""
 
     bp0: RegisterBit | None = None
     bp1: RegisterBit | None = None
@@ -247,6 +252,7 @@ class Protection:
     srp: RegisterBit | None = None
     srl: RegisterBit | None = None
     wps: RegisterBit | None = None
+    partial: bool = False
 
     def __post_init__(self) -> None:
         shared = shared_bits(self.roles())
@@ -257,7 +263,7 @@ class Protection:
 
     def roles(self) -> dict[str, RegisterBit]:
         """The roles given, in :data:`ROLES` order."""
-        return {f.name: v for f in fields(self) if (v := getattr(self, f.name)) is not None}
+        return {r: v for r in ROLES if (v := getattr(self, r)) is not None}
 
     @property
     def bp(self) -> tuple[RegisterBit, ...]:
@@ -277,22 +283,29 @@ class Protection:
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> Protection:
-        unknown = set(d) - set(ROLES)
+        roles = {k: v for k, v in d.items() if k != "partial"}
+        unknown = set(roles) - set(ROLES)
         if unknown:
             msg = f"unknown protection roles {sorted(unknown)}"
             raise ValueError(msg)
-        return cls(**{role: RegisterBit.from_json(bit) for role, bit in d.items()})
+        bits = {role: RegisterBit.from_json(bit) for role, bit in roles.items()}
+        return cls(**bits, partial=bool(d.get("partial", False)))
 
     def to_json(self) -> dict[str, Any]:
-        """``{"bp0": {"register": "sr1", "bit": 2}, ...}``: the roles given."""
-        return {role: bit.to_json() for role, bit in self.roles().items()}
+        """``{"bp0": {"register": "sr1", "bit": 2}, ...}``: the roles given,
+        and ``"partial": true`` for a partial layout."""
+        out: dict[str, Any] = {role: bit.to_json() for role, bit in self.roles().items()}
+        if self.partial:
+            out["partial"] = True
+        return out
 
     def __str__(self) -> str:
-        return ", ".join(f"{role} {bit}" for role, bit in self.roles().items())
+        roles = ", ".join(f"{role} {bit}" for role, bit in self.roles().items())
+        return f"{roles} (partial: the part may have more BP bits)" if self.partial else roles
 
 
-#: The roles of :class:`Protection`, in order.
-ROLES = tuple(f.name for f in fields(Protection))
+#: The roles of :class:`Protection`, in order: its fields but ``partial``.
+ROLES = tuple(f.name for f in fields(Protection) if f.name != "partial")
 
 #: The roles that are block protection: the BP bits, and TB, SEC and CMP.
 BLOCK_ROLES = frozenset({"bp0", "bp1", "bp2", "bp3", "bp4", "tb", "sec", "cmp"})

@@ -1570,7 +1570,9 @@ class Flash:
         sources giving it say. Where that puts two roles on one bit
         (:meth:`shared_bits`), a layout no part has, the best source's own
         layout instead: of the most specific records giving one
-        (:attr:`layers`), as each value is."""
+        (:attr:`layers`), as each value is. It is :attr:`Protection.partial
+        <spiflash.registers.Protection.partial>` where every record giving
+        a block-protect bit gives a partial layout (U-Boot's alone)."""
         roles = self._protection_roles
         if not roles:
             return None
@@ -1580,7 +1582,8 @@ class Flash:
                 if given:
                     best = min(given, key=lambda r: (r.source.priority, r.file, r.line))
                     return best.protection
-        return Protection(**roles)
+        bps = [r.protection for r in self.records if r.protection and r.protection.bp]
+        return Protection(**roles, partial=bool(bps) and all(p.partial for p in bps))
 
     def shared_bits(self) -> dict[str, tuple[str, ...]]:
         """The bits that the sources' answers, role by role, put two roles

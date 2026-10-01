@@ -512,3 +512,9 @@ Changes in data format 11 (the final verification pass):
   Microchip; ...). A MANUFACTURER data issue is now one where the sources
   name different companies, not one company's successive names: 194 issues
   become 85;
+- {py:class}`~spiflash.registers.Protection` gains `partial`, JSON
+  `"partial": true` in a record's `"protection"`: the block-protect bits
+  given may not be all the part's ({sfsrc}`u-boot`'s BP0 to BP2, its
+  driver's for every part). {py:attr}`Flash.protection
+  <spiflash.model.Flash.protection>` is partial where every record giving a
+  BP bit is; {py:data}`~spiflash.registers.ROLES` is the fields but it;

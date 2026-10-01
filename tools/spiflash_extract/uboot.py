@@ -134,6 +134,11 @@ def _record(
         # part's (the W25Q256/512 family's is bit 6). The flag stays.
         tb_free = [f for f in flags if f != "SPI_NOR_HAS_TB"]
         layout, layout_via = protection(tb_free, symbols)
+        if layout is not None:
+            # spi-nor.h has SR_BP0 to SR_BP2 and no SPI_NOR_4BIT_BP: the
+            # driver's three, whatever the part has (the W25Q01JV and the
+            # MX25U12835F have BP3 too), so the layout is partial.
+            layout["partial"] = True
     erasers = []
     if sector and size and "no_erase" not in features:
         for flag, opcode in (("SECT_4K", 0x20), ("SECT_4K_PMC", 0xD7)):

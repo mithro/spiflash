@@ -722,6 +722,20 @@ def test_consensus_tie_never_goes_by_order() -> None:
             assert Database(records).flashes[0].size == 4 << 20
 
 
+def test_a_partial_protection_layout() -> None:
+    # U-Boot gives its driver's BP0 to BP2 whatever the part has: alone, the
+    # chip's layout is partial; with a source giving every BP bit, not.
+    (w,) = spiflash.lookup("ef4021")
+    assert w.protection is not None
+    assert (w.protection.partial, len(w.protection.bp)) == (True, 3)
+    assert w.protection.to_json()["partial"] is True
+    assert str(w.protection).endswith("(partial: the part may have more BP bits)")
+    (q,) = spiflash.lookup("ef4018")
+    assert q.protection is not None
+    assert not q.protection.partial
+    assert "partial" not in q.protection.to_json()
+
+
 def test_another_parts_record_gives_the_chip_nothing() -> None:
     # A record of another size naming no part of the chip's size is another
     # part listed under the id: the size vote leaves it out, and so do the
