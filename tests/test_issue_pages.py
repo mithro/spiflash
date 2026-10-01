@@ -355,3 +355,24 @@ def test_a_known_cause_is_said() -> None:
     assert "Two parts share this id" in generate_all(db, slugs)["value.md"]
     # Every explained issue is one the checks find.
     assert set(EXPLAINED) <= {(s, a) for _, s, a in found}
+
+
+def test_a_supply_setting_outside_the_range() -> None:
+    ranged = rec(source="flashrom", name="EN25S40", voltage=[1650, 1950])
+    db = Database([ranged, rec(source="dediprog", name="EN25S40", supply_mv=3300)])
+    (issue,) = find(db)
+    assert (issue.kind, issue.attribute) == (IssueKind.SUPPLY, "supply_mv")
+    # The ranges, then the settings outside them; the same part on both
+    # sides, so no note says they are other parts.
+    assert [a.value for a in issue.answers] == [(1650, 1950), 3300]
+    assert issue.note is None
+    high = rec(source="flashrom", name="P25Q40H", voltage=[2300, 3600])
+    low = rec(source="dediprog", name="P25Q40L", supply_mv=1800)
+    (issue,) = find(Database([high, low]))
+    assert issue.note is not None
+    assert issue.note.startswith("Parts sharing the id")
+    # The shipped data: a page of its own, a column each.
+    db = spiflash.database()
+    page = generate_all(db, {id(f): f.key for f in db.flashes})["supply.md"]
+    assert "Supplies outside them" in page
+    assert "Dediprog's 3.3 V is wrong" in page  # the EN25S40's known cause

@@ -17,11 +17,12 @@ import pytest
 import spiflash
 from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE, ID_OPERATION
-from spiflash.enums import Feature, IdMethod, OperationKind
+from spiflash.enums import ENTER_METHODS, Feature, IdMethod, OperationKind
 from spiflash.model import EraseBlock, Record
 from spiflash.opcodes import OPERATIONS
 from spiflash.registers import Register, RegisterBit
 from spiflash_extract import record
+from spiflash_extract.flashrom import otp as flashrom_otp
 
 
 def _records() -> list[dict[str, Any]]:
@@ -599,3 +600,108 @@ def test_operations_are_told_apart_by_their_shape() -> None:
     shapes = [shape(op) for op in OPERATIONS]
     assert len(set(shapes)) == len(shapes)
     assert shape("NAND_DIE_SELECT") != shape("NAND_PROGRAM_LOAD_1_8_8")
+    assert shape("RUID") != shape("READ_OTP")  # both 0x4b
+
+
+# --- 4-byte addressing, supply, OTP, legacy ids (phase 6) ----------------------
+
+
+def test_four_byte_modes_are_ways_in() -> None:
+    # Never opcodes_4b (the _4B operations say it) nor a way out.
+    stored = {m for d in RECORDS for m in d["four_byte_modes"]}
+    assert stored <= {str(m) for m in ENTER_METHODS}
+    assert "opcodes_4b" not in stored
+
+
+def test_no_operation_a_way_in_gives() -> None:
+    # EN4B, WREAR, RDEAR, BRWR and BRRD are derived from the ways in; a
+    # source stating one beside its way in states it once.
+    def twice(d: dict[str, Any]) -> set[str]:
+        modes = Record.from_json(d).four_byte_modes
+        given = {op for m in modes for op in derive.FOUR_BYTE_MODE_OPERATIONS[m]}
+        return given & {o["op"] for o in d["opcodes"]}
+
+    assert not [(_where(d), twice(d)) for d in RECORDS if twice(d)]
+
+
+#: Where each source's ways into 4-byte mode come from, as (source, the
+#: start of their via): each a per-entry field or flag, never a driver's
+#: default for every part (Linux's and U-Boot's per-maker set_4byte
+#: functions are not taken).
+FOUR_BYTE_FROM = {
+    ("flashrom", "FEATURE_4BA_"),
+    ("flashprog", "FEATURE_4BA_"),
+    ("imsprog", "addr4bit="),
+    ("rockchip", "FEA_4BYTE_ADDR_MODE"),
+    ("zephyr", "enter-4byte-command="),
+}
+
+
+def test_only_the_known_sources_give_ways_into_4_byte_mode() -> None:
+    def source(d: dict[str, Any], mode: str) -> tuple[str, str]:
+        via = d["via"].get(f"four_byte_modes:{mode}") or d["via"]["four_byte_modes"]
+        starts = [s for src, s in FOUR_BYTE_FROM if src == d["source"]]
+        return d["source"], next((s for s in starts if via.startswith(s)), via)
+
+    found = {source(d, m) for d in RECORDS for m in d["four_byte_modes"]}
+    assert found == FOUR_BYTE_FROM
+
+
+def test_zephyr_enter_4byte_addr_is_a_dw16_byte() -> None:
+    # p2d.dts gives the GD25LE255E <0xb7>, EN4B's opcode: not read; its
+    # BFPT's DW16 gives its way in.
+    (d,) = [d for d in RECORDS if d["source"] == "zephyr" and d["name"] == "GD25LE255E"]
+    assert d["four_byte_modes"] == []
+    assert "enter-4byte-addr=0xb7" in d["flags"]
+    assert any(n.startswith("enter-4byte-addr=0xb7 not read") for n in d["notes"])
+    assert Record.from_json(d).four_byte_modes == {"en4b"}
+
+
+def test_a_supply_range_or_a_setting_not_both() -> None:
+    assert not [_where(d) for d in RECORDS if d["voltage"] and d["supply_mv"]]
+    # A setting only where a programmer's table gives one, for every entry.
+    given = {d["source"] for d in RECORDS if d["supply_mv"] is not None}
+    assert given == {"dediprog", "imsprog"}
+    assert all(d["supply_mv"] for d in RECORDS if d["source"] in given)
+
+
+def test_no_otp_claim_an_area_or_operation_gives() -> None:
+    assert not [
+        _where(d)
+        for d in RECORDS
+        if "otp" in d["features"] and "otp" in derive.features(Record.from_json(d))
+    ]
+    # flashrom's OTP comments about the whole entry are its area, not notes.
+    parsed = [
+        n
+        for d in RECORDS
+        if d["source"] in ("flashrom", "flashprog")
+        for n in d["notes"]
+        if flashrom_otp(n) is not None
+    ]
+    assert not parsed
+
+
+def test_no_legacy_id_the_records_own() -> None:
+    for d in RECORDS:
+        for method, ident in d["legacy_ids"]:
+            assert IdMethod(method).family.value != "jedec", _where(d)
+            assert ident != d["id"], _where(d)
+    assert {d["source"] for d in RECORDS if d["legacy_ids"]} == {"dediprog"}
+
+
+@pytest.mark.parametrize(
+    ("source", "pattern"),
+    [
+        # Each a field now (supply_mv, legacy_ids), or a template.
+        ("dediprog", r"(Voltage|AlternativeID)="),
+        ("imsprog", r"(chipVCC|pageSize|blockSize)="),
+        ("flashrom", r"FEATURE_4BA_(ENTER|ENTER_WREN|ENTER_EAR7|EAR_C5C8|EAR_1716)$"),
+        ("flashprog", r"FEATURE_4BA_(ENTER|ENTER_WREN|ENTER_EAR7|EAR_C5C8|EAR_1716)$"),
+        ("rockchip", r"FEA_4BYTE_ADDR_MODE$"),
+    ],
+)
+def test_no_flag_a_phase_6_field_holds(source: str, pattern: str) -> None:
+    rx = re.compile(pattern)
+    found = [f for r in RECORDS if r["source"] == source for f in r["flags"] if rx.match(f)]
+    assert not found

@@ -9,7 +9,7 @@ import pytest
 
 import spiflash
 from spiflash import derive, sfdp_tools
-from spiflash.enums import Feature
+from spiflash.enums import Feature, FourByteMethod
 from spiflash.model import Flash, Record
 from spiflash.opcodes import OPERATIONS
 from spiflash.sfdp import AddressBytes, Sfdp, from_tables, parse
@@ -481,6 +481,46 @@ def test_encode_4byte_instructions() -> None:
     assert s.four_byte.erase_opcodes == (0xDC, None, None, None)
     assert "READ_1_4_4_4B: the 4BAIT lists a 4-byte read only with its 3-byte form" in out.missing
     assert s.address_bytes is AddressBytes.THREE_OR_FOUR
+
+
+def test_encode_writes_the_ways_into_4_byte_mode() -> None:
+    # DW16[31:24] are the ways in; a register's way out is clearing it,
+    # and 0xe9's has the write enable the way in has.
+    r = rec(
+        size=32 << 20,
+        four_byte_modes=["wren_en4b", "wrear"],
+        opcodes=[{"op": "EX4B", "via": "x"}],
+    )
+    out = encode(r, assume=True)
+    s = out.sfdp
+    assert s.bfpt is not None
+    assert s.bfpt.four_byte_enter == {FourByteMethod.WREN_EN4B, FourByteMethod.WREAR}
+    assert s.bfpt.four_byte_exit == {FourByteMethod.WREN_EN4B, FourByteMethod.WREAR}
+    assert s.facts().four_byte_modes == r.four_byte_modes
+    back = Record.from_json(to_entry(s) | IDENTITY)
+    assert back.four_byte_modes == r.four_byte_modes
+    # Without assume, the revision is lowered and the ways in are lost.
+    assert any("ways into 4-byte mode" in m for m in encode(r).missing)
+    # flashrom's bit 7 of the extended address register has no DW16 bit.
+    ear7 = encode(rec(size=32 << 20, four_byte_modes=["ear_bit7", "brwr"]), assume=True)
+    assert any("bit 7" in m for m in ear7.missing)
+    assert ear7.sfdp.facts().four_byte_modes == {FourByteMethod.BRWR}
+
+
+def test_sfdp_facts_give_the_ways_in_not_their_operations() -> None:
+    # The W25Q512JV's DW16: 0xb7 in, and the extended address register; the
+    # record derives EN4B, WREAR and RDEAR from them, not from the tables'
+    # operations. Its way out, EX4B, is still the tables'.
+    s = parse(W25Q512JV)
+    facts = s.facts()
+    assert FourByteMethod.EN4B in facts.four_byte_modes
+    assert FourByteMethod.OPCODES_4B not in facts.four_byte_modes
+    given = {u.op for u in facts.opcodes}
+    assert not given & {"EN4B", "WREAR", "BRWR"}
+    assert "EX4B" in given
+    entry = to_entry(s)
+    assert entry["four_byte_modes"] == sorted(str(m) for m in facts.four_byte_modes)
+    assert "EN4B" in {u.op for u in Record.from_json(entry | IDENTITY).opcodes}
 
 
 def test_encode_qpi_sequences_land_in_their_dw15_bits() -> None:
