@@ -319,8 +319,10 @@ def features(record: Record) -> frozenset[Feature]:
       default (:attr:`OpcodeUse.assumed <spiflash.opcodes.OpcodeUse.assumed>`)
       implies nothing;
     - each operation its SFDP tables give (:attr:`SfdpFacts.opcodes
-      <spiflash.sfdp.SfdpFacts.opcodes>`), by the same table: not
-      ``fast_read``, as SFDP gives no sign of 1-1-1 fast read (0x0b);
+      <spiflash.sfdp.SfdpFacts.opcodes>`), by the same table. SFDP gives
+      no sign of the 3-byte 1-1-1 fast read (0x0b), so a BFPT alone does
+      not imply ``fast_read``; the 4-byte instruction table's fast read
+      (0x0c, ``READ_1_1_1_FAST_4B``) does, as it would from any source;
     - each uniform block eraser of 4, 32 or 64 KiB, stored or from its
       tables (:data:`ERASE_FEATURE`), not a whole-chip erase however small
       the chip, nor a driver default (:attr:`Eraser.assumed

@@ -179,6 +179,20 @@ SFDP tools):
   (a new operation), yields the 4 KiB erase of BFPT DW1 where no erase type
   has it, and reads BFPT DW16's 4-byte modes only for a part that has one
   ({py:attr}`~spiflash.sfdp.Sfdp.four_byte_mode`);
+- {py:meth}`Sfdp.to_json() <spiflash.sfdp.Sfdp.to_json>` (in
+  {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>`'s `"sfdp"` and
+  `spiflash sfdp --json`) gains `"partial"`; for a partial one, `"revision"`
+  and `"access_protocol"` are `null`, `"revision_name"` is `"unknown
+  revision"`, and each table's `"revision"` and `"pointer"` are `null`
+  (its header was made up):
+
+  ```json
+  {"partial": true, "revision": null, "revision_name": "unknown revision",
+   "access_protocol": null,
+   "tables": [{"id": 65280, "name": "BFPT", "revision": null, "length": 16,
+               "pointer": null, "dwords": [...]}], ...}
+  ```
+
 - {py:class}`~spiflash.opcodes.OpcodeUse` has a fifth field,
   `dummy_clocks`;
 - the records gain `"sfdp_tables"` (`{}` without), and the {sfsrc}`qemu` and

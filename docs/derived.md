@@ -42,8 +42,10 @@ again:
   BFPT DWORD 1 where no erase type has it;
 - each operation the tables name, the part's own: its fast reads, each with
   the dummy clocks the tables give it, the erases, the 4-byte forms the
-  instruction table lists (a read only where the BFPT lists its 3-byte form,
-  as Linux takes them), the ways into and out of 4-byte mode (DWORD 16), the
+  instruction table lists (a dual, quad or octal read only where the BFPT
+  lists its 3-byte form, as Linux takes them; its 1-1-1 read 0x13 and fast
+  read 0x0c, which the BFPT has no bits for, always), the ways into and out
+  of 4-byte mode (DWORD 16), the
   read 0x03 JESD216 guarantees, and RDSFDP itself.
 
 Those operations and erasers imply capabilities by the rules above, the same
