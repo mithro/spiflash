@@ -1083,7 +1083,8 @@ def test_rockchip_nor() -> None:
     r = by_name(rockchip.extract_nor(ROCKCHIP))
     gd = r["GD25Q40B"]
     assert (gd["id"], gd["id_method"], gd["line"]) == ("c84013", "rdid", 16)
-    assert (gd["size"], gd["page_size"], sector(gd)) == (512 << 10, 256, 64 << 10)
+    # No page size: NOR_PAGE_SIZE is the driver's, for every part.
+    assert (gd["size"], gd["page_size"], sector(gd)) == (512 << 10, None, 64 << 10)
     assert gd["erasers"] == [
         {"opcode": 0x20, "blocks": [[4096, 128]]},
         {"opcode": 0xD8, "blocks": [[65536, 8]]},
@@ -2217,11 +2218,12 @@ def test_qemu(tmp_path: Path) -> None:
     a = r["AT25FS010"]
     assert a["vendor"] == "Atmel"  # the heading, without its "-- some are ..." remark
     assert a["line"] == 119
+    # No page size: INFO()'s 256 is the model's, for every part.
     assert (a["id"], a["ext_id"], a["size"], a["page_size"], sector(a)) == (
         "1f6601",
         None,
         128 << 10,
-        256,
+        None,
         32 << 10,
     )
     assert a["erasers"] == [
@@ -2266,7 +2268,8 @@ def test_qemu(tmp_path: Path) -> None:
     assert m["vendor"] == "Macronix"
     assert (m["id"], m["ext_id"]) == ("c22019", "c22019")
     assert (m["size"], m["erasers"]) == (None, None)
-    assert m["page_size"] == 256  # INFO's: the JESD216 (1.0) table has none
+    # INFO's 256 is the model's default; the JESD216 (1.0) table has none.
+    assert m["page_size"] is None
     assert Record.from_json(m).size == 32 << 20
     assert m["flags"] == []
     assert m["via"] == {

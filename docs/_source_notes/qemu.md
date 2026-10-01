@@ -8,7 +8,9 @@ The table is a 2012 copy of {sfsrc}`linux`'s, kept for the parts its boards
 emulate: `INFO(name, jedec_id, ext_id, sector_size, n_sectors, flags)`,
 `INFO6` with a three-byte extended id, and `INFO_STACKED` with a die count
 (the record's `dies`; the model erases a die, its size over the count, for
-[DIE_ERASE](../opcodes/DIE_ERASE.md)), under a comment naming the vendor. So its geometry rarely adds anything, and
+[DIE_ERASE](../opcodes/DIE_ERASE.md)), under a comment naming the vendor.
+Its `.page_size = 256` is every entry's (`INFO` writes it), the model's
+default, so a record has none but what its SFDP dump gives. So its geometry rarely adds anything, and
 as the model decodes every opcode for every part (its `FlashCMD` enum), the
 table says little per part beyond its geometry and its `ER_4K`/`ER_32K`
 flags. Its model keeps BP0 to BP2 at SR1 bits 2 to 4 for every part, and

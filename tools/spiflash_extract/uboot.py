@@ -96,7 +96,9 @@ def _record(
         sector = cparse.evaluate(args[3], symbols)
         size = sector * cparse.evaluate(args[4], symbols)
         flag_expr = args[5] if len(args) > 5 else "0"
-        page = 256
+        # INFO's .page_size = 256 is every entry's: the driver's default,
+        # as Linux's SPI_NOR_DEFAULT_PAGE_SIZE, not the part's.
+        page = None
         id_hex = f"{jedec:06x}" if jedec else None
         ext = f"{ext_val:0{2 * ext_bytes}x}" if ext_val else None
         break
@@ -116,7 +118,8 @@ def _record(
         sector = cparse.evaluate(fields.get("sector_size", "0"), symbols) or None
         n_sectors = cparse.evaluate(fields.get("n_sectors", "0"), symbols)
         size = sector * n_sectors if sector and n_sectors else None
-        page = cparse.evaluate(fields.get("page_size", "256"), symbols)
+        # Only a .page_size the entry gives is its own.
+        page = cparse.evaluate(fields["page_size"], symbols) if "page_size" in fields else None
         flag_expr = fields.get("flags", "0")
     flags = cparse.flag_names(flag_expr)
     claims = [(_FEATURES[f], f) for f in flags if f in _FEATURES]
