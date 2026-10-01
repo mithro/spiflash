@@ -125,10 +125,9 @@ def test_mx25l25635e() -> None:
     assert s.bfpt.quad_enable is None
     assert s.four_byte is None
     assert s.warnings == ()
+    # SFDP gives no sign of fast read 0x0b or page program 0x02.
     assert ops(s) == {
         "READ_1_1_1": (0x03, 0),
-        "READ_1_1_1_FAST": (0x0B, 8),
-        "PP_1_1_1": (0x02, 0),
         "RDSFDP": (0x5A, 8),
         "READ_1_1_2": (0x3B, 8),
         "READ_1_2_2": (0xBB, 4),
@@ -141,7 +140,6 @@ def test_mx25l25635e() -> None:
     assert ops(s) == ops(parse(dump((0xFF00, 1, 0, 0x30, MX_BFPT))))
     assert s.features() == {
         "sfdp",
-        "fast_read",
         "erase_4k",
         "erase_32k",
         "erase_64k",

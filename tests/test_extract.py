@@ -1462,15 +1462,20 @@ def test_qemu(tmp_path: Path) -> None:
         "erase_32k",
         "erase_4k",
         "erase_64k",
-        "fast_read",
         "quad_read",
         "sfdp",
     ]
     assert m["features"] == []
-    # JESD216's fast read is the part's own, not the model's default.
+    # SFDP gives no sign of fast read: the model's, for every part, is all.
     fast = next(o for o in m["opcodes"] if o["op"] == "READ_1_1_1_FAST")
-    assert "assumed" not in fast
-    assert fast["via"].endswith("SFDP implied: JESD216 does not list it, every part has it")
+    assert fast == {
+        "op": "READ_1_1_1_FAST",
+        "via": "m25p80 decodes it for every part",
+        "assumed": True,
+    }
+    # Read 0x03 a part with a BFPT has: its own.
+    read = next(o for o in m["opcodes"] if o["op"] == "READ_1_1_1")
+    assert "assumed" not in read
     assert ops(m)["RDSFDP"] == (0x5A, ".sfdp_read = m25p80_sfdp_mx25l25635e")
     assert ops(m)["READ_1_4_4"] == (0xEB, "SFDP BFPT 1-4-4 fast read: 2 mode + 4 wait clocks")
     assert ops(m)["BE_32K"] == (0x52, "eraser: 1024 x 32768")  # derived, not stored

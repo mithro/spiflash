@@ -131,7 +131,9 @@ def test_four_byte_addresses() -> None:
 def test_sfdp_tables_imply_their_features() -> None:
     r = rec(size=32 * MIB, sfdp=MX25L25635E.hex())
     assert derive.address_bytes(r) is AddressBytes.THREE_OR_FOUR
-    assert {Feature.SFDP, Feature.FAST_READ, Feature.QUAD_READ, Feature.ERASE_4K} <= r.features
+    assert {Feature.SFDP, Feature.QUAD_READ, Feature.ERASE_4K} <= r.features
+    # SFDP gives no sign of 1-1-1 fast read (0x0b).
+    assert Feature.FAST_READ not in r.features
     assert derive.feature_reasons(r)[Feature.QUAD_READ] == "implied by its SFDP tables"
 
 

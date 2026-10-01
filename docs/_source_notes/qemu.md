@@ -21,6 +21,7 @@ thirteen entries point at the tables in
 which is data rather than code. From them come the fast reads with the
 part's own dummy clocks, the erase types, the 4-byte-address opcodes and the
 quad enable method, and the page size where the table has it, and the
-capabilities they imply; the read, fast read and page program JESD216 takes
-for granted are those parts' own, not the model's defaults. The chip pages
+capabilities they imply; the read 0x03 a part with a BFPT has is those parts'
+own, but SFDP gives no sign of fast read 0x0b or page program 0x02, so those
+stay the model's defaults ([](../derived.md)). The chip pages
 show each dump decoded.

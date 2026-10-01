@@ -26,7 +26,33 @@ SPI NAND part's block erase implies none of them, as its operations are
 not the SPI NOR ones.
 
 The capabilities a part's SFDP tables support are implied too, where a
-source carries the tables (the {sfsrc}`qemu` dumps).
+source carries the tables (the {sfsrc}`qemu` dumps), and the operations they
+list are the part's own.
+
+### What SFDP says of fast read
+
+SFDP gives no sign that a part has the 1-1-1 fast read (0x0b), nor the 1-1-1
+page program (0x02), so neither a carried table nor a source's `sfdp` claim
+implies `fast_read`. The JESD216 text itself could not be consulted (JEDEC
+requires a login); the rule rests on two independent implementations of it,
+and will be revisited if someone supplies the text:
+
+- {sfsrc}`zephyr`, `jesd216_bfp_read_support()` in
+  [`drivers/flash/jesd216.h`](https://github.com/zephyrproject-rtos/zephyr/blob/9f0253dcc66ccecc92a699dd81cb1034c3f6875b/drivers/flash/jesd216.h#L331-L359):
+  "For @p mode JESD216_MODE_111 this function will return zero to indicate
+  that standard read (instruction 03h) is supported, but without providing
+  information on how. SFDP does not provide an indication of support for
+  1-1-1 Fast Read (0Bh).";
+- {sfsrc}`linux`, `spi_nor_parse_bfpt()` in
+  {upstream}`linux:drivers/mtd/spi-nor/sfdp.c`, which turns on only the reads
+  the Basic Flash Parameter Table has bits for (1-1-2, 1-2-2, 2-2-2, 1-1-4,
+  1-4-4, 4-4-4; fast read 0x0b only when the board's devicetree asks,
+  `m25p,fast-read`), and `spi_nor_parse_4bait()`: "4BAIT is the only SFDP
+  table that indicates page program support".
+
+So on a part with SFDP tables only the read 0x03 is taken as the part's own
+(with RDSFDP, 0x5a, the table itself); {sfsrc}`qemu`'s fast read and page
+program, which its model decodes for every part, stay driver defaults.
 
 ## Driver defaults imply nothing
 

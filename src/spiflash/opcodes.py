@@ -741,9 +741,9 @@ class OpcodeUse:
     such as Linux's fast read or U-Boot's quad page program for every
     ``SPI_NOR_QUAD_READ`` part, and the 4-byte form of one. It is stored (the
     data's ``"assumed": true``), shown as a default, and implies no
-    capability (:func:`spiflash.derive.features`). An operation JESD216
-    guarantees on a part with SFDP tables is that part's own fact, not
-    assumed."""
+    capability (:func:`spiflash.derive.features`). Read 0x03 on a part
+    with SFDP tables is that part's own fact, not assumed; SFDP says nothing
+    of fast read 0x0b or page program 0x02."""
 
     op: str
     via: str

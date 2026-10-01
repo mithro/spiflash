@@ -262,7 +262,8 @@ def features(record: Record) -> frozenset[Feature]:
     - ``4byte_addr`` where :func:`address_bytes` is neither ``THREE`` nor
       ``None``;
     - everything its SFDP tables support (:meth:`Sfdp.features
-      <spiflash.sfdp.Sfdp.features>`), where the upstream carries a dump.
+      <spiflash.sfdp.Sfdp.features>`), where the upstream carries a dump:
+      not ``fast_read``, as SFDP gives no sign of 1-1-1 fast read (0x0b).
       (A later release derives those from the tables' operations, by the
       rules above.)"""
     return frozenset(_implied(record))
