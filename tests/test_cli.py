@@ -64,6 +64,15 @@ def test_id_json(capsys: pytest.CaptureFixture[str]) -> None:
     (doc,) = json.loads(out)
     assert doc["manufacturer"] == "Winbond"
     assert doc["size"] == 16 << 20
+    # Who gives each capability: claimed, or implied and why.
+    qpi = doc["feature_sources"]["qpi"]
+    assert qpi == [{"source": "dediprog", "implied": False, "because": "claimed: QPIEnable"}]
+    linux = next(s for s in doc["feature_sources"]["quad_read"] if s["source"] == "linux")
+    assert linux == {
+        "source": "linux",
+        "implied": True,
+        "because": "implied by READ_1_1_4 (SPI_NOR_QUAD_READ)",
+    }
 
 
 def test_id_legacy_and_unknown(capsys: pytest.CaptureFixture[str]) -> None:
@@ -204,6 +213,8 @@ def test_opcodes_verbose_says_why(capsys: pytest.CaptureFixture[str]) -> None:
     _, out = run(capsys, "opcodes", "-v", "ef4018")
     assert "          linux           SPI_NOR_QUAD_READ" in out
     assert "          openocd         eraser: 256 x 65536 (implied)" in out  # from its eraser
+    # Linux's fast read is a devicetree choice, for every part.
+    assert "(spi_nor_init_default_params), m25p,fast-read (driver default)" in out
 
 
 def test_opcodes_json(capsys: pytest.CaptureFixture[str]) -> None:
