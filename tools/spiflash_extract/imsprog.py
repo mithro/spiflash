@@ -228,9 +228,10 @@ def _nand(e: bytes, where: str) -> dict[str, object]:
         "size": size,
         "page_size": int.from_bytes(e[0x38:0x3A], "little"),
         "erasers": [derive.block_eraser(0xD8, block, size).to_json()],
-        # ECCsize: the spare area of each page, in 64-byte units.
-        "oob_size": e[0x42] * 64 or None,
-        "flags": _flags(e),
+        # ECCsize is how much of each page's spare area the programmer
+        # reads and writes in its raw mode, which its GUI sets in 64-byte
+        # steps (mainwindow.cpp:632): a setting, not the part's spare area.
+        "flags": [*_flags(e), f"ECCsize={e[0x42] * 64}"],
     }
 
 

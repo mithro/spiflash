@@ -161,6 +161,22 @@ def _entries(root: Path) -> Iterator[tuple[int, str, dict[str, Any]]]:
         raise ValueError(msg)
 
 
+#: The two kinds of ``SNAND_IO_CAP`` table, by their names' start.
+READ_CAPS = "snand_cap_read_from_cache"
+LOAD_CAPS = "snand_cap_program_load"
+
+
+def _common(
+    caps: Mapping[str, dict[str, tuple[int, int]]], kind: str
+) -> set[tuple[str, tuple[int, int]]]:
+    """The I/O modes (with their opcode and dummy clocks) every table of
+    ``kind`` has: the read from cache on one line (0x0b, 8 dummy clocks)
+    and the program load on one line (0x02), which the driver can fall back
+    to on every part, so its defaults, not the part's."""
+    tables = [set(modes.items()) for name, modes in caps.items() if name.startswith(kind)]
+    return set.intersection(*tables) if tables else set()
+
+
 def _operation(opcode: int, mode: str, phase: DataPhase) -> str:
     """The SPI NAND operation of an opcode sent in an I/O mode (``1_1_4``):
     a read from cache or a program load, with its 2-byte column address."""
@@ -210,15 +226,26 @@ def _fields(
     if (select_die is not None) != (dies > 1) or select_die not in (None, *SELECT_DIE):
         msg = f"{dies} dies, die select {select_die}"
         raise ValueError(msg)
-    # Each I/O mode's operation, with the dummy clocks its SNAND_OP gives.
-    opcodes = [
-        {"op": _operation(opcode, mode, phase), "via": via, "dummy_clocks": dummy}
-        for via, table, phase in (
-            (f"cap_rd={rd}", rd, DataPhase.READ),
-            (f"cap_pl={pl}", pl, DataPhase.WRITE),
-        )
-        for mode, (opcode, dummy) in caps[table].items()
-    ]
+    # Each I/O mode's operation, with the dummy clocks its SNAND_OP gives;
+    # the one-line mode, which every table of its kind has, is a default.
+    opcodes = []
+    for via, table, phase, kind in (
+        (f"cap_rd={rd}", rd, DataPhase.READ, READ_CAPS),
+        (f"cap_pl={pl}", pl, DataPhase.WRITE, LOAD_CAPS),
+    ):
+        common = _common(caps, kind)
+        for mode, (opcode, dummy) in caps[table].items():
+            # The one-line mode only: every read table also has the quad
+            # output read, but which table a part has is its entry's choice.
+            default = mode == "1_1_1" and (mode, (opcode, dummy)) in common
+            opcodes.append(
+                {
+                    "op": _operation(opcode, mode, phase),
+                    "via": f"every {kind}* table" if default else via,
+                    "dummy_clocks": dummy,
+                    **({"assumed": True} if default else {}),
+                }
+            )
     defaults = Opcodes(symbols)
     for op, symbol in DEFAULTS.items():
         defaults.add(op, f"every part ({symbol})", symbol, assumed=True)
