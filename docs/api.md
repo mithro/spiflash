@@ -24,11 +24,12 @@ The modules behind it:
 | {py:mod}`spiflash.enums` | the fixed vocabularies, as enums: sources, flash types, id families, features, kinds of operation, ... |
 | {py:mod}`spiflash.opcodes` | the named SPI operations |
 | {py:mod}`spiflash.registers` | register bits: where the quad enable bit is, the quad enable requirement, the block-protection bits |
+| {py:mod}`spiflash.timings` | a part's durations ({py:class}`~spiflash.timings.Timings`): erases, programs, suspend, power-down and reset, each with its bound |
 | {py:mod}`spiflash.derive` | what a record's stored fields imply, worked out at load |
 | {py:mod}`spiflash.sfdp` | the SFDP ([JESD216](https://www.jedec.org/standards-documents/docs/jesd216b)) decoder |
 | {py:mod}`spiflash.sfdp_tools` | SFDP tables from the database ({py:func}`~spiflash.sfdp_tools.encode`), to a database entry ({py:func}`~spiflash.sfdp_tools.to_entry`), and compared ({py:func}`~spiflash.sfdp_tools.diff`) |
 | {py:mod}`spiflash.vendors` | the vendor spellings |
-| {py:mod}`spiflash.units` | sizes and times as people read them |
+| {py:mod}`spiflash.units` | sizes, times, frequencies and supplies as people read them |
 | {py:mod}`spiflash.cli` | the `spiflash` command |
 
 The extraction tools, {py:mod}`spiflash_extract` (in {repo}`tools/`, shipped in the sdist,
@@ -493,3 +494,41 @@ Changes in data format 10 (the timing model, and the listed clock):
 - the command's description gains a `timing:` line, and with `-v` every
   time and the clock Dediprog lists; the site a Timing section on the chip
   pages, and a TIMING kind of data issue.
+
+Changes since data format 10 (the format is unchanged):
+
+- {py:func}`~spiflash.sfdp_tools.encode` never writes the opposite of what
+  the database holds. A maximum the BFPT writes directly (DW14's deep
+  power-down exit delay, DW12's suspend latencies) is rounded up to the next
+  one it can write; a dword whose value is known but not writable (a chip
+  erase time of unspecified bound, an erase time off DW10's grid, a page
+  size that is not a power of two, deep power-down with no release or exit
+  delay known) lowers the revision even with `assume`; the QER is the
+  reserved 7 where nothing is known of the QE bit (never 0, "no QE bit"),
+  and where the QE bit is SR2 bit 1, the code its status-register
+  operations give; no way out of 4-byte mode is written that the part's own
+  tables leave out; and a part whose first nine dwords would deny what the
+  database says (QPI with no 4-4-4 read known, a quad read with no quad
+  read, a 4 KiB erase with no uniform 3-byte eraser of it, a read with no
+  dummy clocks known) is refused with `ValueError`;
+- {py:func}`~spiflash.sfdp_tools.diff` compares erase types by opcode
+  (`erase_types.0x20`, not by index), and takes `encoded=True` to mark
+  every loss {py:data}`~spiflash.sfdp_tools.ENCODE_LOSSES` documents as
+  expected;
+- {py:meth}`Sfdp.operations() <spiflash.sfdp.Sfdp.operations>` gives DW15's
+  QPI enable and disable commands ([EQPI_38](opcodes/EQPI_38.md),
+  [EQPI_35](opcodes/EQPI_35.md), [RSTQIO_FF](opcodes/RSTQIO_FF.md),
+  [RSTQIO_F5](opcodes/RSTQIO_F5.md));
+- {py:meth}`Database.lookup <spiflash.db.Database.lookup>` reads a legacy
+  chip's key (`"res1:15"`), puts the longest matching id first, and gives a
+  one-byte id (Linux's `c2`) only where no longer one fits;
+  {py:meth}`Database.find <spiflash.db.Database.find>` takes `exact=True`;
+- {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>` gains `"key"`,
+  and its `"jedec_id"` is `null` for a legacy chip;
+  {py:meth}`SourceInfo.to_json() <spiflash.db.SourceInfo.to_json>` is new;
+- `FastRead.address_dtr` is gone; {py:func}`spiflash.units.human_supply` and
+  {py:data}`spiflash.opcodes.DIE_SELECT_OPERATIONS` are new;
+- the command: `sources` and `jep106` take `--json`, `id --method` lists its
+  choices, every failure says why on stderr, `list` prints each chip's key
+  and exits 1 for a maker with no chips, and a supply range is written with
+  an en dash.

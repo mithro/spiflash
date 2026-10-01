@@ -26,13 +26,16 @@ Description: database of SPI flash chips: JEDEC ids, sizes, erase geometry
  spiflash answers "which chip answered this JEDEC id?" and "what does this
  part answer?" for SPI NOR and SPI NAND flash, from one database merged from
  the flash tables in flashrom, flashprog, Linux, U-Boot, Dediprog,
- Rockchip, MediaTek, OpenOCD, openFPGALoader, IMSProg and QEMU, with the
- JEP106 manufacturer list.
+ Rockchip, MediaTek, OpenOCD, openFPGALoader, IMSProg and QEMU and the
+ flash chips Zephyr's boards describe, with the JEP106 manufacturer list.
  .
  Each chip id carries the part names every source gives it, its size, page
- and sector size, erase opcodes and block layouts, supply voltage and
- capabilities (dual/quad/octal read, QPI, 4-byte addressing, SFDP, OTP),
+ and sector size, erase opcodes and block layouts, supply voltage,
+ registers, 4-byte addressing modes, OTP area, erase, program and
+ power-down times, and capabilities (dual/quad/octal read, QPI, SFDP),
  with the places where the sources disagree kept visible and every entry
- traced to the upstream file and line it came from.
+ traced to the upstream file and line it came from. It decodes SFDP
+ (JESD216) tables, writes the tables the database describes for a chip,
+ and compares two sets.
  .
  This package provides the spiflash Python module and the spiflash command.

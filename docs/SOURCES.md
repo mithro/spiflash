@@ -15,13 +15,24 @@ Facts about chips:
 
 - the id bytes a part answers, and its part and manufacturer names;
 - its size, page and sector sizes, erase opcodes and block layouts;
-- its other opcodes ({sfsrc}`openocd`, {sfsrc}`dediprog`'s command words,
-  {sfsrc}`rockchip`'s quad read and program, and the SFDP
-  tables {sfsrc}`zephyr`'s boards copy);
+- its other opcodes, with their dummy clocks where a source gives them
+  ({sfsrc}`openocd`, {sfsrc}`dediprog`'s command words, {sfsrc}`rockchip`'s
+  quad read and program, the SPI NAND drivers' read and program variants,
+  and the SFDP tables {sfsrc}`zephyr`'s boards copy);
 - its supply voltage range ({sfsrc}`flashrom`, {sfsrc}`flashprog`), and the
-  nominal supply {sfsrc}`imsprog` gives, among its `flags`;
-- for SPI NAND, the spare area, planes, dies and I/O modes {sfsrc}`mediatek`
-  gives, among its `flags`;
+  supply a programmer's table says to power it at ({sfsrc}`dediprog`,
+  {sfsrc}`imsprog`: `supply_mv`);
+- its registers: the quad enable bit (and Zephyr's quad enable
+  requirement), and the block-protection bits;
+- its ways into 4-byte address mode, its OTP area, and the legacy (RES,
+  REMS) ids a part answers besides its JEDEC id ({sfsrc}`dediprog`'s
+  `AlternativeID`);
+- its dies, and how one is selected; for SPI NAND, the spare area, planes,
+  ECC requirement and bad blocks ({sfsrc}`linux`, {sfsrc}`mediatek`,
+  {sfsrc}`rockchip`, {sfsrc}`dediprog`);
+- its erase, program and power-down times ({sfsrc}`dediprog`'s chip erase
+  time, {sfsrc}`zephyr`'s deep power-down and reset times, and what SFDP
+  tables give), and the clock {sfsrc}`dediprog` lists;
 - the names of the capability flags each upstream sets, and each upstream's
   test status;
 - from {sfsrc}`qemu`, the SFDP

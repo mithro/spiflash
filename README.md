@@ -22,7 +22,7 @@ merged from the flash tables of every project that keeps one:
 Together that is 1347 distinct chip ids (1056 SPI NOR, 291 SPI NAND) from 64
 manufacturers, 849 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
-from, and where the sources disagree (92 ids do) both answers are kept.
+from, and where the sources disagree (114 ids do) both answers are kept.
 Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
 (JESD216) tables, and sixteen more the tables Zephyr's boards copy, decoded;
 what the tables say is worked out from them, not stored again.
@@ -76,8 +76,8 @@ What answered `9f` with `ef 40 18`?
 ```console
 $ spiflash id ef4018
 ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
-    size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V, QE SR2[1], OTP 768 B
-    timing: chip erase ~200 s (bound not given); DPD enter ≤ 3.5 µs; DPD exit ≤ 3.5 µs
+    size 16 MiB, page 256 B, sector 64 KiB, 2.7–3.6 V, QE SR2[1], OTP 768 B
+    timing: chip erase ~200 s (bound not given; also 40 s, 50 s); DPD enter ≤ 3.5 µs; DPD exit ≤ 3.5 µs
     features: dual_read erase_32k erase_4k erase_64k fast_read lock otp qpi quad_pp quad_read sfdp
     from: flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr
     datasheet: https://www.winbond.com/resource-files/W25Q128JV%20RevH%2003102021%20Plus.pdf
@@ -94,8 +94,8 @@ What does a part answer?
 ```console
 $ spiflash find GD25Q64
 c84017  GigaDevice  GD25Q64, GD25Q64C, GD25Q64B, GD25Q64E, GD25B64B, GD25B64C, GD25B64E, GD25Q64H, GD25R64C, S64M80GX, GD25Q64CSIG  (nor)
-    size 8 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V, QE SR2[1], OTP 768 B
-    timing: chip erase ~60 s (bound not given)
+    size 8 MiB, page 256 B, sector 64 KiB, 2.7–3.6 V, QE SR2[1], OTP 768 B
+    timing: chip erase ~60 s (bound not given; also 15 s, 30 s, 140 s, 160 s)
     ...
 ```
 
@@ -106,7 +106,7 @@ wildcards (`W25Q128.V`) are understood.
 Which opcodes does a part support?
 
 ```console
-$ spiflash opcodes W25Q128JV           # or by id: spiflash opcodes ef4018
+$ spiflash opcodes ef4018              # or a part name, W25Q128JV: ef4018 and ef7018 both
 ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
     0x9f  RDID             Read JEDEC id  [flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr]
     0x5a  RDSFDP           Read SFDP (JESD216) parameters  [flashrom, flashprog]
@@ -131,9 +131,10 @@ description. See [Opcodes](#opcodes) for what the list does and does not promise
 spiflash list --manufacturer winbond     # every Winbond id
 spiflash list --type nand
 spiflash id --method res1 10             # a legacy RES signature byte (M25P10)
+spiflash id rems:bf48                    # a legacy chip, by the key id and list print
 spiflash sfdp W25Q512JV                  # its SFDP tables, decoded (see below)
 spiflash jep106 7f1c                     # "Eon Silicon Devices"
-spiflash sources                         # the upstream commits
+spiflash sources                         # the upstream commits (--json too, as jep106)
 ```
 
 ## The library
@@ -269,7 +270,8 @@ is not listed may still be supported: no source here describes every opcode of
 every part, and parts that Linux reads from SFDP get their read, program and
 erase opcodes from the chip at run time, so Linux lists only its defaults for
 them. Parts sharing an id can differ too; `because` says who vouches for what.
-SPI NAND parts have no opcodes listed.
+SPI NAND parts list their own operations (`NAND_PAGE_READ`, `NAND_READ_CACHE_1_1_4`,
+...): `spiflash opcodes c22603`.
 
 ## SFDP
 
@@ -338,11 +340,17 @@ spiflash sfdp /sys/bus/spi/devices/spi0.0/spi-nor/sfdp --entry
 
 `sfdp-encode` writes the SFDP area the database describes for a chip, in hex
 (or `-o FILE` for the bytes; `--json` for everything). It never writes as fact
-what the database does not hold. A field the format needs and the database
-cannot give is written with a documented value and listed as `assumed`
-(on stderr); without `--assume` it leaves out what it cannot fill, lowering
-the revision (the database has no erase or program times yet, so that is
-JESD216 1.0), and lists that as `missing`:
+what the database does not hold, nor anything that denies what it does. A
+field the format needs and the database cannot give is written with a
+documented value and listed as `assumed` (on stderr). Without `--assume` it
+leaves out what it cannot fill, lowering the revision (to JESD216 1.0, as
+few parts have every time and suspend figure DW10 to DW16 need), and lists
+that as `missing`; with it, it fills the rest with JESD216's "not supported",
+the shortest times and the like, each listed, but still lowers the revision
+where any value would contradict the database (Dediprog's chip erase time,
+whose bound is not given, has no place in DW11). A chip whose first nine
+dwords would deny something (QPI with no 4-4-4 read known) is refused. The
+W25Q512JV, without `--assume`:
 
 ```console
 $ spiflash sfdp-encode ef4020
@@ -356,7 +364,9 @@ decoded field and each dword that differ, and exits 1 when they differ, as
 `diff` does. A shipped dump against its chip's encoding shows what the
 database does not hold; the mode and wait clocks of a read are one of
 those, as the database keeps their total, so a split that differs is marked
-expected:
+expected, and so, against an `encoded:` side, is each loss `encode`
+documents (`spiflash.sfdp_tools.ENCODE_LOSSES`). Erase types are compared
+by opcode, as `encode` writes them smallest first:
 
 ```console
 $ spiflash sfdp-diff ef4020 encoded:ef4020
@@ -365,9 +375,9 @@ B: encoded ef4020
 tables:
     BFPT: 1.6, 16 dwords in A, 1.0, 9 dwords in B
 fields:
-    revision: 1.6 in A, 1.0 in B
-    page_size: 256 in A, none in B
-    dtr: True in A, False in B
+    revision: 1.6 in A, 1.0 in B  (expected: the revision: lowered to the highest one encode can fill)
+    page_size: 256 in A, none in B  (expected: the page size, in a revision encode cannot fill)
+    dtr: True in A, False in B  (expected: DTR reads, which have no operation here)
     reads.1-2-2: 0xbb, 2 mode + 2 wait clocks in A, 0xbb, 0 mode + 4 wait clocks in B  (expected: the same 4 dummy clocks, split differently)
 ...
 ```
@@ -388,6 +398,7 @@ d.fields, d.dwords, d.tables, d.describe()
 ## Datasheets
 
 ```python
+chip = spiflash.lookup("ef4018")[0]      # the W25Q128JV again (the SFDP examples took W25Q512JV)
 d = chip.datasheets[0]                   # the best first
 d.url, d.revision, d.date                # ('https://www.winbond.com/resource-files/W25Q128JV...pdf', 'Revision H', ...)
 d.official                               # True: the manufacturer's own site

@@ -163,6 +163,14 @@ _QPI_DISABLE = {
     2: "read-modify-write 0x65/0x71, clear bit 6 at 0x800003",
     3: "0x66 then 0x99",
 }
+#: The sequences of DW15 that are one command, and its operation.
+_QPI_OPERATIONS = {
+    _QPI_ENABLE[4]: "EQPI_38",
+    _QPI_ENABLE[5]: "EQPI_38",
+    _QPI_ENABLE[6]: "EQPI_35",
+    _QPI_DISABLE[0]: "RSTQIO_FF",
+    _QPI_DISABLE[1]: "RSTQIO_F5",
+}
 
 
 # (protocol, dword, shift of the 16-bit settings half, support test)
@@ -332,10 +340,6 @@ class FastRead:
     def dummy_clocks(self) -> int:
         """Mode clocks plus wait states: what a controller must insert."""
         return self.mode_clocks + self.wait_states
-
-    @property
-    def address_dtr(self) -> bool:
-        return "D" in self.protocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -779,6 +783,20 @@ class Sfdp:
                     0,
                     0,
                     "BFPT DW14: release from deep power-down",
+                )
+        for sequence in (*bfpt.qpi_enable, *bfpt.qpi_disable):
+            # DW15: the 4-4-4 mode enable and disable sequences that are one
+            # command (0x38, 0x35; 0xff, 0xf5), as DW14 gives DP and RDPD.
+            name = _QPI_OPERATIONS.get(sequence)
+            if name is not None:
+                op = OPERATIONS[name]
+                yield SfdpOperation(
+                    name,
+                    op.opcode,
+                    op.protocol,
+                    0,
+                    0,
+                    f"BFPT DW15 {'enter' if name.startswith('EQPI') else 'exit'} 4-4-4: {sequence}",
                 )
         if self.four_byte is not None:
             for i in self.four_byte.instructions:

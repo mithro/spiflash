@@ -18,13 +18,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from . import __version__
 from .db import Database, NameMatch, database
-from .enums import Bound, FlashType, TimedEvent
+from .enums import Bound, FlashType, IdFamily, TimedEvent
 from .model import (
     COMPARED_VALUES,
     Flash,
@@ -33,12 +34,13 @@ from .model import (
     parse_id,
     strip_continuation,
 )
+from .opcodes import DIE_SELECT_OPERATIONS
 from .registers import NoQuadEnable, RegisterBit, Writability
 from .sfdp import SIGNATURE, Sfdp
 from .sfdp import parse as parse_sfdp
 from .sfdp_tools import diff, encode, to_entry
-from .timings import parse_component
-from .units import human_duration, human_frequency, human_size
+from .timings import TimingKey, parse_component
+from .units import human_duration, human_frequency, human_size, human_supply
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -84,11 +86,6 @@ def header(f: Flash) -> str:
     return f"{f.key}  {maker}  {', '.join(f.names)}  ({f.type})"
 
 
-def volts(v: tuple[int, int]) -> str:
-    """A supply range in volts: ``2.7-3.6 V``."""
-    return f"{v[0] / 1000:g}-{v[1] / 1000:g} V"
-
-
 def quad_enable(qe: RegisterBit | NoQuadEnable) -> str:
     """A quad enable bit as the detail line writes it: ``SR2[1]``, ``none``."""
     if isinstance(qe, NoQuadEnable):
@@ -103,8 +100,8 @@ def shown(attribute: str, value: Any) -> str:
     a size as ``16 MiB``, a voltage as ``2.7-3.6 V``, a register bit as
     ``SR2 bit 1``."""
     if attribute == "voltage":
-        return volts(value)
-    if attribute in ("size", "page_size", "sector_size", "oob_size", "ecc.step_bytes"):
+        return human_supply(value)
+    if attribute in ("size", "page_size", "sector_size", "oob_size", "ecc.step_bytes", "otp.size"):
         return human_size(value)
     if attribute.startswith("timings."):
         return human_duration(value)
@@ -137,13 +134,21 @@ def times(f: Flash, *, verbose: bool = False) -> list[str]:
     if not verbose:
         parts = []
         for key in (k for k in keys if k.event in BRIEF_TIMES):
-            given = [
-                _BOUND_WORDS[b].format(human_duration(ns))
-                for b in Bound
-                if (ns := f.timing(key.event, b, key.opcode)) is not None
-            ]
-            parts.append(f"{str(key.event).replace('_', ' ')} {', '.join(given)}")
-        return ["    timing: " + "; ".join(parts).replace("dpd ", "DPD ")] if parts else []
+            given = []
+            for b in Bound:
+                ns = f.timing(key.event, b, key.opcode)
+                if ns is None:
+                    continue
+                said = _BOUND_WORDS[b].format(human_duration(ns))
+                # Where the sources (or one source's parts) give others too.
+                others = ", ".join(human_duration(n) for n in f.timings[key, b] if n != ns)
+                if others and said.endswith(")"):
+                    said = f"{said[:-1]}; also {others})"
+                elif others:
+                    said += f" (also {others})"
+                given.append(said)
+            parts.append(f"{_event_words(key)} {', '.join(given)}")
+        return ["    timing: " + "; ".join(parts)] if parts else []
     lines = []
     for (key, bound), values in f.timings.items():
         said = "; ".join(
@@ -153,14 +158,21 @@ def times(f: Flash, *, verbose: bool = False) -> list[str]:
             + ")"
             for ns, sources in values.items()
         )
-        lines.append(f"    time: {key} {bound}: {said}")
+        lines.append(f"    time: {_event_words(key)}, {bound}: {said}")
     return lines
+
+
+def _event_words(key: TimingKey) -> str:
+    """A timed event as the description writes it: ``chip erase``, ``block
+    erase 0x20``, ``DPD exit``."""
+    words = str(key.event).replace("_", " ").replace("dpd ", "DPD ")
+    return words if key.opcode is None else f"{words} 0x{key.opcode:02x}"
 
 
 def dies(f: Flash) -> str:
     """The dies, and how one is selected where a source says: ``dies 2
     (select 0xc2)``, ``dies 2 (select die select feature bit 6)``."""
-    select = [o for name, o in f.opcodes.items() if name in ("DIE_SELECT", "NAND_DIE_SELECT")]
+    select = [o for name, o in f.opcodes.items() if name in DIE_SELECT_OPERATIONS]
     how = ""
     if select:
         how = f" (select 0x{select[0].opcode:02x})"
@@ -186,7 +198,7 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     if f.ecc:
         detail.append(f"ECC {f.ecc}")
     if f.voltage:
-        detail.append(volts(f.voltage))
+        detail.append(human_supply(f.voltage))
     elif f.supply_mv:
         detail.append(f"supply {f.supply_mv / 1000:g} V")
     if f.quad_enable is not None:
@@ -326,9 +338,18 @@ def _sfdp_input(db: Database, source: str) -> list[_SfdpShown]:
 def _one_chip(db: Database, query: str) -> Flash:
     """The one SPI NOR chip ``query`` (an id or a part name) names (SFDP is
     SPI NOR's: ``c22019`` is not also the SPI NAND ``c220``); ``ValueError``
-    listing them where it names none or several."""
+    listing them where it names none or several. Of several, the one chip
+    with the name exactly, or failing that the one whose own part it is
+    (:attr:`Flash.name <spiflash.model.Flash.name>`): ``W25Q512JV`` is
+    ef4020's part, and a name of ef7020's too (W25Q512JV_M)."""
     named = _resolve(db, query)
     found = [f for f in named if f.type is FlashType.NOR]
+    if len(found) > 1:
+        # A legacy chip's key is that chip, not the JEDEC chips answering it.
+        keyed = [f for f in found if f.key == query.strip().lower()]
+        exact = [f for f in db.find(query, exact=True) if f.type is FlashType.NOR]
+        own = [f for f in exact if f.name.upper() == query.strip().upper()]
+        found = next((x for x in (keyed, exact, own) if len(x) == 1), found)
     if len(found) == 1:
         return found[0]
     if found:
@@ -362,9 +383,13 @@ def _sfdp_operand(db: Database, operand: str) -> tuple[str, Sfdp]:
     f = _one_chip(db, query)
     part = query.strip().upper()
     dumps = [d for d in f.sfdp_dumps if part in d.parts] or list(f.sfdp_dumps)
-    index = int(nth) if nth.isdigit() else 1
+    if nth and not nth.isdigit():
+        msg = f"{operand}: a dump is chosen by its number (#2), not #{nth}"
+        raise ValueError(msg)
+    index = int(nth) if nth else 1
     if not 1 <= index <= len(dumps):
-        msg = f"{f.key} has {len(dumps)} SFDP dumps, not a dump #{index}"
+        count = "no SFDP dump" if not dumps else f"{len(dumps)} SFDP dump" + "s" * (len(dumps) > 1)
+        msg = f"{f.key} has {count}, not a dump #{index}"
         raise ValueError(msg)
     d = dumps[index - 1]
     which = f.sfdp_dumps.index(d) + 1
@@ -399,7 +424,8 @@ def _sfdp_encode(db: Database, args: argparse.Namespace) -> int:
 def _sfdp_diff(db: Database, args: argparse.Namespace) -> int:
     """``spiflash sfdp-diff``: exit 0 when the two are the same, 1 when not."""
     (name_a, a), (name_b, b) = _sfdp_operand(db, args.a), _sfdp_operand(db, args.b)
-    found = diff(a, b)
+    encoded = any(side.startswith("encoded:") for side in (args.a, args.b))
+    found = diff(a, b, encoded=encoded)
     if args.json:
         json.dump({"a": name_a, "b": name_b, **found.to_json()}, sys.stdout, indent=1)
         sys.stdout.write("\n")
@@ -420,9 +446,19 @@ def _emit(
     return 0 if found else 1
 
 
-def _legacy_hint(db: Database, chip_id: str, flash_type: str | None) -> None:
-    """Where no chip answers ``chip_id`` to JEDEC read-id, say which legacy
-    id methods some chip answers it to, on stderr."""
+#: The legacy id commands ``spiflash id --method`` takes.
+LEGACY_METHODS = tuple(str(f) for f in IdFamily if f is not IdFamily.JEDEC)
+
+
+def _no_chip_hint(db: Database, chip_id: str, flash_type: str | None, method: str) -> None:
+    """Where no chip answers ``chip_id``, say so on stderr, and what might:
+    the legacy id methods some chip answers it to, or, for an id read with
+    a leading dummy byte (a SPI NAND read-id answer such as ``00efaa21``),
+    the chips answering it without."""
+    if ":" in chip_id or method != IdFamily.JEDEC:
+        how = chip_id if ":" in chip_id else f"{chip_id} to {method.upper()}"
+        print(f"spiflash: no chip answers {how}", file=sys.stderr)
+        return
     wanted = strip_continuation(parse_id(chip_id))[1]
 
     def exactly(f: Flash) -> bool:
@@ -430,14 +466,24 @@ def _legacy_hint(db: Database, chip_id: str, flash_type: str | None) -> None:
 
     methods = [
         m
-        for m in ("rems", "res1", "res2", "at25f")
+        for m in LEGACY_METHODS
         if any(exactly(f) for f in db.lookup(chip_id, flash_type=flash_type, method=m))
     ]
     if methods:
         tries = ", ".join(f"--method {m}" for m in methods)
-        print(f"no chip answers {chip_id} to JEDEC read-id; try {tries}", file=sys.stderr)
-    else:
-        print(f"no chip answers {chip_id}", file=sys.stderr)
+        print(f"spiflash: no chip answers {chip_id} to JEDEC read-id; try {tries}", file=sys.stderr)
+        return
+    data = parse_id(chip_id)
+    if len(data) > 2 and data[0] in (0x00, 0xFF):
+        rest = data[1:].hex()
+        if db.lookup(rest, flash_type=flash_type):
+            print(
+                f"spiflash: no chip answers {chip_id}; a SPI NAND part sends a dummy byte "
+                f"before its id: try {rest}",
+                file=sys.stderr,
+            )
+            return
+    print(f"spiflash: no chip answers {chip_id}", file=sys.stderr)
 
 
 def nearest_line(m: NameMatch, width: int) -> str:
@@ -451,6 +497,8 @@ def _find(db: Database, args: argparse.Namespace) -> int:
     """``spiflash find``: by name, glob, regular expression or nearness."""
     if args.nearest:
         near = db.find_nearest(args.name, args.count)
+        if not near:
+            print(f"spiflash: no part name is near {args.name!r}", file=sys.stderr)
         if args.json:
             json.dump([m.to_json() for m in near], sys.stdout, indent=1)
             sys.stdout.write("\n")
@@ -461,6 +509,7 @@ def _find(db: Database, args: argparse.Namespace) -> int:
             if args.verbose or args.opcodes:
                 print(describe(m.flash, verbose=args.verbose, opcodes=args.opcodes) + "\n")
         return 0 if near else 1
+    near = []
     if args.regex:
         found = db.find_regex(args.name)
     elif args.glob or any(c in args.name for c in "*?["):
@@ -468,10 +517,33 @@ def _find(db: Database, args: argparse.Namespace) -> int:
     else:
         found = db.find(args.name)
         near = [] if found else db.find_nearest(args.name, 3)
-        if near:
-            close = ", ".join(f"{m.name} ({m.flash.key})" for m in near)
-            print(f"spiflash: no part {args.name}; the closest: {close}", file=sys.stderr)
+    if near:
+        close = ", ".join(f"{m.name} ({m.flash.key})" for m in near)
+        print(f"spiflash: no part {args.name}; the closest: {close}", file=sys.stderr)
+    elif not found:
+        print(f"spiflash: no part name matches {args.name!r}", file=sys.stderr)
     return _emit(found, as_json=args.json, verbose=args.verbose, opcodes=args.opcodes)
+
+
+def _list(db: Database, args: argparse.Namespace) -> int:
+    """``spiflash list``: every chip, or a maker's, or one type's; exit 1,
+    saying why, where none is."""
+    listed = list(db.by_manufacturer(args.manufacturer) if args.manufacturer else db.flashes)
+    if args.manufacturer and not listed:
+        print(f"spiflash: no manufacturer {args.manufacturer!r} makes a chip here", file=sys.stderr)
+        return 1
+    if args.type:
+        listed = [f for f in listed if f.type == args.type]
+    if not listed:
+        print(f"spiflash: no {args.type.upper()} chip of {args.manufacturer}", file=sys.stderr)
+    if args.json or args.verbose:
+        return _emit(listed, as_json=args.json, verbose=args.verbose, opcodes=args.opcodes)
+    for f in listed:
+        print(
+            f"{f.key:10} {f.type:4} {f.manufacturer or '?':14} "
+            f"{human_size(f.size):>8}  {', '.join(f.names)}"
+        )
+    return 0 if listed else 1
 
 
 def _resolve(db: Database, query: str) -> list[Flash]:
@@ -499,8 +571,13 @@ def _parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("id", parents=[common], help="look up a JEDEC read-id (0x9F) answer")
-    p.add_argument("id", help="hex bytes, e.g. ef4018 or 'ef 40 18'")
-    p.add_argument("--method", default="jedec", help="legacy id: rems, res1, res2, at25f")
+    p.add_argument("id", help="hex bytes, e.g. ef4018 or 'ef 40 18', or a legacy key: res1:15")
+    p.add_argument(
+        "--method",
+        default="jedec",
+        choices=[str(f) for f in IdFamily],
+        help="the command the id answers: jedec (read-id 0x9f, the default) or a legacy one",
+    )
     p.add_argument("--type", choices=["nor", "nand"])
 
     p = sub.add_parser("find", parents=[common], help="look up a part name")
@@ -546,7 +623,10 @@ def _parser() -> argparse.ArgumentParser:
             "stderr as 'assumed:': DW1's status-register bits (3-4), a read's usual "
             "dummy clocks where no source gives the part's, and every read's split "
             "into 0 mode + N wait clocks. What cannot be filled is left out, lowering "
-            "the revision, and listed as 'missing:'."
+            "the revision, and listed as 'missing:', even with --assume where any value "
+            "would contradict the database. Nothing written denies what the database "
+            "says: where the first nine dwords, in every revision, would (QPI with no "
+            "4-4-4 read known, say), the chip is refused."
         ),
     )
     p.add_argument("query", help="a JEDEC id or part name naming one chip")
@@ -573,24 +653,42 @@ def _parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("jep106", help="name the manufacturer of an id byte")
     p.add_argument("id", help="the id byte in hex, with any 7f continuation codes before it")
+    p.add_argument("--json", action="store_true", help="print JSON")
 
-    sub.add_parser("sources", help="where the data came from")
+    p = sub.add_parser("sources", help="where the data came from")
+    p.add_argument("--json", action="store_true", help="print JSON")
     return ap
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """The command; its exit status: 0, 1 where nothing was found (or the
+    reader of its output went away: ``spiflash list | head``), 2 for an
+    error."""
+    try:
+        return _run(argv)
+    except BrokenPipeError:
+        # As Python's docs advise: point stdout at nothing, so the flush at
+        # exit raises nothing more, and stop.
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        return 1
+
+
+def _run(argv: Sequence[str] | None) -> int:
     args = _parser().parse_args(argv)
     db = database()
     try:
         if args.command == "id":
             found = db.lookup(args.id, flash_type=args.type, method=args.method)
-            if not found and args.method == "jedec" and not args.json:
-                _legacy_hint(db, args.id, args.type)
+            if not found:
+                _no_chip_hint(db, args.id, args.type, args.method)
             return _emit(found, as_json=args.json, verbose=args.verbose, opcodes=args.opcodes)
         if args.command == "find":
             return _find(db, args)
         if args.command == "opcodes":
             found = _resolve(db, args.query)
+            if not found:
+                print(f"spiflash: no chip {args.query}: give an id or a part name", file=sys.stderr)
             if args.json:
                 return _emit(found, as_json=True)
             for f in found:
@@ -599,19 +697,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print()
             return 0 if found else 1
         if args.command == "list":
-            listed = list(
-                db.by_manufacturer(args.manufacturer) if args.manufacturer else db.flashes
-            )
-            if args.type:
-                listed = [f for f in listed if f.type == args.type]
-            if args.json or args.verbose:
-                return _emit(listed, as_json=args.json, verbose=args.verbose, opcodes=args.opcodes)
-            for f in listed:
-                print(
-                    f"{f.jedec_id:10} {f.type:4} {f.manufacturer or '?':14} "
-                    f"{human_size(f.size):>8}  {', '.join(f.names)}"
-                )
-            return 0
+            return _list(db, args)
         if args.command == "sfdp":
             shown = _sfdp_input(db, args.source)
             if not shown:
@@ -643,9 +729,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             data = parse_id(args.id)
             bank = len(data) - 1
             name = db.jep106(data[-1], bank)
-            print(name or f"no JEP106 manufacturer 0x{data[-1]:02x} in bank {bank + 1}")
+            if not name:
+                print(
+                    f"spiflash: no JEP106 manufacturer 0x{data[-1]:02x} in bank {bank + 1}",
+                    file=sys.stderr,
+                )
+            if args.json:
+                doc = {"code": f"{data[-1]:02x}", "bank": bank + 1, "manufacturer": name}
+                json.dump(doc, sys.stdout, indent=1)
+                sys.stdout.write("\n")
+            elif name:
+                print(name)
             return 0 if name else 1
         # sources
+        if args.json:
+            json.dump({k: s.to_json() for k, s in db.sources.items()}, sys.stdout, indent=1)
+            sys.stdout.write("\n")
+            return 0
         for name, s in db.sources.items():
             print(
                 f"{name:15} {s.commit[:12]} {s.date:%Y-%m-%d} {s.records:5}  {s.url} ({s.license})"

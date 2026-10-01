@@ -9,7 +9,7 @@ from html import escape
 from typing import TYPE_CHECKING
 
 from spiflash.enums import Source
-from spiflash.units import human_size
+from spiflash.units import human_size, human_supply
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -153,8 +153,12 @@ def spaced(hex_id: str) -> str:
     return " ".join(hex_id[i : i + 2] for i in range(0, len(hex_id), 2))
 
 
+#: The vendor page of the chips no source names a maker for.
+UNKNOWN_VENDOR = "Unknown"
+
+
 def vendor_of(f: Flash) -> str:
-    return f.manufacturer or "Unknown"
+    return f.manufacturer or UNKNOWN_VENDOR
 
 
 def title_of(f: Flash) -> str:
@@ -179,7 +183,7 @@ def num(text: str) -> str:
 
 def volts(v: tuple[int, int] | None) -> str:
     """A supply range: its two ends, an en dash between, one unit."""
-    return num(f"{v[0] / 1000:g}{EN_DASH}{v[1] / 1000:g} V" if v else f"{EM_DASH} V")
+    return num(human_supply(v) if v else f"{EM_DASH} V")
 
 
 def volt(mv: int | None) -> str:

@@ -394,3 +394,17 @@ def test_a_supply_setting_outside_the_range() -> None:
     page = generate_all(db, {id(f): f.key for f in db.flashes})["supply.md"]
     assert "Supplies outside them" in page
     assert "Dediprog's 3.3 V is wrong" in page  # the EN25S40's known cause
+
+
+def test_the_site_and_the_command_find_the_same_disagreements() -> None:
+    # The site's VALUE and SAME_SOURCE issues are Flash.conflicts (what
+    # spiflash id says the sources disagree on), split by who disagrees.
+    db = spiflash.database()
+    site: dict[str, set[str]] = {}
+    for i in find(db):
+        if i.kind in (IssueKind.VALUE, IssueKind.SAME_SOURCE):
+            assert i.attribute is not None
+            site.setdefault(i.subject, set()).add(i.attribute)
+    command = {f.key: set(f.conflicts) for f in db.flashes if f.conflicts}
+    assert len(command) > 100
+    assert site == command

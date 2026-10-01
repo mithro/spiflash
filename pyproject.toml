@@ -64,7 +64,9 @@ include = ["src/", "tools/", "tests/", "README.md", "LICENSE", "docs/"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tools", "docs", "docs/_ext"]
-addopts = "-ra --cov=spiflash --cov=spiflash_extract --cov-report=term-missing --cov-fail-under=85"
+# Coverage covers the package, the tools (the extractors and the scripts) and
+# the site's extensions, all of which the tests run.
+addopts = "-ra --cov=spiflash --cov=tools --cov=docs/_ext --cov-report=term-missing --cov-fail-under=85"
 
 [tool.ruff]
 target-version = "py311"
@@ -99,7 +101,7 @@ select = [
 [tool.mypy]
 files = [
     "src/spiflash", "tools/spiflash_extract", "tools/update_db.py",
-    "tools/db_snapshot.py", "tools/db_diff.py",
+    "tools/db_snapshot.py", "tools/db_diff.py", "tools/import_datasheets.py",
     "docs/conf.py", "docs/_ext", "docs/check_links.py",
     "docs/check_link_targets.py",
 ]

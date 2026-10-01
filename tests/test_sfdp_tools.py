@@ -3,17 +3,20 @@
 
 from __future__ import annotations
 
+import functools
+from collections import Counter
 from typing import Any
 
 import pytest
 
 import spiflash
 from spiflash import derive, sfdp_tools
-from spiflash.enums import Feature, FourByteMethod
+from spiflash.enums import Bound, Feature, FourByteMethod, TimedEvent
 from spiflash.model import Flash, Record
 from spiflash.opcodes import OPERATIONS
+from spiflash.registers import QE_NONE, QuadEnableRequirement
 from spiflash.sfdp import AddressBytes, Sfdp, from_tables, parse
-from spiflash.sfdp_tools import ENCODE_LOSSES, diff, encode, to_entry
+from spiflash.sfdp_tools import ENCODE_LOSSES, EncodedSfdp, diff, encode, to_entry
 from test_db import rec
 from test_sfdp import MX25L25635E, W25Q512JV
 
@@ -174,23 +177,39 @@ def test_facts_carry_each_reads_dummy_clocks() -> None:
     assert "READ_1_1_1_FAST" not in clocks
 
 
+def test_facts_carry_dw15s_qpi_sequences() -> None:
+    # The W25Q512JV's DW15: "set QE, then 0x38" in, 0xff out; the
+    # operations, as DW14 gives DP and RDPD.
+    ops = {u.op: u.via for u in parse(W25Q512JV).facts().opcodes}
+    assert ops["EQPI_38"] == "SFDP BFPT DW15 enter 4-4-4: set QE, then 0x38"
+    assert ops["RSTQIO_FF"] == "SFDP BFPT DW15 exit 4-4-4: 0xff"
+    assert "EQPI_35" not in ops
+
+
+def with_tables() -> list[tuple[Record, Sfdp]]:
+    """Every record carrying SFDP tables, with them decoded: QEMU's 13 dumps
+    and Zephyr's copied tables, at least (so a data-wide test cannot pass
+    on no data)."""
+    out = [(r, r.parsed_sfdp) for r in spiflash.records() if r.parsed_sfdp is not None]
+    assert len(out) >= 30
+    return out
+
+
 def test_a_records_features_are_derived_once() -> None:
     # Sfdp.features() is the record's rules on the tables alone.
-    for r in spiflash.records():
-        if r.parsed_sfdp is not None:
-            assert r.parsed_sfdp.features() <= r.features, r.name
-            assert derive.sfdp_features(r.parsed_sfdp) == r.parsed_sfdp.features()
+    for r, s in with_tables():
+        assert s.features() <= r.features, r.name
+        assert derive.sfdp_features(s) == s.features()
 
 
 # --- diff ---------------------------------------------------------------------
 
 
 def test_diff_of_a_table_with_itself_is_empty() -> None:
-    for r in spiflash.records():
-        if r.parsed_sfdp is not None:
-            d = diff(r.parsed_sfdp, r.parsed_sfdp)
-            assert not d, r.name
-            assert d.describe() == "no differences"
+    for r, s in with_tables():
+        d = diff(s, s)
+        assert not d, r.name
+        assert d.describe() == "no differences"
 
 
 def chip(key: str) -> Flash:
@@ -242,10 +261,7 @@ def test_diff_marks_the_mode_and_wait_split_as_expected() -> None:
 
 
 def test_to_entry_is_what_a_record_carrying_the_tables_derives() -> None:
-    for r in spiflash.records():
-        s = r.parsed_sfdp
-        if s is None:
-            continue
+    for r, s in with_tables():
         entry = to_entry(s)
         assert list(entry) == list(r.to_json()), r.name
         assert entry["sfdp"] is None
@@ -316,16 +332,39 @@ def per_part_ops(f: Flash) -> set[str]:
     return {name for name, o in f.opcodes.items() if any(not c.assumed for c in o.because)}
 
 
-def test_encode_round_trips_each_field() -> None:
+#: How encode refuses a chip whose BFPT's first nine dwords would deny what
+#: the database says of it.
+REFUSED = "no SFDP 1.0 BFPT agrees with the database"
+
+
+@functools.cache
+def encoded(*, assume: bool) -> tuple[tuple[Flash, EncodedSfdp], ...]:
+    """Every SPI NOR chip of a known size, encoded; those encode refuses are
+    left out, and must be refused for that reason."""
+    out = []
+    refusals = []
     for f in nor_chips():
-        for assume in (False, True):
-            out = encode(f, assume=assume)
+        try:
+            out.append((f, encode(f, assume=assume)))
+        except ValueError as e:
+            refusals.append((f.key, str(e)))
+    assert all(REFUSED in why for _, why in refusals), refusals
+    assert len(out) > 600
+    return tuple(out)
+
+
+def test_encode_round_trips_each_field() -> None:
+    for assume in (False, True):
+        for f, out in encoded(assume=assume):
             s = out.sfdp
             assert s.warnings == () or all("4BAIT claims" in w for w in s.warnings), f.key
             assert s.size == f.size, f.key
-            if assume:
-                assert out.revision == (1, 6)
+            if assume and out.revision == (1, 6):
                 assert s.page_size == encodable_page(f), f.key
+            elif assume:
+                # Lowered, even with assume, only for what no value can
+                # say without contradicting the database: listed.
+                assert out.missing, f.key
             else:
                 assert out.revision == (1, 0)
                 assert s.page_size is None
@@ -343,12 +382,102 @@ def test_encode_round_trips_each_field() -> None:
                     assert o.dummy_clocks == known, (f.key, o.name)
 
 
+def test_encode_with_assume_never_contradicts_the_database() -> None:
+    # Every chip, assuming what the database does not hold: what the tables
+    # say, read back, never denies what the database says of the chip.
+    checked = Counter[str]()
+    for f, out in encoded(assume=True):
+        s = out.sfdp
+        bfpt = s.bfpt
+        assert bfpt is not None
+        later = out.revision == (1, 6)
+        facts = s.facts()
+        # QE: the requirement where the database gives it; "no QE bit" (0)
+        # only where it says so.
+        if later and f.quad_enable_requirement is not None:
+            assert bfpt.quad_enable == f.quad_enable_requirement.code, f.key
+            checked["qe requirement"] += 1
+        if bfpt.quad_enable == 0:
+            qer = f.quad_enable_requirement
+            assert qer is QuadEnableRequirement.NONE or (
+                qer is None and f.quad_enable == QE_NONE
+            ), f.key
+        # The ways into 4-byte mode are the database's (but flashrom's EAR
+        # bit 7, which DW16 has no bit for); the ways out are none the
+        # chip's own tables deny.
+        if later:
+            assert facts.four_byte_modes <= f.four_byte_modes, f.key
+            assert f.four_byte_modes - facts.four_byte_modes <= {
+                FourByteMethod.EAR_BIT7,
+                FourByteMethod.OPCODES_4B,
+            }, f.key
+            for d in f.sfdp_dumps:
+                own = d.sfdp.bfpt
+                if own is not None and len(own.dwords) >= 16:
+                    assert bfpt.four_byte_exit <= own.four_byte_exit, (f.key, d.source)
+                    checked["4-byte exits"] += 1
+        # Erasers: the database's, and its 4 KiB erase where it has one.
+        uniform = {(e.opcode, b.size) for r in f.records for e in r.erasers for b in e.blocks}
+        assert {(e.opcode, e.size) for e in s.erase_types} <= uniform, f.key
+        if Feature.ERASE_4K in f.features:
+            assert any(e.size == 4096 for e in s.erase_types), f.key
+            checked["erase_4k"] += 1
+        # Times: the database's typical time, its maximum or one above it;
+        # never a time where it gives one of another bound only.
+        for key in facts.timings.keys:
+            given = {b: f.timing(key.event, b, key.opcode) for b in Bound}
+            if not any(given.values()):
+                continue
+            checked["times"] += 1
+            for bound in (Bound.TYPICAL, Bound.MAXIMUM):
+                ns = facts.timings.get(key.event, bound, key.opcode)
+                known = given[bound]
+                assert ns is None or known is not None, (f.key, str(key), bound)
+                if ns is not None and known is not None and bound is Bound.TYPICAL:
+                    assert ns == known, (f.key, str(key))
+                if ns is not None and known is not None and bound is Bound.MAXIMUM:
+                    assert ns >= known, (f.key, str(key))
+        # The page size, where the tables give one.
+        if s.page_size is not None and f.page_size is not None:
+            assert s.page_size == f.page_size, f.key
+            checked["page size"] += 1
+        # Deep power-down, suspend: never "not supported" where it is known.
+        if later and "DP" in f.opcodes:
+            assert bfpt.enter_deep_power_down == 0xB9, f.key
+            checked["dpd"] += 1
+        suspends = any(k.event is TimedEvent.ERASE_SUSPEND for k, _ in f.timings)
+        if later and suspends:
+            assert bfpt.suspend_resume is True, f.key
+            checked["suspend"] += 1
+        # QPI and quad read: a read of each where the database says so.
+        if Feature.QPI in f.features:
+            assert "4-4-4" in s.reads, f.key
+            checked["qpi"] += 1
+        if Feature.QUAD_READ in f.features:
+            assert {"1-1-4", "1-4-4"} & set(s.reads), f.key
+            checked["quad_read"] += 1
+    # Each check checked something.
+    assert set(checked) == {
+        "qe requirement",
+        "4-byte exits",
+        "erase_4k",
+        "times",
+        "page size",
+        "dpd",
+        "suspend",
+        "qpi",
+        "quad_read",
+    }, checked
+
+
 def test_entry_to_sfdp_to_entry_gives_back_what_encode_wrote() -> None:
-    for f in nor_chips():
-        out = encode(f, assume=True)
+    for f, out in encoded(assume=True):
         back = Record.from_json(to_entry(out.sfdp) | IDENTITY)
         assert back.size == f.size
-        assert back.page_size == encodable_page(f)
+        assert back.page_size == (encodable_page(f) if out.revision == (1, 6) else None)
+        # The address bytes too: a 16 MiB part with only 4-byte erases
+        # (c28138) keeps "3 or 4".
+        assert back.address_bytes == f.address_bytes, f.key
         # Its erasers are the sources', a 4-byte one where they give the op.
         given = {(e.opcode, e.blocks[0].size) for r in f.records for e in r.erasers}
         four_byte = {e.opcode: e for e in back.erasers if e.opcode in (0x21, 0x5C, 0xDC)}
@@ -363,10 +492,7 @@ def test_entry_to_sfdp_to_entry_gives_back_what_encode_wrote() -> None:
 
 def test_sfdp_to_entry_to_sfdp_loses_only_what_is_documented() -> None:
     reads_without_an_op = {"2-2-2", "1-1-8", "1-8-8", "8D-8D-8D"}
-    for r in spiflash.records():
-        s = r.parsed_sfdp
-        if s is None:
-            continue
+    for r, s in with_tables():
         back = encode(Record.from_json(to_entry(s) | IDENTITY), assume=True).sfdp
         d = diff(s, back)
         for x in d.fields:
@@ -374,6 +500,12 @@ def test_sfdp_to_entry_to_sfdp_loses_only_what_is_documented() -> None:
             assert head in ENCODE_LOSSES, (r.name, x)
             if head == "reads":
                 assert x.expected or rest in reads_without_an_op, (r.name, x)
+            # Erase types by opcode: a reordering is no difference.
+            if head == "erase_types":
+                assert x.a[:2] == x.b[:2], (r.name, x)
+        # Against an encoding, each documented loss is marked expected.
+        for x in diff(s, back, encoded=True).unexpected:
+            assert x.path.removeprefix("reads.") in reads_without_an_op, (r.name, x)
         # The erase types are the same, smallest first, without their times.
         kept = {(e.size, e.opcode, e.opcode_4b) for e in back.erase_types}
         assert kept == {(e.size, e.opcode, e.opcode_4b) for e in s.erase_types}, r.name
@@ -390,9 +522,14 @@ def test_sfdp_to_entry_to_sfdp_loses_only_what_is_documented() -> None:
         }, (r.name, d.tables)
 
 
+#: A quad read, which a part with a QE bit has (its QE bit implies
+#: quad_read, which encode refuses to deny).
+QUAD = [{"op": "READ_1_1_4", "via": "x"}]
+
+
 def test_encode_writes_the_quad_enable_requirement() -> None:
     # A requirement a source gives goes in DW15, and reads back.
-    r = rec(quad_enable_requirement="S2B1v4")
+    r = rec(quad_enable_requirement="S2B1v4", opcodes=QUAD)
     out = encode(r, assume=True)
     bfpt = out.sfdp.bfpt
     assert bfpt is not None
@@ -402,15 +539,20 @@ def test_encode_writes_the_quad_enable_requirement() -> None:
     assert (back.quad_enable_requirement, str(back.quad_enable)) == ("S2B1v4", "SR2 bit 1")
     # Without assume, 1.0, which has no DW15: the requirement is listed lost.
     assert "DW15: the quad enable requirement, S2B1v4, known but left out" in encode(r).missing
-    # None known: written as 0, and said so.
-    assert "DW15: the quad enable requirement, written as 0, no QE bit" in (
-        encode(rec(), assume=True).assumed
+    # None known: the reserved 7, which says no requirement (Linux keeps its
+    # default), never 0, which says there is no QE bit; and said so.
+    out = encode(rec(), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.quad_enable == 7
+    assert (
+        "DW15: the quad enable requirement, written as the reserved 7, which says none "
+        "(not 0, no QE bit)" in out.assumed
     )
 
 
 def test_encode_writes_no_requirement_the_qe_bit_contradicts() -> None:
     # SR1 bit 6 has one code, S1B6: written, with the 1-byte write assumed.
-    out = encode(rec(quad_enable={"register": "sr1", "bit": 6}), assume=True)
+    out = encode(rec(quad_enable={"register": "sr1", "bit": 6}, opcodes=QUAD), assume=True)
     assert out.sfdp.bfpt is not None
     assert out.sfdp.bfpt.quad_enable == 2
     assert any(a.startswith("DW15: how the QE bit (SR1 bit 6) is written") for a in out.assumed)
@@ -421,14 +563,33 @@ def test_encode_writes_no_requirement_the_qe_bit_contradicts() -> None:
     assert not any(a.startswith("DW15: the quad enable") for a in out.assumed)
     # SR2 bit 1, not how it is written: never 0 ("no QE bit"); the reserved
     # 7, which reads back as no requirement, and listed missing.
-    out = encode(rec(quad_enable={"register": "sr2", "bit": 1}), assume=True)
+    out = encode(rec(quad_enable={"register": "sr2", "bit": 1}, opcodes=QUAD), assume=True)
     assert out.sfdp.bfpt is not None
     assert out.sfdp.bfpt.quad_enable == 7
     assert out.sfdp.facts().quad_enable_requirement is None
     said = "DW15: the quad enable requirement: the QE bit is SR2 bit 1, but not how it is written"
     assert said in out.missing
-    # The shipped chips: c22018's SR1 bit 6, ef4018's SR2 bit 1.
-    for key, code in (("c22018", 2), ("ef4018", 7)):
+    # SR2 bit 1, with the status-register operations that say how it is
+    # written: the code JESD216 gives them, assumed.
+    for ops, code in (
+        (("RDSR2", "WRSR_16"), 5),
+        (("RDSR2", "WRSR2"), 6),
+        (("WRSR_16",), 1),
+        (("RDSR2",), 7),
+    ):
+        r = rec(
+            quad_enable={"register": "sr2", "bit": 1},
+            opcodes=[*QUAD, *({"op": op, "via": "x"} for op in ops)],
+        )
+        out = encode(r, assume=True)
+        assert out.sfdp.bfpt is not None
+        assert out.sfdp.bfpt.quad_enable == code, ops
+        assert any(a.startswith("DW15: how the QE bit (SR2 bit 1)") for a in out.assumed) == (
+            code != 7
+        )
+    # The shipped chips: c22814's SR1 bit 6, 856011's SR2 bit 1 (with RDSR2
+    # and a 2-byte WRSR).
+    for key, code in (("c22814", 2), ("856011", 5)):
         bfpt = encode(chip(key), assume=True).sfdp.bfpt
         assert bfpt is not None
         assert bfpt.quad_enable == code, key
@@ -448,21 +609,47 @@ def test_encode_never_invents() -> None:
     # With assume, the later dwords are JESD216's "not supported", listed.
     out = encode(r, assume=True)
     assert out.revision == (1, 6)
-    assert "DW15: the quad enable requirement, written as 0, no QE bit" in out.assumed
+    assert any(
+        a.startswith("DW15: the quad enable requirement, written as the reserved 7")
+        for a in out.assumed
+    )
     assert out.missing == ()
     assert out.sfdp.bfpt is not None
     assert out.sfdp.bfpt.suspend_resume is False
     assert out.sfdp.bfpt.enter_deep_power_down is None
     # A read the record gives without dummy clocks takes the usual number,
-    # and says so; one with none known is left out.
-    q = rec(opcodes=[{"op": "READ_1_1_4", "via": "x"}, {"op": "READ_4_4_4", "via": "y"}])
-    out = encode(q)
+    # and says so.
+    out = encode(rec(opcodes=QUAD))
     assert "READ_1_1_4: 8 dummy clocks, the operation's usual number" in out.assumed
-    assert "READ_4_4_4: no dummy clocks known, so not in the BFPT" in out.missing
     assert set(out.sfdp.reads) == {"1-1-4"}
     # A driver default is not the part's.
     d = rec(opcodes=[{"op": "READ_1_1_4", "via": "every part", "assumed": True}])
     assert encode(d).sfdp.reads == {}
+
+
+def test_encode_refuses_to_deny_what_the_database_says() -> None:
+    # DW1 to DW9 are in every revision: where they would say "not
+    # supported" of what the database says the part has, encode refuses.
+    def refused(**kw: object) -> str:
+        with pytest.raises(ValueError, match=REFUSED) as e:
+            encode(rec(**kw), assume=True)
+        return str(e.value)
+
+    # A read with no dummy clocks known: no BFPT can write it.
+    said = refused(opcodes=[*QUAD, {"op": "READ_4_4_4", "via": "y"}])
+    assert "it has READ_4_4_4, which the BFPT cannot write (DW1/DW5: no 4-4-4 read)" in said
+    # QPI (EQPI_38 implies it) with no 4-4-4 read; a quad read implied by a
+    # QE bit, with no quad read; a 4 KiB erase only in 4-byte form.
+    assert "it has qpi, but no READ_4_4_4" in refused(opcodes=[{"op": "EQPI_38", "via": "x"}])
+    assert "it has quad_read, but no READ_1_1_4 or READ_1_4_4" in refused(
+        quad_enable={"register": "sr2", "bit": 1}
+    )
+    assert "it has erase_4k, but no uniform 3-byte 4 KiB eraser" in refused(
+        erasers=[{"opcode": 0x21, "blocks": [[4096, 4096]]}]
+    )
+    # The shipped S25FL512S: flashrom says QPI; no source gives the read.
+    with pytest.raises(ValueError, match=r"S25FL512S: .*it has qpi"):
+        encode(chip("010220"))
 
 
 def test_encode_4byte_instructions() -> None:
@@ -505,6 +692,13 @@ def test_encode_writes_the_ways_into_4_byte_mode() -> None:
     ear7 = encode(rec(size=32 << 20, four_byte_modes=["ear_bit7", "brwr"]), assume=True)
     assert any("bit 7" in m for m in ear7.missing)
     assert ear7.sfdp.facts().four_byte_modes == {FourByteMethod.BRWR}
+    # A register's way out is assumed (Linux takes a way in only beside its
+    # way out), but none the part's own tables deny: the MT35XU01G's leave
+    # by EX4B and resets, not by clearing its registers.
+    out = encode(chip("2c5b1b"), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.four_byte_exit == {FourByteMethod.WREN_EN4B}
+    assert any("(not nv_cr, wrear, which its own SFDP tables" in a for a in out.assumed)
 
 
 def test_sfdp_facts_give_the_ways_in_not_their_operations() -> None:
@@ -527,18 +721,20 @@ def test_encode_qpi_sequences_land_in_their_dw15_bits() -> None:
     # DW15[8:4] are the 4-4-4 enable sequences (bit 5: 0x38, bit 6: 0x35),
     # DW15[3:0] the disable ones; bit 9 is 0-4-4 mode, which encode never
     # claims.
-    ops = [{"op": op, "via": "x"} for op in ("EQPI_38", "RSTQIO_FF")]
+    # (A QPI part has a 4-4-4 read, which encode refuses to deny.)
+    qpi_read = {"op": "READ_4_4_4", "via": "x", "dummy_clocks": 6}
+    ops = [*QUAD, qpi_read, *({"op": op, "via": "x"} for op in ("EQPI_38", "RSTQIO_FF"))]
     s = encode(rec(opcodes=ops), assume=True).sfdp
     assert s.bfpt is not None
     assert s.bfpt.qpi_enable == ("0x38",)
     assert s.bfpt.qpi_disable == ("0xff",)
     assert s.bfpt.mode_0_4_4 is False
-    s = encode(rec(opcodes=[{"op": "EQPI_35", "via": "x"}]), assume=True).sfdp
+    s = encode(rec(opcodes=[*QUAD, qpi_read, {"op": "EQPI_35", "via": "x"}]), assume=True).sfdp
     assert s.bfpt is not None
     assert s.bfpt.qpi_enable == ("0x35",)
-    # The shipped PY25Q64HA, whose sources give 0x38: the bits it was
+    # The shipped GD25LQ256D, whose sources give 0x38: the bits they were
     # once written to (9, 10) would read as 0-4-4 mode.
-    dw15 = encode(chip("852017"), assume=True).sfdp.bfpt
+    dw15 = encode(chip("c86019"), assume=True).sfdp.bfpt
     assert dw15 is not None
     assert (dw15.qpi_enable, dw15.qpi_disable, dw15.mode_0_4_4) == (("0x38",), ("0xff",), False)
     assert dw15.dwords[14] & ~(7 << 20) == 0xFF000021  # the QER aside
@@ -611,18 +807,39 @@ def test_encode_leaves_out_a_time_it_cannot_write() -> None:
     times = {
         "block_erase:0x20": {"typical": 48_000_000, "maximum": 384_000_000},
         "chip_erase": {"typical": 60 * 10**9, "maximum": 480 * 10**9},
+        "page_program": {"typical": 512_000, "maximum": 1_024_000},
+        "byte_program_first": {"typical": 32_000, "maximum": 64_000},
+        "byte_program_additional": {"typical": 4_000, "maximum": 8_000},
     }
     out = encode(rec(erasers=erasers, timings=times), assume=True)
+    assert out.revision == (1, 6)
     assert out.sfdp.facts().timings.get("block_erase", "typical", 0x20) == 48_000_000
-    assert not any(a.startswith("DW10") for a in out.assumed)
-    # 45.5 ms is on no DW10 grid: DW10 is unknown, written as 1 ms.
+    assert out.sfdp.facts().timings.get("chip_erase", "maximum") == 480 * 10**9
+    assert not any(a.startswith(("DW10", "DW11: program")) for a in out.assumed)
+    # 45.5 ms is on no DW10 grid, and maxima that are not one multiplier of
+    # the typicals have no DW10 either: as a time is known, the shortest
+    # would contradict it, so DW10 is unwritable, even with assume.
     off_grid = {**times, "block_erase:0x20": {"typical": 45_500_000, "maximum": 364_000_000}}
-    out = encode(rec(erasers=erasers, timings=off_grid), assume=True)
-    assert "DW10: erase type times, written as typically 1 ms" in out.assumed
-    # Maxima that are not one multiplier of the typicals: unknown too.
     mixed = {**times, "chip_erase": {"typical": 60 * 10**9, "maximum": 360 * 10**9}}
-    out = encode(rec(erasers=erasers, timings=mixed), assume=True)
+    for given in (off_grid, mixed):
+        out = encode(rec(erasers=erasers, timings=given), assume=True)
+        assert out.revision == (1, 0)
+        assert "DW10: the erase types' times: known, but not as DW10 writes them" in out.missing
+    # A chip erase time of unspecified bound (Dediprog's) is no DW11 time,
+    # and the shortest would contradict it: unwritable too.
+    vague = {"chip_erase": {"unspecified": 200 * 10**9}}
+    out = encode(rec(erasers=erasers, timings=vague), assume=True)
+    assert out.revision == (1, 0)
+    said = "DW11: the program and chip erase times: known, but not as DW11 writes them"
+    assert said in out.missing
+    # Nothing known: the shortest, and said so.
+    out = encode(rec(erasers=erasers), assume=True)
     assert "DW10: erase type times, written as typically 1 ms" in out.assumed
+    assert "DW11: program and chip erase times, written as the shortest" in out.assumed
+    # A page size DW11 cannot write (an AT45's 528 bytes) is no 256.
+    out = encode(rec(erasers=erasers, page_size=528), assume=True)
+    assert out.revision == (1, 0)
+    assert "DW11: the page size: 528 bytes is not a power of two" in out.missing
     # Without assume, known times are listed as left out of the 1.0 table.
     assert (
         "DW10: the erase types' times, known but left out"
@@ -633,9 +850,12 @@ def test_encode_leaves_out_a_time_it_cannot_write() -> None:
 def test_encode_writes_deep_power_down_only_with_its_release() -> None:
     dp = [{"op": "DP", "via": "v"}]
     times = {"dpd_exit": {"maximum": 30_000}}
+    # No RDPD: the part has deep power-down, so "not supported" would be
+    # wrong; DW14 is unwritable, and the revision lowered even with assume.
     out = encode(rec(opcodes=dp, timings=times), assume=True)
-    assert out.sfdp.bfpt is not None
-    assert out.sfdp.bfpt.enter_deep_power_down is None  # no RDPD: not written
+    assert out.revision == (1, 0)
+    said = "DW14: deep power-down, which the part has, but not how it is left (RDPD)"
+    assert said in out.missing
     rdpd = [*dp, {"op": "RDPD", "via": "v"}]
     out = encode(rec(opcodes=rdpd, timings=times), assume=True)
     bfpt = out.sfdp.bfpt
@@ -644,10 +864,27 @@ def test_encode_writes_deep_power_down_only_with_its_release() -> None:
     assert bfpt.exit_deep_power_down_delay_ns == 30_000
     assert (bfpt.enter_deep_power_down, bfpt.exit_deep_power_down) == (0xB9, 0xAB)
     assert "DW14: how to poll for busy, written as 0x05 (legacy)" in out.assumed
-    # 33.3 µs is on no grid: left out.
+    # 33.3 µs is on no grid: a maximum, so written as the next one up,
+    # 40 µs (5 x 8 µs), which still holds, and said so.
     odd = encode(rec(opcodes=rdpd, timings={"dpd_exit": {"maximum": 33_300}}), assume=True)
     assert odd.sfdp.bfpt is not None
-    assert odd.sfdp.bfpt.enter_deep_power_down is None
+    assert odd.sfdp.bfpt.enter_deep_power_down == 0xB9
+    assert odd.sfdp.bfpt.exit_deep_power_down_delay_ns == 40_000
+    assert (
+        "DW14: the deep power-down exit delay, written as 40 µs, the next "
+        "maximum a BFPT can write above the 33.3 µs known" in odd.assumed
+    )
+    # No exit delay known: unwritable.
+    out = encode(rec(opcodes=rdpd), assume=True)
+    assert out.revision == (1, 0)
+    assert "DW14: deep power-down, which the part has, but not how long leaving takes" in (
+        out.missing
+    )
+    # Nothing known of deep power-down: written as not supported, and said so.
+    out = encode(rec(), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.enter_deep_power_down is None
+    assert "DW14: deep power-down, written as not supported" in out.assumed
 
 
 def test_finest_units() -> None:
@@ -670,8 +907,17 @@ def test_encode_never_says_a_part_that_suspends_cannot() -> None:
     assert bfpt.suspend_resume is True
     assert (bfpt.erase_suspend_ns, bfpt.program_resume_to_suspend_ns) == (25_000, 128_000)
     assert "DW13: the suspend and resume opcodes, written as 0x75 and 0x7a" in out.assumed
-    # A suspend time no DW12 can write: no DW12 at all, even with assume.
+    # A latency is a maximum: 25.5 µs is written as the next one up, 26 µs.
     odd = {**suspend, "erase_suspend": {"maximum": 25_500}}
+    out = encode(rec(timings=odd), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.erase_suspend_ns == 26_000
+    assert any(
+        a.startswith("DW12: the erase_suspend latency, written as 26 µs") for a in out.assumed
+    )
+    # An interval is typical, so only exactly: no DW12 at all, even with
+    # assume, where one is not on the grid.
+    odd = {**suspend, "erase_resume_to_suspend": {"typical": 450_000}}
     out = encode(rec(timings=odd), assume=True)
     assert out.revision == (1, 0)
     assert any(m.startswith("DW12-13: suspend and resume") for m in out.missing)

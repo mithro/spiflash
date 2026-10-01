@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Write the package's datasheet links from a datasheet manifest.
 
 They go to :repo:`src/spiflash/data/datasheets.json`.
@@ -19,7 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from spiflash import Database, Record
-from update_db import DATA, FORMAT, REPO, json_lines
+from spiflash.db import FORMAT
+from update_db import DATA, REPO, json_lines
 
 MANIFEST = REPO.parent / "spiflash-pdfs" / "datasheets.jsonl"
 
@@ -47,7 +49,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("manifest", nargs="?", type=Path, default=MANIFEST)
     args = ap.parse_args(argv)
 
-    lines = args.manifest.read_text(encoding="utf-8").splitlines()
+    try:
+        lines = args.manifest.read_text(encoding="utf-8").splitlines()
+    except OSError as e:
+        print(
+            f"no manifest at {args.manifest} ({e.strerror}): give the datasheets.jsonl "
+            "of a spiflash-pdfs checkout",
+            file=sys.stderr,
+        )
+        return 1
     sheets = sorted(
         (entry(json.loads(line)) for line in lines if line.strip()), key=lambda d: d["url"]
     )

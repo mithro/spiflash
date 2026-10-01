@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from spiflash.db import FORMAT
 from spiflash_extract import (
     dediprog,
     fetch,
@@ -50,7 +51,8 @@ SOURCES = REPO / "tools" / "sources.toml"
 DATA = REPO / "src" / "spiflash" / "data"
 UPSTREAM = REPO / "upstream"
 
-FORMAT = 10
+# The data format: one definition, the package's (spiflash.db.FORMAT), which the
+# files written here declare.
 
 EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
     "flashrom": lambda root: flashrom.extract(root, "flashrom"),

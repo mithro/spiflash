@@ -71,9 +71,24 @@ class SourceInfo:
             records=d["records"],
         )
 
+    def to_json(self) -> dict[str, Any]:
+        """What :meth:`from_json` reads."""
+        return {
+            "url": self.url,
+            "browse": self.browse,
+            "branch": self.branch,
+            "commit": self.commit,
+            "date": self.date.isoformat(),
+            "paths": list(self.paths),
+            "license": self.license,
+            "records": self.records,
+        }
 
-#: The data files' format; :repo:`tools/update_db.py` writes the same number.
+
+#: The data files' format, which :repo:`tools/update_db.py` and
+#: :repo:`tools/import_datasheets.py` write (they import it from here).
 #: 2: records' ``opcodes`` became a list of {op, opcode, via}.
+#: 3: records gain ``sfdp`` (QEMU's SFDP dumps, hex).
 #: 4: ``opcodes`` lose ``opcode``; erase and id operations are derived;
 #: ``via``; consumed flags and notes removed.
 #: 5: ``sector_size`` dropped (derived from the erasers, which Linux, U-Boot,
@@ -368,18 +383,32 @@ class Database:
         are ignored, since many chips leave them out. Bytes past the id narrow
         the answer to the variants whose extended id agrees (an S25FL128S
         answers ``01 20 18 4d 01 80``). ``method`` selects a legacy id
-        instead (``"rems"``, ``"res1"``, ``"res2"``, ``"at25f"``): the chips
+        instead (``"rems"``, ``"res1"``, ``"res2"``, ``"at25f"``, ``"st95"``), as
+        does a legacy chip's :attr:`~spiflash.model.Flash.key` (``"res1:15"``): the chips
         grouped by that id, then the JEDEC chips whose records say their
         part answers it too (:attr:`Flash.legacy_ids
         <spiflash.model.Flash.legacy_ids>`), each with
         :attr:`~spiflash.model.Flash.answers_legacy` set. A RES id is one
         byte, which parts of several makers share: those are candidates.
 
-        Only the longest ids that fit come back, NOR before NAND: a SPI NAND
-        id is two bytes, so a NOR id can start with one (``c22018`` also
-        fits the MX35LF2G14AC's ``c220``); pass ``flash_type="nor"`` to rule that
-        out."""
+        Only the longest ids of each type that fit come back, longest first
+        and NOR before NAND among equals: a SPI NAND id is two bytes, so a
+        NOR id can start with one (``c22018`` also fits the MX35LF2G14AC's
+        ``c220``); pass ``flash_type="nor"`` to rule that out. A one-byte id
+        (Linux's "any Macronix part", ``c2``) comes back only where no
+        longer id of either type fits: ``c22603`` is the SPI NAND
+        MX35LF2GE4AD alone."""
         family = IdFamily(method)
+        given, _, rest = chip_id.partition(":") if isinstance(chip_id, str) else ("", "", "")
+        if given.strip().lower() in IdFamily.__members__.values():
+            # A legacy chip's key, as Flash.key writes it: "res1:15" (not
+            # "ef:40:18", hex bytes).
+            keyed = IdFamily(given.strip().lower())
+            chip_id = rest
+            if family not in (IdFamily.JEDEC, keyed):
+                msg = f"{given}:{chip_id} is a {keyed} id, not a {family} one"
+                raise ValueError(msg)
+            family = keyed
         wanted = FlashType(flash_type) if flash_type is not None else None
         _bank, core = strip_continuation(parse_id(chip_id))
         found: list[tuple[int, Flash]] = []
@@ -399,8 +428,13 @@ class Database:
         for n, f in found:
             longest[f.type] = max(longest.get(f.type, 0), n)
         best = [(n, f) for n, f in found if n == longest[f.type]]
+        # A one-byte id is a maker's catch-all (Linux's MACRONIX-C2, "any
+        # Macronix part: read its SFDP"), not an answer when a longer id of
+        # either type fits: c22603 is the SPI NAND MX35LF2GE4AD alone.
+        if any(n > 1 for n, _ in best):
+            best = [(n, f) for n, f in best if n > 1]
         chips = [
-            f for n, f in sorted(best, key=lambda nf: (nf[1].type is not FlashType.NOR, -nf[0]))
+            f for n, f in sorted(best, key=lambda nf: (-nf[0], nf[1].type is not FlashType.NOR))
         ]
         if family is IdFamily.JEDEC:
             return chips
@@ -414,20 +448,21 @@ class Database:
                 chips.append(replace(f, answers_legacy=legacy))
         return chips
 
-    def find(self, name: str) -> list[Flash]:
+    def find(self, name: str, *, exact: bool = False) -> list[Flash]:
         """The chips whose part names match ``name``, best first.
 
         Exact names (and flashrom wildcards: ``W25Q128.V`` matches
         ``W25Q128JV``) come first, then parts whose name starts with ``name``
         (``w25q128`` finds the FV and the JV), then parts named by a prefix of
-        ``name`` (Linux's generic ``w25q128`` for ``W25Q128JVSIQ``)."""
+        ``name`` (Linux's generic ``w25q128`` for ``W25Q128JVSIQ``). With
+        ``exact``, only the first."""
         q = name.strip().upper()
         if not q:
             return []
         ranked: list[tuple[int, Flash]] = []
         for f in self.flashes:
             ranks = [r for part in f.names if (r := _rank(part, q)) is not None]
-            if ranks:
+            if ranks and not (exact and min(ranks)):
                 ranked.append((min(ranks), f))
         ranked.sort(key=lambda t: t[0])  # stable: equal ranks keep database order
         return [f for _, f in ranked]

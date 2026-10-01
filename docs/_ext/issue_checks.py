@@ -326,17 +326,13 @@ def _value_answers(attr: str, records: Iterable[Record]) -> tuple[Answer, ...]:
     )
 
 
-def _compared(f: Flash) -> tuple[str, ...]:
-    """:data:`ATTRIBUTES`, but the times where no record of ``f`` gives one
-    (most chips): those cannot disagree."""
-    if any(r.timings for r in f.records):
-        return ATTRIBUTES
-    return tuple(a for a in ATTRIBUTES if not a.startswith("timings."))
-
-
 def _values(flashes: Iterable[Flash]) -> Iterator[Issue]:
+    """The values sources disagree on. Whether they do is
+    :attr:`Flash.conflicts <spiflash.model.Flash.conflicts>`'s to say, the
+    command's too; here they are split into two sources disagreeing (this)
+    and one source's entries for one part (:func:`_same_source`)."""
     for f in flashes:
-        for attr in _compared(f):
+        for attr in f.conflicts:
             # Only records describing one part are compared: an extended id
             # tells two parts at one id apart (Flash.variants). The issue
             # gathers every variant whose sources disagree.
@@ -366,7 +362,7 @@ def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
         for (_source, _ext, _part), records in sorted(
             groups.items(), key=lambda kv: kv[0][0].priority
         ):
-            for attr in _compared(f):
+            for attr in f.conflicts:
                 answers = _value_answers(attr, records)
                 if len(answers) > 1:
                     note = EXPLAINED.get((f.key, attr))

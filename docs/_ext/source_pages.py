@@ -207,6 +207,13 @@ def _upstream(db: Database, source: Source) -> list[str]:
     ]
 
 
+def _no_id(n: int) -> str:
+    """``; 1 entry has no id, ...``, ``; 12 entries have ...``."""
+    if n == 1:
+        return "; 1 entry has no id, and is on no chip page"
+    return f"; {n:,} entries have no id, and are on no chip page"
+
+
 def _taken(source: Source, records: list[Record], chips: list[Flash]) -> list[str]:
     nor = sum(1 for f in chips if f.type == FlashType.NOR)
     only = sum(1 for f in chips if f.sources == (source,))
@@ -232,7 +239,7 @@ def _taken(source: Source, records: list[Record], chips: list[Flash]) -> list[st
                 f"[`{m}`](../opcodes/{ID_OPERATION[m]}.md) {n:,}" for m, n in methods.most_common()
             )
             + (f" ({ID_METHOD_CAVEATS[source]})" if source in ID_METHOD_CAVEATS else "")
-            + (f"; {no_id:,} entries have no id, and are on no chip page" if no_id else ""),
+            + (_no_id(no_id) if no_id else ""),
         ],
         [
             f"Vendors ({len(vendors)})",

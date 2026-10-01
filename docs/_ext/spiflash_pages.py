@@ -44,6 +44,7 @@ from page_markup import (
     JESD216,
     KIND_TITLE,
     TIMES,
+    UNKNOWN_VENDOR,
     UP_ARROW,
     badge,
     badge_lines,
@@ -72,7 +73,7 @@ from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE, NAND_ERASE_BY_OPCODE
 from spiflash.enums import Bound, Feature, FlashType, OperationKind, Source, TimedEvent
 from spiflash.model import compared_value, strip_continuation
-from spiflash.opcodes import OPERATIONS, sort_key
+from spiflash.opcodes import DIE_SELECT_OPERATIONS, OPERATIONS, sort_key
 from spiflash.registers import ROLES, RegisterBit
 from spiflash.sfdp_tools import diff as sfdp_diff
 from spiflash.units import human_duration, human_frequency, human_size
@@ -102,7 +103,7 @@ def chip_page(
                 + (" (inferred)" if f.manufacturer_inferred else "")
                 + f" <../vendors/{vendor_slug}.html>`",
                 badge(kind, "info"),
-                f"{{sfid}}`{spaced(f.jedec_id if f.family == 'jedec' else f.id_hex)}`",
+                f"{{sfid}}`{spaced(f.jedec_id) if f.family == 'jedec' else f.key}`",
             ]
         )
         + "\n"
@@ -110,6 +111,14 @@ def chip_page(
     others = [n for n in f.names if n not in title_of(f).split(" / ")]
     if others:
         out.append(f"Also listed as: {', '.join(esc(n) for n in others)}.\n")
+    if f.family == "jedec" and len(f.id) == 1:
+        out.append(
+            ":::{note}\nNot a part: a maker's id byte alone, "
+            f"{', '.join(source_label(s) for s in f.sources)}'s entry for any "
+            f"{esc(vendor_of(f))} part its other entries do not name (Linux reads such a "
+            "part's SFDP tables to learn the rest). A lookup gives it only where no "
+            "longer id fits.\n:::\n"
+        )
     out += _summary_cards(f)
     out += _datasheets(f)
     out += _identification(db, f, kind, slugs)
@@ -500,9 +509,12 @@ def _geometry(f: Flash) -> list[str]:
             else:
                 text = esc(str(value))
             rows.append([esc(label), text + mine, _who(who)])
-    select = [o for o in f.opcodes.values() if o.name in ("DIE_SELECT", "NAND_DIE_SELECT")]
+    select = [o for o in f.opcodes.values() if o.name in DIE_SELECT_OPERATIONS]
     for o in select:
-        op = f"[`{o.name}`](../opcodes/{o.name}.md), {{sfop}}`0x{o.opcode:02x}` and the die"
+        op = (
+            f"[`{o.name}`](../opcodes/{o.name}.md): {{sfop}}`0x{o.opcode:02x}`, "
+            "then the die's number"
+        )
         rows.append(["Die select operation", op, _who(o.sources)])
     out = [
         "## NAND geometry\n" if nand else "## Dies\n",
@@ -1007,9 +1019,13 @@ def vendor_page(db: Database, vendor: str, flashes: list[Flash], slugs: dict[int
 
 
 def vendors_index(vendors: dict[str, list[Flash]], vslug: dict[str, str]) -> str:
+    unknown = len(vendors.get(UNKNOWN_VENDOR, []))
+    makers = len(vendors) - (1 if unknown else 0)
     out = [
         "# Vendors\n",
-        f"{len(vendors)} manufacturers. Each page lists all of a vendor's parts.\n",
+        f"{makers} manufacturers"
+        + (f", and {unknown} chip ids no source names a maker for (Unknown)" if unknown else "")
+        + ". Each page lists all of a vendor's parts.\n",
         "::::{grid} 1 2 3 3\n:gutter: 3\n",
     ]
     for v in sorted(vendors, key=lambda x: (-len(vendors[x]), x.lower())):
@@ -1139,10 +1155,11 @@ def stats(db: Database) -> dict[str, int]:
         "chips": len(fl),
         "nor": sum(1 for f in fl if f.type == "nor"),
         "nand": sum(1 for f in fl if f.type == "nand"),
-        "vendors": len({vendor_of(f) for f in fl}),
+        "vendors": len({f.manufacturer for f in fl if f.manufacturer}),  # not "Unknown"
         "records": len(db.records),
         "multi": sum(1 for f in fl if len(f.sources) > 1),
         "jep106": len(db.manufacturers),
+        "sfdp": sum(1 for f in fl if f.sfdp_dumps),
     }
 
 
