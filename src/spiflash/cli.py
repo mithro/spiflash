@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from . import __version__
 from .db import Database, NameMatch, database
-from .enums import FlashType
+from .enums import Bound, FlashType, TimedEvent
 from .model import (
     COMPARED_VALUES,
     Flash,
@@ -37,7 +37,8 @@ from .registers import NoQuadEnable, RegisterBit, Writability
 from .sfdp import SIGNATURE, Sfdp
 from .sfdp import parse as parse_sfdp
 from .sfdp_tools import diff, encode, to_entry
-from .units import human_size
+from .timings import parse_component
+from .units import human_duration, human_frequency, human_size
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -105,7 +106,57 @@ def shown(attribute: str, value: Any) -> str:
         return volts(value)
     if attribute in ("size", "page_size", "sector_size", "oob_size", "ecc.step_bytes"):
         return human_size(value)
+    if attribute.startswith("timings."):
+        return human_duration(value)
+    if attribute == "max_clock_hz":
+        return human_frequency(value)
     return str(value)
+
+
+#: The times the command's description gives without ``-v``.
+BRIEF_TIMES = (
+    TimedEvent.CHIP_ERASE,
+    TimedEvent.PAGE_PROGRAM,
+    TimedEvent.DPD_ENTER,
+    TimedEvent.DPD_EXIT,
+)
+
+_BOUND_WORDS = {
+    Bound.TYPICAL: "{} typ",
+    Bound.MAXIMUM: "≤ {}",
+    Bound.MINIMUM: "≥ {}",
+    Bound.UNSPECIFIED: "~{} (bound not given)",
+}
+
+
+def times(f: Flash, *, verbose: bool = False) -> list[str]:
+    """The chip's times, one line: ``timing: chip erase 60 s typ, ≤ 480 s;
+    DPD exit ≤ 35 µs``, each as most sources give it (:meth:`Flash.timing
+    <spiflash.model.Flash.timing>`), in the events of :data:`BRIEF_TIMES`;
+    with ``verbose``, every time, a line each, with each value given and
+    who gives it ("(SFDP)" where from a source's tables)."""
+    keys = list(dict.fromkeys(k for k, _ in f.timings))
+    if not verbose:
+        parts = []
+        for key in (k for k in keys if k.event in BRIEF_TIMES):
+            given = [
+                _BOUND_WORDS[b].format(human_duration(ns))
+                for b in Bound
+                if (ns := f.timing(key.event, b, key.opcode)) is not None
+            ]
+            parts.append(f"{str(key.event).replace('_', ' ')} {', '.join(given)}")
+        return ["    timing: " + "; ".join(parts).replace("dpd ", "DPD ")] if parts else []
+    lines = []
+    for (key, bound), values in f.timings.items():
+        said = "; ".join(
+            human_duration(ns)
+            + " ("
+            + ", ".join(f"{s.source}{' (SFDP)' if s.implied else ''}" for s in sources)
+            + ")"
+            for ns, sources in values.items()
+        )
+        lines.append(f"    time: {key} {bound}: {said}")
+    return lines
 
 
 def dies(f: Flash) -> str:
@@ -145,6 +196,7 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     if f.otp is not None:
         detail.append(f"OTP {f.otp}")
     lines.append("    " + ", ".join(detail))
+    lines.extend(times(f, verbose=verbose))
     if f.answers_legacy is not None:
         legacy = f.answers_legacy
         giving = ", ".join(f.legacy_ids.get(legacy, ()))
@@ -156,6 +208,13 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
         lines.append("    features: " + " ".join(sorted(f.features)))
     for attr, vals in f.conflicts.items():
         said = "; ".join(f"{shown(attr, v)} ({', '.join(s)})" for v, s in vals.items())
+        if attr.startswith("timings."):
+            # Compared at SFDP resolution, but shown as given.
+            key, bound = parse_component(attr.removeprefix("timings."))
+            said = "; ".join(
+                f"{human_duration(ns)} ({', '.join(dict.fromkeys(s.source for s in given))})"
+                for ns, given in f.timings[key, bound].items()
+            )
         lines.append(f"    sources disagree on {attr}: {said}")
     for bit, roles in f.shared_bits().items():
         lines.append(f"    sources put two roles on {bit}: {', '.join(roles)}")
@@ -169,6 +228,10 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    quad enable requirement: {qer} ({qer.description})")
         if f.protection is not None:
             lines.append(f"    protection: {f.protection}")
+        for hz, giving in sorted(f.values("max_clock_hz").items()):
+            # Dediprog's, which is often a slower mode's limit than the
+            # part's fastest (docs/_source_notes/dediprog.md).
+            lines.append(f"    clock: up to {human_frequency(hz)} ({', '.join(giving)})")
         for legacy, listing in f.legacy_ids.items():
             lines.append(f"    legacy id: {legacy.key} ({', '.join(listing)})")
         for mv, records in f.supply_outside().items():

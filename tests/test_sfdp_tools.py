@@ -566,3 +566,89 @@ def test_encoded_json() -> None:
     assert bytes.fromhex(doc["data"]) == out.data
     assert isinstance(out.sfdp, Sfdp)
     assert sfdp_tools.REVISIONS == ((1, 0), (1, 5), (1, 6))
+
+
+# --- times (phase 7) -------------------------------------------------------------
+
+_TIMES = (
+    "erase_multiplier",
+    "program_multiplier",
+    "page_program_ns",
+    "byte_program",
+    "chip_erase_ns",
+    "dpd_exit_delay",
+)
+
+
+def test_encode_round_trips_the_times() -> None:
+    # Every dump with DW10 to DW14: the times come back, in each dword, as
+    # the same times (perhaps in other units), and DW14's opcodes and delay.
+    done = 0
+    for r in spiflash.records():
+        s = r.parsed_sfdp
+        if s is None or s.bfpt is None or s.bfpt.chip_erase_ns is None:
+            continue
+        back = encode(Record.from_json(to_entry(s) | IDENTITY), assume=True).sfdp
+        fields = {f.path for f in diff(s, back).fields}
+        assert not fields & set(_TIMES), (r.name, fields & set(_TIMES))
+        # Each erase type's time; encode writes them smallest first.
+        timed = {(e.size, e.opcode, e.typical_ns) for e in back.erase_types}
+        assert timed == {(e.size, e.opcode, e.typical_ns) for e in s.erase_types}, r.name
+        assert back.bfpt is not None
+        if s.bfpt.exit_deep_power_down_delay_ns is not None:
+            assert (back.bfpt.enter_deep_power_down, back.bfpt.exit_deep_power_down) == (
+                0xB9,
+                0xAB,
+            )
+        done += 1
+    assert done == 22  # QEMU 8, Zephyr 14
+
+
+def test_encode_leaves_out_a_time_it_cannot_write() -> None:
+    erasers = [{"opcode": 0x20, "blocks": [[4096, 4096]]}]
+    times = {
+        "block_erase:0x20": {"typical": 48_000_000, "maximum": 384_000_000},
+        "chip_erase": {"typical": 60 * 10**9, "maximum": 480 * 10**9},
+    }
+    out = encode(rec(erasers=erasers, timings=times), assume=True)
+    assert out.sfdp.facts().timings.get("block_erase", "typical", 0x20) == 48_000_000
+    assert not any(a.startswith("DW10") for a in out.assumed)
+    # 45.5 ms is on no DW10 grid: DW10 is unknown, written as 1 ms.
+    off_grid = {**times, "block_erase:0x20": {"typical": 45_500_000, "maximum": 364_000_000}}
+    out = encode(rec(erasers=erasers, timings=off_grid), assume=True)
+    assert "DW10: erase type times, written as typically 1 ms" in out.assumed
+    # Maxima that are not one multiplier of the typicals: unknown too.
+    mixed = {**times, "chip_erase": {"typical": 60 * 10**9, "maximum": 360 * 10**9}}
+    out = encode(rec(erasers=erasers, timings=mixed), assume=True)
+    assert "DW10: erase type times, written as typically 1 ms" in out.assumed
+    # Without assume, known times are listed as left out of the 1.0 table.
+    assert "DW10: the erase types' times, known but left out" in encode(
+        rec(erasers=erasers, timings=times)
+    ).missing
+
+
+def test_encode_writes_deep_power_down_only_with_its_release() -> None:
+    dp = [{"op": "DP", "via": "v"}]
+    times = {"dpd_exit": {"maximum": 30_000}}
+    out = encode(rec(opcodes=dp, timings=times), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.enter_deep_power_down is None  # no RDPD: not written
+    rdpd = [*dp, {"op": "RDPD", "via": "v"}]
+    out = encode(rec(opcodes=rdpd, timings=times), assume=True)
+    bfpt = out.sfdp.bfpt
+    assert bfpt is not None
+    # 30 µs is 30 x 1 µs: the finest unit that holds it. (35 µs is in none.)
+    assert bfpt.exit_deep_power_down_delay_ns == 30_000
+    assert (bfpt.enter_deep_power_down, bfpt.exit_deep_power_down) == (0xB9, 0xAB)
+    assert "DW14: how to poll for busy, written as 0x05 (legacy)" in out.assumed
+    # 33.3 µs is on no grid: left out.
+    odd = encode(rec(opcodes=rdpd, timings={"dpd_exit": {"maximum": 33_300}}), assume=True)
+    assert odd.sfdp.bfpt is not None
+    assert odd.sfdp.bfpt.enter_deep_power_down is None
+
+
+def test_finest_units() -> None:
+    # 64 µs: 64 x 1 µs does not fit 32 counts, so 8 x 8 µs.
+    assert derive.sfdp_time(derive.LATENCY_UNITS_NS, 32, 64_000) == (2, 7)
+    assert derive.sfdp_time(derive.LATENCY_UNITS_NS, 32, 3_000) == (1, 2)
+    assert derive.sfdp_time(derive.LATENCY_UNITS_NS, 32, 33_300) is None

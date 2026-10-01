@@ -34,6 +34,7 @@ class IssueKind(StrEnum):
     SAME_SOURCE = "same-source"
     SUPPLY = "supply"
     SFDP = "sfdp"
+    TIMING = "timing"
     SHARED_BIT = "shared-bit"
     NAME_IDS = "name-ids"
     MANUFACTURER = "manufacturer"
@@ -56,7 +57,8 @@ _ISSUE_TITLES = {
             "Two sources give one chip id a different size, page size, sector size, "
             "supply voltage, quad enable bit or requirement, block-protection bit, "
             "SPI NAND spare area, planes, bad blocks or ECC requirement, number of "
-            "dies, die select bit, or OTP area."
+            "dies, die select bit, OTP area, maximum clock, or erase, program or "
+            "deep power-down time."
         ),
     ),
     IssueKind.SAME_SOURCE: (
@@ -77,8 +79,15 @@ _ISSUE_TITLES = {
         "A source disagrees with its own SFDP tables",
         (
             "A source gives a part a size, page size, erase layout, quad enable "
-            "requirement or number of dies, and with it the part's own SFDP tables, "
-            "which say otherwise."
+            "requirement, number of dies or time, and with it the part's own SFDP "
+            "tables, which say otherwise."
+        ),
+    ),
+    IssueKind.TIMING: (
+        "Sources give a typical time above a maximum",
+        (
+            "One source gives a chip a typical time (or a minimum) above the maximum "
+            "another source gives the same thing, for the same chip id."
         ),
     ),
     IssueKind.SHARED_BIT: (
@@ -263,6 +272,7 @@ def find(db: Database | None = None) -> list[Issue]:
         *_same_source(db.flashes),
         *_supply(db.flashes),
         *_sfdp(db.flashes),
+        *_timing(db.flashes),
         *_shared_bits(db.flashes),
         *_name_ids(db.flashes),
         *_manufacturers(db.flashes),
@@ -282,9 +292,31 @@ def _answers(pairs: Iterable[tuple[Any, Record]]) -> tuple[Answer, ...]:
     return tuple(answers)
 
 
+def _value_answers(attr: str, records: Iterable[Record]) -> tuple[Answer, ...]:
+    """The records grouped by the value they give for ``attr``, as they are
+    compared (:meth:`spiflash.Record.compared`). A time is compared at SFDP
+    resolution, but shown as given: its answer's value is the times its
+    records give, in order (``(33000, 35000)``, both 40 µs on the grid)."""
+    records = list(records)
+    answers = _answers((r.compared(attr), r) for r in records)
+    if not attr.startswith("timings."):
+        return answers
+    return tuple(
+        Answer(tuple(sorted({r.given(attr) for r in a.records})), a.records) for a in answers
+    )
+
+
+def _compared(f: Flash) -> tuple[str, ...]:
+    """:data:`ATTRIBUTES`, but the times where no record of ``f`` gives one
+    (most chips): those cannot disagree."""
+    if any(r.timings for r in f.records):
+        return ATTRIBUTES
+    return tuple(a for a in ATTRIBUTES if not a.startswith("timings."))
+
+
 def _values(flashes: Iterable[Flash]) -> Iterator[Issue]:
     for f in flashes:
-        for attr in ATTRIBUTES:
+        for attr in _compared(f):
             # Only records describing one part are compared: an extended id
             # tells two parts at one id apart (Flash.variants). The issue
             # gathers every variant whose sources disagree.
@@ -296,7 +328,7 @@ def _values(flashes: Iterable[Flash]) -> Iterator[Issue]:
                 if len(answers) > 1 and len(sources) > 1:
                     disagree.update((id(r), r) for r in variant)
             if disagree:
-                answers = _answers((r.compared(attr), r) for r in disagree.values())
+                answers = _value_answers(attr, disagree.values())
                 note = EXPLAINED.get((f.key, attr))
                 yield Issue(IssueKind.VALUE, f.key, (f,), answers, attribute=attr, note=note)
 
@@ -307,8 +339,8 @@ def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
         for r in f.records:
             groups[(r.source, r.ext_id)].append(r)
         for (_source, _ext), records in sorted(groups.items(), key=lambda kv: kv[0][0].priority):
-            for attr in ATTRIBUTES:
-                answers = _answers((r.compared(attr), r) for r in records)
+            for attr in _compared(f):
+                answers = _value_answers(attr, records)
                 if len(answers) > 1:
                     note = EXPLAINED.get((f.key, attr))
                     yield Issue(
@@ -360,6 +392,24 @@ def _sfdp(flashes: Iterable[Flash]) -> Iterator[Issue]:
             for d in r.sfdp_disagreements():
                 answers = (Answer(d.stored, (r,)), Answer(d.sfdp, (r,)))
                 yield Issue(IssueKind.SFDP, f.key, (f,), answers, attribute=d.field)
+
+
+def _timing(flashes: Iterable[Flash]) -> Iterator[Issue]:
+    """One issue per pair of a chip's bounds out of order
+    (:meth:`spiflash.Flash.timing_order`): the answers are the lower bound,
+    ``(bound, ns)``, and the records giving it, then the higher; the
+    attribute is the time's key (``"chip_erase"``)."""
+    for f in flashes:
+        for key, low, a, high, b in f.timing_order():
+            answers = tuple(
+                Answer(
+                    (bound, ns),
+                    tuple(r for r in f.records if r.timings.values.get((key, bound)) == ns),
+                )
+                for bound, ns in ((low, a), (high, b))
+            )
+            note = EXPLAINED.get((f.key, f"timings.{key}"))
+            yield Issue(IssueKind.TIMING, f.key, (f,), answers, str(key), note=note)
 
 
 def _shared_bits(flashes: Iterable[Flash]) -> Iterator[Issue]:

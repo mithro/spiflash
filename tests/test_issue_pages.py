@@ -221,7 +221,10 @@ def test_datasheet_not_giving_the_id() -> None:
 
 def test_shipped_data() -> None:
     found = find()
-    assert {i.kind for i in found} == set(IssueKind)
+    # No two sources give one chip's bounds out of order: only Dediprog's
+    # chip erase time (unspecified, so not ordered) and Zephyr's maxima and
+    # minima meet the tables' times.
+    assert {i.kind for i in found} == set(IssueKind) - {IssueKind.TIMING}
     by_kind = {k: [i for i in found if i.kind is k] for k in IssueKind}
     # U-Boot's MT25QL01G id has its bytes swapped; the datasheet gives 20 ba 21.
     (mt,) = [i for i in by_kind[IssueKind.NAME_IDS] if i.subject == "MT25QL01G"]

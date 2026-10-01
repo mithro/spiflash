@@ -31,6 +31,7 @@ from page_markup import (
 from spiflash.enums import IdFamily, Source
 from spiflash.model import Eraser
 from spiflash.registers import NoQuadEnable, QuadEnableRequirement, RegisterBit
+from spiflash.units import human_duration, human_frequency
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -71,6 +72,13 @@ KIND_NOTES = {
         "board gives it (its [source notes](../sources/zephyr.md) say more). "
         "`spiflash sfdp-diff` "
         "compares tables field by field and dword by dword."
+    ),
+    IssueKind.TIMING: (
+        "A record's own times are in order (the build refuses others), so each of "
+        "these is two sources, or two parts sharing the id, that disagree. A time "
+        "whose bound no source says ({sfsrc}`dediprog`'s chip erase time) is not "
+        "ordered against the others. See [](../derived.md) for how the times are "
+        "compared."
     ),
     IssueKind.SHARED_BIT: (
         "Mostly two sources naming one bit by different roles: flashrom names a "
@@ -118,6 +126,8 @@ VALUE_TITLES = {
     "max_bad_blocks": "Bad blocks per die",
     "ecc": "ECC requirement",
     "otp": "OTP area",
+    "timings": "Times",
+    "max_clock_hz": "Maximum clock",
 }
 
 #: The compared values that are counts, not sizes in bytes.
@@ -212,6 +222,16 @@ class _Render:
             return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if isinstance(v, tuple) else volt(v)
         if issue.attribute == "voltage":
             return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if v else volt(None)
+        if issue.kind is IssueKind.TIMING:
+            bound, ns = v
+            return esc(f"{bound}: {human_duration(ns)}")
+        if (issue.attribute or "").startswith("timings."):
+            # A VALUE or SAME_SOURCE answer gives the times one compared
+            # value stands for; an SFDP one, a time.
+            times = v if isinstance(v, tuple) else (v,)
+            return esc(", ".join(human_duration(ns) for ns in times))
+        if issue.attribute == "max_clock_hz":
+            return esc(human_frequency(v))
         if issue.attribute == "ecc.strength_bits":
             return esc(f"{v} bit{'s' if v != 1 else ''}")
         if issue.attribute in COUNTS:
@@ -306,6 +326,17 @@ class _Render:
                     _attr(i),
                     self.value(i, i.answers[0].value),
                     self.value(i, i.answers[1].value),
+                ]
+                for i in issues
+            ]
+        elif kind is IssueKind.TIMING:
+            header = ["Chip", "Parts", "Time", "The bounds, and who gives each"]
+            rows = [
+                [
+                    self.chip(i.flashes[0]),
+                    self.names(i.flashes[0]),
+                    esc((i.attribute or EM_DASH).replace("_", " ")),
+                    self.answers(i) + _note(i),
                 ]
                 for i in issues
             ]

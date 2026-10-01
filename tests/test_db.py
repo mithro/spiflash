@@ -15,9 +15,10 @@ import pytest
 
 import spiflash
 from spiflash import db as db_module
-from spiflash import opcodes, vendors
+from spiflash import derive, opcodes, vendors
 from spiflash.db import FORMAT, Database, SourceInfo
 from spiflash.enums import (
+    Bound,
     Feature,
     FlashType,
     FourByteMethod,
@@ -25,6 +26,7 @@ from spiflash.enums import (
     IdMethod,
     OperationKind,
     Source,
+    TimedEvent,
 )
 from spiflash.model import (
     Claim,
@@ -35,6 +37,7 @@ from spiflash.model import (
     LegacyId,
     Otp,
     Record,
+    SfdpDisagreement,
     Voltage,
     name_distance,
     name_matches,
@@ -47,6 +50,7 @@ from spiflash.model import (
     strip_continuation,
 )
 from spiflash.opcodes import OPERATIONS, OpcodeUse
+from spiflash.timings import TimingKey, Timings
 from test_sfdp import MX25L25635E, W25Q512JV
 
 
@@ -1373,3 +1377,102 @@ def test_an_otp_area_is_the_otp_reason() -> None:
         opcodes=[{"op": "PSECR", "via": "OTP: 1024B total; write 0x42"}],
     )
     assert r.feature_reasons()[Feature.OTP] == "implied by its OTP area, 1 KiB"
+
+
+# --- times (phase 7) -------------------------------------------------------------
+
+
+def test_timing_consensus_per_bound() -> None:
+    f = Flash(
+        b"\xef\x40\x18",
+        FlashType.NOR,
+        (
+            rec(source="dediprog", timings={"chip_erase": {"unspecified": 200 * 10**9}}),
+            rec(source="zephyr", timings={"dpd_exit": {"maximum": 35_000}}),
+            rec(source="flashrom", timings={"dpd_exit": {"maximum": 35_000}}),
+            rec(source="qemu", timings={"dpd_exit": {"maximum": 3_000}}),
+        ),
+    )
+    assert f.timing("chip_erase", "unspecified") == 200 * 10**9
+    # An unspecified time is no maximum or typical.
+    assert f.timing("chip_erase", "maximum") is None
+    assert f.timing(TimedEvent.DPD_EXIT, Bound.MAXIMUM) == 35_000
+    key = TimingKey(TimedEvent.DPD_EXIT)
+    assert list(f.timings[key, Bound.MAXIMUM]) == [3_000, 35_000]
+    assert f.value("timings.dpd_exit.maximum") == 35_000
+    assert "timings.dpd_exit.maximum" in f.conflicts
+    assert f.to_json()["timings"]["dpd_exit"]["maximum"]["value"] == 35_000
+
+
+def test_times_are_compared_at_sfdp_resolution() -> None:
+    def flash(*ns: int) -> Flash:
+        recs = tuple(
+            rec(source=s, timings={"dpd_exit": {"maximum": n}})
+            for s, n in zip(("zephyr", "flashrom"), ns, strict=True)
+        )
+        return Flash(b"\xef\x40\x18", FlashType.NOR, recs)
+
+    # 35 µs is 40 µs (5 x 8 µs) in DW14's units: they agree; 48 µs does not.
+    assert derive.on_sfdp_grid(TimedEvent.DPD_EXIT, Bound.MAXIMUM, 35_000) == 40_000
+    assert "timings.dpd_exit.maximum" not in flash(35_000, 40_000).conflicts
+    assert "timings.dpd_exit.maximum" in flash(35_000, 48_000).conflicts
+    # A maximum through a multiplier is compared exactly.
+    assert derive.on_sfdp_grid(TimedEvent.CHIP_ERASE, Bound.MAXIMUM, 10**9) is None
+
+
+def test_timing_order() -> None:
+    f = Flash(
+        b"\xef\x40\x18",
+        FlashType.NOR,
+        (
+            rec(source="zephyr", timings={"dpd_exit": {"maximum": 3_000}}),
+            rec(source="qemu", sfdp=W25Q512JV.hex()),
+        ),
+    )
+    assert f.timing_order() == []
+    g = Flash(
+        b"\xef\x40\x20",
+        FlashType.NOR,
+        (
+            rec(source="dediprog", timings={"chip_erase": {"unspecified": 10**9}}),
+            rec(source="qemu", sfdp=W25Q512JV.hex()),
+        ),
+    )
+    # Dediprog's 1 s is below the table's 192 s typical, but not ordered.
+    assert g.timing_order() == []
+    h = Flash(
+        b"\xef\x40\x18",
+        FlashType.NOR,
+        (
+            rec(source="zephyr", timings={"page_program": {"maximum": 100_000}}),
+            rec(source="qemu", sfdp=W25Q512JV.hex()),
+        ),
+    )
+    key = TimingKey(TimedEvent.PAGE_PROGRAM)
+    assert h.timing_order() == [(key, Bound.TYPICAL, 704_000, Bound.MAXIMUM, 100_000)]
+
+
+def test_a_records_times_are_its_claims_over_its_tables() -> None:
+    r = rec(source="qemu", size=None, sfdp=W25Q512JV.hex(), timings={"dpd_exit": {"maximum": 2_500}})
+    assert r.timings.get("dpd_exit", "maximum") == 2_500
+    assert r.timings.get("chip_erase", "typical") == 192 * 10**9
+    # DW10's multiplier, 14, for the chip erase's maximum (CHIP_ERASE_MULTIPLIER).
+    assert r.timings.get("chip_erase", "maximum") == 14 * 192 * 10**9
+    assert r.timings.get("block_erase", "maximum", 0x20) == 14 * 64 * 10**6
+    assert r.timing_claims == Timings.from_json({"dpd_exit": {"maximum": 2_500}})
+    # 2.5 µs is 2.56 µs on DW14's grid, not 3 µs: a disagreement.
+    assert r.sfdp_disagreements() == (
+        SfdpDisagreement("timings.dpd_exit.maximum", 2_500, 3_000),
+    )
+    assert r.given("timings.page_program.typical") == 704_000
+    assert pickle.loads(pickle.dumps(r)).timings == r.timings
+
+
+def test_a_bound_its_event_cannot_have_is_refused() -> None:
+    with pytest.raises(ValueError, match="none this event has"):
+        rec(timings={"dpd_exit": {"typical": 1000}})
+    with pytest.raises(ValueError, match="whole nanoseconds"):
+        rec(timings={"dpd_exit": {"maximum": 0}})
+    with pytest.raises(ValueError, match="only, and always, for a block erase"):
+        rec(timings={"chip_erase:0x20": {"maximum": 1000}})
+    assert str(TimingKey.parse("block_erase:0x20")) == "block_erase:0x20"

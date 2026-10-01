@@ -116,7 +116,10 @@ $ pip install spiflash
 $ spiflash id ef4018
 ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
     size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V, QE SR2[1], OTP 768 B
+    timing: chip erase ~200 s (bound not given); DPD enter ≤ 3.5 µs; DPD exit ≤ 3.5 µs
     features: dual_read erase_32k erase_4k erase_64k fast_read lock otp qpi quad_pp quad_read sfdp
+    sources disagree on timings.chip_erase.unspecified: 40 s (dediprog); 50 s (dediprog); 200 s (dediprog)
+    sources disagree on max_clock_hz: 50 MHz (dediprog); 75 MHz (dediprog); 104 MHz (dediprog)
     from: flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr
     datasheet: https://www.winbond.com/resource-files/W25Q128JV%20RevH%2003102021%20Plus.pdf
 ```
