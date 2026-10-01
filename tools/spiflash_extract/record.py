@@ -237,6 +237,9 @@ def check_via(rec: Record) -> None:
                 ok = False
             elif field == "erasers":
                 ok = bool(_eraser_members(rec))
+            elif field in SFDP_VALUES and rec[field] is None:
+                # A value its SFDP tables give, which the entry states too.
+                ok = getattr(Model.from_json(rec), field) is not None
             else:
                 ok = rec[field] not in (None, [], "", {})
             if component is not None:
@@ -366,10 +369,10 @@ def _drop_sfdp(rec: Record) -> None:
     (:data:`spiflash.model.SFDP_VALUES`) and erasers ``rec`` states that its
     own SFDP tables give the same (:meth:`spiflash.sfdp.Sfdp.facts`): the record
     derives them from the tables at load. A value that differs stays, as the
-    upstream's own (a :meth:`spiflash.model.Record.sfdp_disagreements`). A
-    dropped value's ``via`` key goes, so its token stays a flag. The
-    ``via`` token of a dropped eraser stays: its ``erasers:0x..`` key names
-    the eraser the tables give, which it also states (QEMU's ``ER_4K``)."""
+    upstream's own (a :meth:`spiflash.model.Record.sfdp_disagreements`). The
+    ``via`` token of a dropped value stays, under the value its tables give,
+    which the entry also states (Zephyr's ``quad-enable-requirements``, and
+    QEMU's ``ER_4K`` under the ``erasers:0x20`` key)."""
     if not (rec["sfdp"] or rec["sfdp_tables"]):
         return
     model = Model.from_json(rec)
@@ -379,8 +382,6 @@ def _drop_sfdp(rec: Record) -> None:
     for name in SFDP_VALUES:
         if model.stored(name) is not None and model.stored(name) == getattr(facts, name):
             rec[name] = None
-            # The token stays a flag: the entry states what its tables say.
-            rec["via"] = {k: v for k, v in rec["via"].items() if k != name}
     given = [e.to_json() for e in Model.from_json(rec).sfdp_erasers]
     kept = [e for e in rec["erasers"] or () if e not in given]
     rec["erasers"] = kept or None

@@ -85,12 +85,17 @@ def extract(root: Path) -> list[Record]:
                 id=f"{chip_id:06x}",
                 size=size,
                 erasers=erasers or None,
+                features={"lock"} if "feature:lock" in layout_via else set(),
                 flags=flags,
                 via={**via, **layout_via, **quad_via},
                 quad_enable=quad_enable,
                 protection=layout,
                 opcodes=_opcodes(
-                    fields, {e["opcode"] for e in erasers}, size, flash_defs | symbols
+                    fields,
+                    {e["opcode"] for e in erasers},
+                    size,
+                    flash_defs | symbols,
+                    (layout or {}).get("tb"),
                 ),
                 notes=notes,
             )
@@ -140,6 +145,17 @@ _TB_REGISTERS = {"STATR": "sr1", "FUNCR": "function", "CONFR": "sr2"}
 MACRONIX = 0xC2
 
 
+#: Entries whose ``bp_offset`` bits are not block-protect bits, and why:
+#: their ``bp_len`` stays a ``lock`` claim.
+NOT_BLOCK_PROTECT = {
+    0x1F4701: (
+        "bp_offset left out: the AT25DF321A's status register bits 2 to 4 are its "
+        "sector protection status (SWP) and write protect pin (WPP) bits; it "
+        "protects by sector, with global protect and unprotect"
+    ),
+}
+
+
 def _protection(
     fields: dict[str, str], symbols: dict[str, str | int], chip_id: int, notes: list[str]
 ) -> tuple[dict[str, object] | None, dict[str, str]]:
@@ -153,6 +169,9 @@ def _protection(
     bp_len = fields.get("bp_len", "0").strip()
     if not cparse.evaluate(bp_len, symbols):
         return None, {}
+    if chip_id in NOT_BLOCK_PROTECT:
+        notes.append(NOT_BLOCK_PROTECT[chip_id])
+        return None, {"feature:lock": f"bp_len={bp_len}"}
     # An offset left out is 0, as C initialises it.
     given = fields.get("bp_offset", "{}").strip()
     offsets = cparse.split_top(given[1:-1])
@@ -184,7 +203,11 @@ def _protection(
 
 
 def _opcodes(
-    fields: dict[str, str], erasers: set[int], size: int, symbols: dict[str, str | int]
+    fields: dict[str, str],
+    erasers: set[int],
+    size: int,
+    symbols: dict[str, str | int],
+    tb: object = None,
 ) -> list[dict[str, object]]:
     """What openFPGALoader's src/spiFlash.cpp sends to a part: read and page
     program for every part (driver defaults: assumed); its sector_erase()
@@ -215,6 +238,12 @@ def _opcodes(
     if quad is not None and quad["register"] == "sr2":
         ops.add("RDSR2", "set_quad_bit: CONFR", "FLASH_RDCR")
         ops.add("WRSR_16", "set_quad_bit: CONFR", "FLASH_WRSR")
+    # get_tb() reads CONFR with 0x35, meaning 0x15 on Macronix (SR3).
+    register = tb.get("register") if isinstance(tb, dict) else None
+    if register == "sr2":
+        ops.add("RDSR2", "get_tb: CONFR", "FLASH_RDCR")
+    elif register == "sr3":
+        ops.add("RDSR3", "get_tb: CONFR, Macronix", "MX25L_RDCR")
     # SST26VF032B/064B lock at power-up: the driver unlocks them first.
     if cparse.evaluate(fields.get("global_lock", "false"), symbols):
         ops.add("ULBPR", f"global_lock={fields['global_lock'].strip()}", "FLASH_ULBPR")

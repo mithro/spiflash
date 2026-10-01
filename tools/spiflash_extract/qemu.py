@@ -41,12 +41,15 @@ _FEATURES = {
     "ER_4K": "erase_4k",
     "ER_32K": "erase_32k",
     "EEPROM": "no_erase",
+    "HAS_SR_TB": "lock",
 }
 
 # The status register bits the model gives a part by its flags (write and
-# read of the status register, m25p80.c): TB at bit 5, BP3 at bit 6. BP0 to
-# BP2 at bits 2 to 4 it gives every part, so they are no part's own.
-_PROTECTION = {"HAS_SR_TB": ("tb", 5), "HAS_SR_BP3_BIT6": ("bp3", 6)}
+# read of the status register, m25p80.c): BP3 at bit 6. BP0 to BP2 at bits
+# 2 to 4 it gives every part, and TB at bit 5 every HAS_SR_TB part (it has
+# no other place for it), so those are its own, not the part's: HAS_SR_TB
+# is a lock claim.
+_PROTECTION = {"HAS_SR_BP3_BIT6": ("bp3", 6)}
 
 # (macro, ext_id bytes the macro keeps, has a die count)
 _MACROS = (("INFO_STACKED", 2, True), ("INFO6", 3, False), ("INFO", 2, False))

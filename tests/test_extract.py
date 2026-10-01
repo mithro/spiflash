@@ -520,7 +520,8 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
     assert e["flags"] == []
     assert e["via"] == {"feature:otp": "FEATURE_OTP"}
     # .reg_bits gives the protection bits, by role: .bp is BP0, BP1, ...
-    assert e["protection"] == {"bp0": {"register": "sr1", "bit": 2}}
+    # flashrom says how each bit is written: RW too.
+    assert e["protection"] == {"bp0": {"register": "sr1", "bit": 2, "writability": "rw"}}
     assert features(e) == [
         "dual_read",
         "erase_4k",
@@ -609,22 +610,25 @@ def test_flashprog_register_bits(tmp_path: Path) -> None:
     assert e["quad_enable"] == {"register": "sr2", "bit": 1, "writability": "ro"}
     assert "quad_read" in features(e)
     # CONFIG is read with 0x15, as SR3 is; SECURITY with RDSCUR.
+    rw = {"writability": "rw"}
     assert e["protection"] == {
-        "bp0": {"register": "sr1", "bit": 2},
-        "bp1": {"register": "sr1", "bit": 3},
-        "bp2": {"register": "sr1", "bit": 4},
+        "bp0": {"register": "sr1", "bit": 2, **rw},
+        "bp1": {"register": "sr1", "bit": 3, **rw},
+        "bp2": {"register": "sr1", "bit": 4, **rw},
         "tb": {"register": "sr3", "bit": 3, "writability": "otp"},
-        "srp": {"register": "sr1", "bit": 7},
-        "srl": {"register": "sr2", "bit": 0},
+        "srp": {"register": "sr1", "bit": 7, **rw},
+        "srl": {"register": "sr2", "bit": 0, **rw},
         "wps": {"register": "security", "bit": 7, "writability": "otp"},
     }
+    # flashprog reads CONFIG with RDCR (0x15) and SECURITY with RDSCUR.
+    assert ops(e)["RDSCUR"] == (0x2B, ".reg_bits SECURITY")
     assert "lock" in features(e)
     assert e["flags"] == []
     given = ops(e)
     assert given["WRSR_24"] == (0x01, "FEATURE_WRSR_EXT3")
     assert given["WRSR_16"] == (0x01, "FEATURE_WRSR_EXT3")
     assert given["RDSR2"] == (0x35, "FEATURE_WRSR_EXT3")
-    assert given["RDSR3"] == (0x15, "FEATURE_WRSR_EXT3")
+    assert given["RDSR3"] == (0x15, "FEATURE_WRSR_EXT3; .reg_bits CONFIG")
 
 
 @pytest.mark.parametrize("comment", ["the latter supports SFDP", "F model supports SFDP"])
@@ -814,11 +818,16 @@ def test_openfpgaloader(tmp_path: Path) -> None:
     gd = r["GD25Q32C"]
     assert "tb" not in gd["protection"]
     assert any(n.startswith("tb_offset=(1 << 14) left out") for n in gd["notes"])
-    # A TB on a BP bit cannot be: left out.
+    # Its bp_offset bits are its sector protection status and WP pin bits,
+    # not block protect ones: no layout, and a lock claim.
     at = r["AT25DF321A"]
-    assert "tb" not in at["protection"]
-    assert any(n.startswith("tb_offset=(1 << 3) left out") for n in at["notes"])
+    assert at["protection"] is None
+    assert any(n.startswith("bp_offset left out") for n in at["notes"])
+    assert at["features"] == ["lock"]
     assert "tb_offset=(1 << 3)" in at["flags"]
+    # get_tb() reads CONFR: 0x35, and on a Macronix part 0x15.
+    assert ops(s)["RDSR2"] == (0x35, "set_quad_bit: CONFR; get_tb: CONFR")
+    assert ops(mx)["RDSR3"] == (0x15, "get_tb: CONFR, Macronix")
 
 
 def test_openfpgaloader_no_map(tmp_path: Path) -> None:
@@ -1641,7 +1650,8 @@ def test_zephyr_quad_enable_requirement(tmp_path: Path) -> None:
     # The table's own requirement (S1B6) is derived, not stored again; one
     # that differs is the node's, and a disagreement with its table.
     assert c["quad_enable_requirement"] is None
-    assert "quad-enable-requirements=S1B6" in c["flags"]
+    assert c["via"]["quad_enable_requirement"] == "quad-enable-requirements=S1B6"
+    assert "quad-enable-requirements=S1B6" not in c["flags"]
     assert Record.from_json(c).quad_enable_requirement == "S1B6"
     assert d["quad_enable_requirement"] == "S2B1v5"
     assert Record.from_json(d).sfdp_disagreements()[:1] == (
@@ -1863,19 +1873,15 @@ def test_qemu(tmp_path: Path) -> None:
     # Flags for the status register layout; the multi-line heading before Spansion.
     n = r["N25Q256A"]
     assert n["vendor"] == "Micron"
-    assert n["flags"] == []
     assert n["via"] == {
         "erasers:0x20": "ER_4K",
         "protection.bp3": "HAS_SR_BP3_BIT6",
-        "protection.tb": "HAS_SR_TB",
         "sfdp": ".sfdp_read = m25p80_sfdp_n25q256a",
     }
-    # The model's BP0-2 are every part's: only what the flags say is the
-    # part's (TB at bit 5, BP3 at bit 6), which implies lock.
-    assert n["protection"] == {
-        "bp3": {"register": "sr1", "bit": 6},
-        "tb": {"register": "sr1", "bit": 5},
-    }
+    # The model's BP0-2 are every part's, and its TB bit 5 every HAS_SR_TB
+    # part's: only BP3 at bit 6 is the part's own, which implies lock.
+    assert n["protection"] == {"bp3": {"register": "sr1", "bit": 6}}
+    assert n["flags"] == ["HAS_SR_TB"]
     assert n["features"] == []
     assert "lock" in features(n)
     assert n["sfdp"] is not None
@@ -1993,12 +1999,16 @@ def dediprog_chip(root: Path, **attrs: str | None) -> list[record.Record]:
         ("0x00000200", None),  # the template's
         ("0", None),
         ("0x80", None),  # SR1 bit 7 is the status register protect bit
+        ("0x20", None),  # SR1 bit 5, a block-protect bit (EN25QH256's)
     ],
 )
 def test_dediprog_quad_enable(tmp_path: Path, mask: str, bit: dict[str, object] | None) -> None:
     (w,) = dediprog_chip(tmp_path, QEbitAddr=mask)
     assert w["quad_enable"] == bit
     assert ("quad_enable" in w["via"]) is (bit is not None)
+    # An SR1 bit other than 6 is left out with a note.
+    left_out = mask in ("0x80", "0x20")
+    assert any(n.startswith(f"QEbitAddr={mask} left out") for n in w["notes"]) is left_out
 
 
 def test_dediprog_protect_mask_is_no_layout(tmp_path: Path) -> None:

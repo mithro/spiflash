@@ -245,7 +245,7 @@ def _record(
         quad_enable=quad_enable,
         protection=bits or None,
         tested=tested,
-        opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp=bool(sfdp)),
+        opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp=bool(sfdp), source=source),
         notes=notes,
     )
 
@@ -266,10 +266,12 @@ _WRITABILITY = {"RW": "rw", "RO": "ro", "OTP": "otp"}
 def _reg_bit(value: str) -> dict[str, Any]:
     """``{STATUS2, 1, RW}`` as a register bit's JSON."""
     reg, bit, how = cparse.split_top(value.strip()[1:-1])
-    out: dict[str, Any] = {"register": _REGISTERS[reg.strip()], "bit": cparse.evaluate(bit)}
-    if _WRITABILITY[how.strip()] != "rw":
-        out["writability"] = _WRITABILITY[how.strip()]
-    return out
+    # flashrom always says how the bit is written: RW too.
+    return {
+        "register": _REGISTERS[reg.strip()],
+        "bit": cparse.evaluate(bit),
+        "writability": _WRITABILITY[how.strip()],
+    }
 
 
 def _reg_bits(expr: str) -> dict[str, Any]:
@@ -287,6 +289,22 @@ def _reg_bits(expr: str) -> dict[str, Any]:
         elif role != "dc":
             out[role] = _reg_bit(value)
     return out
+
+
+# flashprog's spi25_statusreg.c reads a CONFIG bit with RDCR (0x15) and a
+# SECURITY bit with RDSCUR (0x2b) whatever the feature bits; flashrom only
+# with FEATURE_CFGR and FEATURE_SCUR, which give those operations.
+_FLASHPROG_READS = {"CONFIG": ("RDSR3", "JEDEC_RDCR"), "SECURITY": ("RDSCUR", "JEDEC_RDSCUR")}
+
+
+def _register_reads(ops: Opcodes, source: str, reg_bits: str) -> None:
+    """Add the register reads flashprog sends for the registers its
+    ``.reg_bits`` name."""
+    if source != "flashprog":
+        return
+    for reg, (op, symbol) in _FLASHPROG_READS.items():
+        if re.search(rf"\b{reg}\b", reg_bits):
+            ops.add(op, f".reg_bits {reg}", symbol)
 
 
 # How flashrom reads an id -> the operation (probe_spi_rdid, probe_spi_rems,
@@ -379,6 +397,7 @@ def _opcodes(
     symbols: dict[str, str | int],
     *,
     sfdp: bool,
+    source: str = "flashrom",
 ) -> list[dict[str, object]]:
     """The operations a flashrom entry says the chip has: its probe, its
     read and write functions, each eraser (flashrom's spi_block_erase_<xx>
@@ -409,4 +428,5 @@ def _opcodes(
             ops.add(feature_op, flag, *feature_syms)
     if sfdp:
         ops.add("RDSFDP", "comment: supports SFDP", "JEDEC_SFDP")
+    _register_reads(ops, source, f.get("reg_bits", ""))
     return ops.to_json()

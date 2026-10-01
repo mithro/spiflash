@@ -44,7 +44,7 @@ def test_id_registers(capsys: pytest.CaptureFixture[str]) -> None:
     assert "quad enable requirement: S2B1v4 (SR2 bit 1, written with a 2-byte WRSR" in out
     _, js = run(capsys, "id", "ef4020", "--json")
     (doc,) = json.loads(js)
-    assert doc["quad_enable"] == {"register": "sr2", "bit": 1}
+    assert doc["quad_enable"] == {"register": "sr2", "bit": 1, "writability": "rw"}
     assert doc["quad_enable_requirement"] == "S2B1v4"
     assert doc["protection"]["bp0"] == {"register": "sr1", "bit": 2}
 

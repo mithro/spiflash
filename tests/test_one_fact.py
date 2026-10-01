@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+import spiflash
 from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE, ID_OPERATION
 from spiflash.enums import Feature, IdMethod
@@ -389,3 +390,16 @@ def test_no_protection_layout_from_a_mask_or_another_scheme() -> None:
     claims = [d for d in RECORDS if other(d) and d["source"] != "dediprog"]
     assert len(claims) == 15  # Linux 11, U-Boot 4
     assert all("lock" in d["features"] for d in claims)
+
+
+def test_no_tb_from_a_drivers_constant() -> None:
+    # U-Boot tests SR_TB, bit 5, on every SPI_NOR_HAS_TB part, and QEMU's
+    # model puts every HAS_SR_TB part's TB there: the bit is theirs, not
+    # the part's, so neither gives a TB. The W25Q512JV's is bit 6.
+    tb = [
+        d for d in RECORDS if d["source"] in ("u-boot", "qemu") and "tb" in (d["protection"] or {})
+    ]
+    assert not [_where(d) for d in tb]
+    (chip,) = spiflash.lookup("ef4020")
+    assert chip.protection is not None
+    assert chip.protection.tb is None or chip.protection.tb.bit != 5

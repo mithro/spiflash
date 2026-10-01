@@ -186,7 +186,7 @@ def protection(flags: list[str], symbols: dict[str, str | int]) -> tuple[Any, di
     for ``SPI_NOR_HAS_LOCK``, BP0 to BP2 and SRWD (``SR_BP0``...,
     ``SR_SRWD``) in SR1; BP3 for ``SPI_NOR_4BIT_BP`` (``SR_BP3``, or
     ``SR_BP3_BIT6`` with ``SPI_NOR_BP3_SR_BIT6``); TB for
-    ``SPI_NOR_HAS_TB`` (``SR_TB_BIT5``, U-Boot's ``SR_TB``, or
+    ``SPI_NOR_HAS_TB`` (``SR_TB_BIT5``, or
     ``SR_TB_BIT6`` with ``SPI_NOR_TB_SR_BIT6``); CMP in SR2 for
     ``SPI_NOR_HAS_CMP``. ``SPI_NOR_SWP_IS_VOLATILE`` makes the BP bits
     volatile. ``None`` without ``SPI_NOR_HAS_LOCK``."""
@@ -211,8 +211,7 @@ def protection(flags: list[str], symbols: dict[str, str | int]) -> tuple[Any, di
         via["protection.bp3"] = "SPI_NOR_4BIT_BP" + ("; SPI_NOR_BP3_SR_BIT6" if bit6 else "")
     if "SPI_NOR_HAS_TB" in flags:
         bit6 = "SPI_NOR_TB_SR_BIT6" in flags
-        five = "SR_TB_BIT5" if "SR_TB_BIT5" in symbols else "SR_TB"
-        out["tb"] = bit("SR_TB_BIT6" if bit6 else five)
+        out["tb"] = bit("SR_TB_BIT6" if bit6 else "SR_TB_BIT5")
         via["protection.tb"] = "SPI_NOR_HAS_TB" + ("; SPI_NOR_TB_SR_BIT6" if bit6 else "")
     if "SPI_NOR_HAS_CMP" in flags:
         out["cmp"] = bit("SR2_CMP_BIT6", "sr2")
@@ -281,6 +280,11 @@ def _nor_record(
     else:
         layout, protection_via = protection(flags, symbols)
         via |= protection_via
+        if layout and "cmp" in layout:
+            # spi_nor_read_cr(): CMP is in the configuration register, 0x35.
+            ops = Opcodes(symbols)
+            ops.add("RDSR2", "spi_nor_read_cr: CMP in SR2", "SPINOR_OP_RDCR")
+            opcodes += ops.to_json()
     quad_enable = None
     if fixup in _QE_FIXUPS:
         quad_enable = _QE_FIXUPS[fixup][1]

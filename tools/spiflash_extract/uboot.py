@@ -126,7 +126,11 @@ def _record(
     layout: Any = None
     layout_via: dict[str, str] = {}
     if "SPI_NOR_HAS_SST26LOCK" not in flags:
-        layout, layout_via = protection(flags, symbols)
+        # SPI_NOR_HAS_TB has no bit-6 form here: spi-nor-core.c tests
+        # SR_TB, bit 5, on every part, so the bit is its driver's, not the
+        # part's (the W25Q256/512 family's is bit 6). The flag stays.
+        tb_free = [f for f in flags if f != "SPI_NOR_HAS_TB"]
+        layout, layout_via = protection(tb_free, symbols)
     erasers = []
     if sector and size and "no_erase" not in features:
         for flag, opcode in (("SECT_4K", 0x20), ("SECT_4K_PMC", 0xD7)):
