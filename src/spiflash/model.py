@@ -1293,9 +1293,27 @@ def _disagree(records: Iterable[Record], attr: str) -> bool:
     )
 
 
-def _consensus(values: Iterable[tuple[T | None, Source]]) -> T | None:
+def _tie_order(value: Any) -> tuple[str, float, str]:
+    """The order :func:`_consensus` breaks a full tie in, so that it never
+    depends on the order of the records: the smaller number, else the
+    first as text (a voltage range, a register bit, a code)."""
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return (type(value).__name__, value, "")
+    return (type(value).__name__, 0, repr(value))
+
+
+#: The rank :func:`_consensus` gives a value ``prefer`` does not rank.
+_UNPREFERRED = 1 << 30
+
+
+def _consensus(
+    values: Iterable[tuple[T | None, Source]], prefer: Mapping[Any, int] | None = None
+) -> T | None:
     """The value the most sources give; on a tie, the one the
-    higher-priority sources give, then the one more records give.
+    higher-priority sources give, then the one more records give, then the
+    one ``prefer`` ranks first (:meth:`Flash._value`: the chip's own
+    part's), then the smaller (:func:`_tie_order`), never the one listed
+    first.
 
     Sources are counted, not records: a source listing a part five times
     does not outvote five sources listing it once, and a source giving two
@@ -1308,7 +1326,16 @@ def _consensus(values: Iterable[tuple[T | None, Source]]) -> T | None:
             records[value] += 1
     if not sources:
         return None
-    return min(sources, key=lambda v: (-len(sources[v]), sorted(sources[v]), -records[v]))
+    return min(
+        sources,
+        key=lambda v: (
+            -len(sources[v]),
+            sorted(sources[v]),
+            -records[v],
+            (prefer or {}).get(v, _UNPREFERRED),
+            _tie_order(v),
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -1343,12 +1370,32 @@ class Flash:
 
     def _value(self, get: Callable[[Record], T | None]) -> T | None:
         """The value the sources agree on, from the most specific records
-        that give one (:attr:`layers`)."""
+        that give one (:attr:`layers`); on a tie, the one the records naming
+        the chip's own part (:attr:`name`) give."""
         for layer in self.layers or (self.records,):
-            found = _consensus((get(r), r.source) for r in layer)
+            prefer: dict[Any, int] = {}
+            for r in layer:
+                rank = self._own_records.get(id(r))
+                if rank is not None and (v := get(r)) is not None:
+                    prefer[v] = min(rank, prefer.get(v, rank))
+            found = _consensus(((get(r), r.source) for r in layer), prefer)
             if found is not None:
                 return found
         return None
+
+    @cached_property
+    def _own_records(self) -> dict[int, int]:
+        """The records naming the chip's own part (:attr:`name`), by
+        ``id()``: 0 for one whose part is it (:func:`part_key`), 1 for one
+        whose part may be (:func:`same_part`: a suffix, a wildcard)."""
+        own = part_key(self.name)
+        out = {}
+        for r in self.records:
+            if any(part_key(n) == own for n in r.part_names):
+                out[id(r)] = 0
+            elif any(same_part(n, self.name) for n in r.part_names):
+                out[id(r)] = 1
+        return out
 
     @property
     def key(self) -> str:
@@ -1531,7 +1578,8 @@ class Flash:
             for layer in self.layers or (self.records,):
                 given = [r for r in layer if r.protection]
                 if given:
-                    return min(given, key=lambda r: r.source.priority).protection
+                    best = min(given, key=lambda r: (r.source.priority, r.file, r.line))
+                    return best.protection
         return Protection(**roles)
 
     def shared_bits(self) -> dict[str, tuple[str, ...]]:
@@ -1625,11 +1673,34 @@ class Flash:
         return Otp(size, regions)
 
     @cached_property
+    def part_records(self) -> tuple[Record, ...]:
+        """The records that describe a part of this chip: all of them but
+        one of another size than the chip's (:attr:`size`) that names no
+        part (:func:`same_part`) a record of the chip's size names, which is
+        another part listed under this id (Dediprog's 32 MiB MX25L25835E at
+        the 16 MiB MX25L12835F's ``c22018``). The size vote already leaves
+        it out; its operations, capabilities and ways into 4-byte mode are
+        left out of :attr:`opcodes`, :attr:`features`,
+        :attr:`four_byte_modes` and :attr:`address_bytes` too."""
+        size = self.size
+        if size is None:
+            return self.records
+        sized = {n for r in self.records if r.size == size for n in r.part_names}
+
+        def other_part(r: Record) -> bool:
+            if r.size is None or r.size == size:
+                return False
+            return not any(same_part(n, s) for n in r.part_names for s in sized)
+
+        return tuple(r for r in self.records if not other_part(r))
+
+    @cached_property
     def four_byte_modes(self) -> frozenset[FourByteMethod]:
         """Every way into 4-byte address mode any source gives
-        (:attr:`Record.four_byte_modes`, stated or from SFDP tables). Parts
-        sharing an id can differ, so check :meth:`four_byte_mode_sources`."""
-        return frozenset().union(*(r.four_byte_modes for r in self.records))
+        (:attr:`Record.four_byte_modes`, stated or from SFDP tables), of
+        the :attr:`part_records`. Parts sharing an id can differ, so check
+        :meth:`four_byte_mode_sources`."""
+        return frozenset().union(*(r.four_byte_modes for r in self.part_records))
 
     def four_byte_mode_sources(self, method: FourByteMethod | str) -> tuple[FeatureSource, ...]:
         """The sources giving a way into 4-byte mode, one each, in source
@@ -1638,7 +1709,7 @@ class Flash:
         ``because`` the upstream token or ``"its SFDP tables (BFPT DW16)"``."""
         method = FourByteMethod(method)
         found: dict[Source, FeatureSource] = {}
-        for r in sorted(self.records, key=lambda r: r.source.priority):
+        for r in sorted(self.part_records, key=lambda r: r.source.priority):
             if method not in r.four_byte_modes:
                 continue
             stated = method in r.four_byte_mode_claims
@@ -1657,7 +1728,7 @@ class Flash:
         takes 4-byte addresses is not outvoted by those not saying it, so
         ``4byte_addr`` is in :attr:`features` exactly when this is neither
         ``THREE`` nor ``None``."""
-        said = [(a, r.source) for r in self.records if (a := r.address_bytes) is not None]
+        said = [(a, r.source) for r in self.part_records if (a := r.address_bytes) is not None]
         more = _consensus((a, s) for a, s in said if a is not AddressBytes.THREE)
         if more is not None:
             return more
@@ -1757,14 +1828,16 @@ class Flash:
     def features(self) -> frozenset[Feature]:
         """Every capability any source claims for this id, or implies by
         the operations, erasers, size or SFDP tables it gives
-        (:attr:`Record.features`; a driver default implies nothing). Parts
-        sharing an id can differ (a W25Q128BV has no QPI, a W25Q128FV does),
-        so check :meth:`feature_sources` before relying on one."""
-        return frozenset().union(*(r.features for r in self.records))
+        (:attr:`Record.features`; a driver default implies nothing), of the
+        :attr:`part_records`. Parts sharing an id can differ (a W25Q128BV
+        has no QPI, a W25Q128FV does), so check :meth:`feature_sources`
+        before relying on one."""
+        return frozenset().union(*(r.features for r in self.part_records))
 
     @cached_property
     def opcodes(self) -> dict[str, SupportedOperation]:
-        """Every operation any source says the chip has, by name, in the
+        """Every operation any source says the chip has (of the
+        :attr:`part_records`), by name, in the
         order id, read, program, erase, register, mode. Parts sharing an id
         can differ, and some sources only list what their own driver uses,
         so :attr:`SupportedOperation.sources` says who vouches for each.
@@ -1772,7 +1845,7 @@ class Flash:
         it, and one that states or implies it for the part is not also
         listed as assuming it (its driver's default)."""
         because: dict[str, list[Claim]] = {}
-        for r in sorted(self.records, key=lambda r: r.source.priority):
+        for r in sorted(self.part_records, key=lambda r: r.source.priority):
             for use in r.opcodes:
                 claim = Claim(r.source, use.via, use.implied, use.assumed, use.dummy_clocks)
                 if claim not in because.setdefault(use.op, []):
@@ -1841,7 +1914,7 @@ class Flash:
         and why. ``[s.source for s in flash.feature_sources("qpi")]`` is
         the sources alone."""
         found: dict[Source, FeatureSource] = {}
-        for r in sorted(self.records, key=lambda r: r.source.priority):
+        for r in sorted(self.part_records, key=lambda r: r.source.priority):
             if feature not in r.features:
                 continue
             implied = feature not in r.feature_claims

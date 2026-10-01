@@ -18,6 +18,7 @@ from spiflash import db as db_module
 from spiflash import derive, opcodes, vendors
 from spiflash.db import FORMAT, Database, SourceInfo
 from spiflash.enums import (
+    AddressBytes,
     Bound,
     Feature,
     FlashType,
@@ -703,6 +704,45 @@ def test_consensus_counts_sources() -> None:
         ]
     )
     assert db.flashes[0].page_size == 512  # the same sources, but more records
+
+
+def test_consensus_tie_never_goes_by_order() -> None:
+    # A full tie goes to the chip's own part's value, then to the smaller,
+    # whatever order the records are in.
+    own = [
+        rec(name="W25Q128", page_size=512),
+        rec(name="W25Q128X", page_size=256),
+        rec(source="flashrom", name="W25Q128", page_size=None),
+    ]
+    for records in (own, own[::-1]):
+        assert Database(records).flashes[0].page_size == 512
+    other = [rec(name="W25Q128", page_size=None, size=None)]
+    for pair in ([rec(name="A", size=8 << 20), rec(name="B", size=4 << 20)],):
+        for records in (other + pair, other + pair[::-1]):
+            assert Database(records).flashes[0].size == 4 << 20
+
+
+def test_another_parts_record_gives_the_chip_nothing() -> None:
+    # A record of another size naming no part of the chip's size is another
+    # part listed under the id: the size vote leaves it out, and so do the
+    # operations and capabilities.
+    big = rec(
+        source="dediprog",
+        name="MX25L25835E",
+        size=32 << 20,
+        opcodes=[{"op": "READ_1_1_1_4B", "via": "ReadCmd"}],
+    )
+    db = Database([rec(name="MX25L12835F"), rec(source="flashrom", name="MX25L12835F"), big])
+    (f,) = db.flashes
+    assert f.size == 16 << 20
+    assert big not in f.part_records
+    assert "READ_1_1_1_4B" not in f.opcodes
+    assert not {"4byte_addr", "4byte_opcodes"} & f.features
+    assert f.address_bytes is AddressBytes.THREE
+    # The shipped MX25L12835F, with Dediprog's MX25L25835E at its id.
+    mx = spiflash.lookup("c22018")[0]
+    assert (mx.key, mx.size) == ("c22018", 16 << 20)
+    assert "4byte_opcodes" not in mx.features
 
 
 def test_features_union_and_sources() -> None:
