@@ -76,7 +76,7 @@ What answered `9f` with `ef 40 18`?
 ```console
 $ spiflash id ef4018
 ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
-    size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V, QE SR2[1], OTP 768 B
+    size 16 MiB, page 256 B, sector 64 KiB, 2.7–3.6 V, QE SR2[1], OTP 768 B
     timing: chip erase ~200 s (bound not given; also 40 s, 50 s); DPD enter ≤ 3.5 µs; DPD exit ≤ 3.5 µs
     features: dual_read erase_32k erase_4k erase_64k fast_read lock otp qpi quad_pp quad_read sfdp
     from: flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr
@@ -94,7 +94,7 @@ What does a part answer?
 ```console
 $ spiflash find GD25Q64
 c84017  GigaDevice  GD25Q64, GD25Q64C, GD25Q64B, GD25Q64E, GD25B64B, GD25B64C, GD25B64E, GD25Q64H, GD25R64C, S64M80GX, GD25Q64CSIG  (nor)
-    size 8 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V, QE SR2[1], OTP 768 B
+    size 8 MiB, page 256 B, sector 64 KiB, 2.7–3.6 V, QE SR2[1], OTP 768 B
     timing: chip erase ~60 s (bound not given; also 15 s, 30 s, 140 s, 160 s)
     ...
 ```

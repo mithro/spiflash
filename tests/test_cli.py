@@ -30,7 +30,7 @@ def test_id(capsys: pytest.CaptureFixture[str]) -> None:
     code, out = run(capsys, "id", "ef4018")
     assert code == 0
     assert out.startswith("ef4018  Winbond  ")
-    assert "size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V" in out
+    assert "size 16 MiB, page 256 B, sector 64 KiB, 2.7\N{EN DASH}3.6 V" in out
     assert "from: flashrom" in out
 
 
@@ -60,7 +60,7 @@ def test_id_registers(capsys: pytest.CaptureFixture[str]) -> None:
     # The QE bit on the detail line; the layout and requirement with -v.
     code, out = run(capsys, "id", "c84016", "-v")
     assert code == 0
-    assert "2.7-3.6 V, QE SR2[1]" in out
+    assert "2.7\N{EN DASH}3.6 V, QE SR2[1]" in out
     # openFPGALoader's GD25Q32C entry has the QE bit wrong (S9 is QE).
     assert "sources disagree on quad_enable: SR2 bit 1 (flashprog, rockchip); SR1 bit 6" in out
     # Its bp3 is the bit flashrom's tb is.
@@ -546,7 +546,7 @@ def test_id_says_where_parts_differ_by_ext_id(capsys: pytest.CaptureFixture[str]
 def test_id_says_where_parts_differ_on_supply(capsys: pytest.CaptureFixture[str]) -> None:
     _, out = run(capsys, "id", "010220")
     assert "parts differ on voltage by ext id: " in out
-    assert "1.7-2 V (4d0081)" in out
+    assert "1.7\N{EN DASH}2 V (4d0081)" in out
 
 
 def test_id_shows_phase_6_values(capsys: pytest.CaptureFixture[str]) -> None:

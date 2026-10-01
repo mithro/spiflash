@@ -1665,9 +1665,6 @@ def test_opcodes_checks_values_against_the_table() -> None:
         o.add("SE", "bad value", value=0x99)
     with pytest.raises(KeyError, match="unknown operation"):
         o.add("TELEPORT", "x")
-    o.discard("READ_1_1_1")
-    o.discard("READ_1_1_1")
-    assert o.to_json() == []
 
 
 # --- Zephyr ------------------------------------------------------------------

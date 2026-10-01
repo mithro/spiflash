@@ -76,9 +76,6 @@ class Opcodes:
         """The operations added so far, by name."""
         return iter(list(self._ops))
 
-    def discard(self, op: str) -> None:
-        self._ops.pop(op, None)
-
     def to_json(self) -> list[dict[str, Any]]:
         return [
             {"op": op, "via": "; ".join(vias), **({"assumed": True} if self.assumed(op) else {})}

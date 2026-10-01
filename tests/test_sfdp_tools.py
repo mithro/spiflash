@@ -186,23 +186,30 @@ def test_facts_carry_dw15s_qpi_sequences() -> None:
     assert "EQPI_35" not in ops
 
 
+def with_tables() -> list[tuple[Record, Sfdp]]:
+    """Every record carrying SFDP tables, with them decoded: QEMU's 13 dumps
+    and Zephyr's copied tables, at least (so a data-wide test cannot pass
+    on no data)."""
+    out = [(r, r.parsed_sfdp) for r in spiflash.records() if r.parsed_sfdp is not None]
+    assert len(out) >= 30
+    return out
+
+
 def test_a_records_features_are_derived_once() -> None:
     # Sfdp.features() is the record's rules on the tables alone.
-    for r in spiflash.records():
-        if r.parsed_sfdp is not None:
-            assert r.parsed_sfdp.features() <= r.features, r.name
-            assert derive.sfdp_features(r.parsed_sfdp) == r.parsed_sfdp.features()
+    for r, s in with_tables():
+        assert s.features() <= r.features, r.name
+        assert derive.sfdp_features(s) == s.features()
 
 
 # --- diff ---------------------------------------------------------------------
 
 
 def test_diff_of_a_table_with_itself_is_empty() -> None:
-    for r in spiflash.records():
-        if r.parsed_sfdp is not None:
-            d = diff(r.parsed_sfdp, r.parsed_sfdp)
-            assert not d, r.name
-            assert d.describe() == "no differences"
+    for r, s in with_tables():
+        d = diff(s, s)
+        assert not d, r.name
+        assert d.describe() == "no differences"
 
 
 def chip(key: str) -> Flash:
@@ -254,10 +261,7 @@ def test_diff_marks_the_mode_and_wait_split_as_expected() -> None:
 
 
 def test_to_entry_is_what_a_record_carrying_the_tables_derives() -> None:
-    for r in spiflash.records():
-        s = r.parsed_sfdp
-        if s is None:
-            continue
+    for r, s in with_tables():
         entry = to_entry(s)
         assert list(entry) == list(r.to_json()), r.name
         assert entry["sfdp"] is None
@@ -488,10 +492,7 @@ def test_entry_to_sfdp_to_entry_gives_back_what_encode_wrote() -> None:
 
 def test_sfdp_to_entry_to_sfdp_loses_only_what_is_documented() -> None:
     reads_without_an_op = {"2-2-2", "1-1-8", "1-8-8", "8D-8D-8D"}
-    for r in spiflash.records():
-        s = r.parsed_sfdp
-        if s is None:
-            continue
+    for r, s in with_tables():
         back = encode(Record.from_json(to_entry(s) | IDENTITY), assume=True).sfdp
         d = diff(s, back)
         for x in d.fields:

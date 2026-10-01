@@ -40,7 +40,7 @@ from .sfdp import SIGNATURE, Sfdp
 from .sfdp import parse as parse_sfdp
 from .sfdp_tools import diff, encode, to_entry
 from .timings import TimingKey, parse_component
-from .units import human_duration, human_frequency, human_size
+from .units import human_duration, human_frequency, human_size, human_supply
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -86,11 +86,6 @@ def header(f: Flash) -> str:
     return f"{f.key}  {maker}  {', '.join(f.names)}  ({f.type})"
 
 
-def volts(v: tuple[int, int]) -> str:
-    """A supply range in volts: ``2.7-3.6 V``."""
-    return f"{v[0] / 1000:g}-{v[1] / 1000:g} V"
-
-
 def quad_enable(qe: RegisterBit | NoQuadEnable) -> str:
     """A quad enable bit as the detail line writes it: ``SR2[1]``, ``none``."""
     if isinstance(qe, NoQuadEnable):
@@ -105,7 +100,7 @@ def shown(attribute: str, value: Any) -> str:
     a size as ``16 MiB``, a voltage as ``2.7-3.6 V``, a register bit as
     ``SR2 bit 1``."""
     if attribute == "voltage":
-        return volts(value)
+        return human_supply(value)
     if attribute in ("size", "page_size", "sector_size", "oob_size", "ecc.step_bytes", "otp.size"):
         return human_size(value)
     if attribute.startswith("timings."):
@@ -203,7 +198,7 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     if f.ecc:
         detail.append(f"ECC {f.ecc}")
     if f.voltage:
-        detail.append(volts(f.voltage))
+        detail.append(human_supply(f.voltage))
     elif f.supply_mv:
         detail.append(f"supply {f.supply_mv / 1000:g} V")
     if f.quad_enable is not None:

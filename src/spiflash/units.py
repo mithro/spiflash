@@ -1,4 +1,4 @@
-"""Sizes, times and frequencies as people read them."""
+"""Sizes, times, frequencies and supplies as people read them."""
 
 from __future__ import annotations
 
@@ -28,3 +28,9 @@ def human_frequency(hz: int) -> str:
         if hz >= scale:
             return f"{hz / scale:g} {unit}"
     return f"{hz} Hz"
+
+
+def human_supply(mv: tuple[int, int]) -> str:
+    """A supply range in millivolts as ``2.7 to 3.6 V``, written with an en dash
+    between the ends and one unit."""
+    return f"{mv[0] / 1000:g}\N{EN DASH}{mv[1] / 1000:g} V"

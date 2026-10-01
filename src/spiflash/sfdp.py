@@ -341,10 +341,6 @@ class FastRead:
         """Mode clocks plus wait states: what a controller must insert."""
         return self.mode_clocks + self.wait_states
 
-    @property
-    def address_dtr(self) -> bool:
-        return "D" in self.protocol
-
 
 @dataclass(frozen=True, slots=True)
 class EraseType:
