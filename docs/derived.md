@@ -33,7 +33,9 @@ source carries the tables (the {sfsrc}`qemu` dumps).
 Some operations a source lists because its driver sends them to every part
 (or every part of a kind), whatever the entry says. Those are *driver
 defaults* ({py:attr}`OpcodeUse.assumed <spiflash.opcodes.OpcodeUse.assumed>`),
-shown greyed on the chip pages, and they imply no capability:
+shown on the chip pages as a grey {sfgrey}`◌` (where a
+source states the operation for the part, {sfyes}`✓`), and they imply no
+capability:
 
 - {sfsrc}`linux`: read, fast read (a board's devicetree choice,
   `m25p,fast-read`), page program and chip erase;
@@ -42,7 +44,8 @@ shown greyed on the chip pages, and they imply no capability:
   (0x32) it adds for every `SPI_NOR_QUAD_READ` part;
 - {sfsrc}`qemu`: the read, fast read, page program and chip erases its
   model decodes for every part;
-- {sfsrc}`openfpgaloader`: every read and page program;
+- {sfsrc}`openfpgaloader`: every read and page program, and the 4-byte form
+  of every erase (for any address above 16 MiB);
 - {sfsrc}`imsprog`: every read, page program and 0xd8 erase;
 
 and the 4-byte-address form of each. So an AT45DB DataFlash part, which
@@ -55,7 +58,8 @@ is that part's own, not a default.
 
 A part's sector size is the block of its 0xd8 erase layout, or failing
 that of its 0xdc (0xd8's 4-byte-address form), or of its 0x52 (the AT25F
-and SST25LF parts' 32 KiB blocks); a SPI NAND part's is its block erase's
+and SST25LF parts, which have no 0xd8, erase 32 KiB blocks with it, or 64 KiB
+on the AT25F2048 and AT25F4096); a SPI NAND part's is its block erase's
 block. A part that needs no erase (FRAM, MRAM: `no_erase`) has none, and
 none is made up for it.
 

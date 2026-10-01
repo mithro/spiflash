@@ -313,7 +313,8 @@ def _capabilities(f: Flash) -> list[str]:
             "{sfyes}`✓` where the source's entry claims it, {sfhollow}`○` where it does "
             "not but implies it, by the operations, erase layouts, size or SFDP tables it "
             "gives ([](../derived.md)). An operation a source's driver sends to every part, "
-            "whatever the entry says (a driver default), implies nothing.\n"
+            "whatever the entry says (a driver default, {sfgrey}`◌` under Opcodes), implies "
+            "nothing.\n"
         ),
         list_table(
             ["Capability", "What it means", *[_source_header(s) for s in srcs]],
@@ -407,8 +408,8 @@ def _opcodes(f: Flash) -> list[str]:
     srcs = [s for s in f.sources if any(s in o.sources for o in f.opcodes.values())]
     out.append(
         "Each opcode some source says this part has, and which sources say so: "
-        "{sfyes}`✓` for the part, {sfhollow}`○` only as the source's driver default "
-        "(sent to every part, whatever the entry says). "
+        "{sfyes}`✓` for the part, {sfgrey}`◌` only as the source's driver default "
+        "(sent to every part, whatever the entry says), which implies no capability. "
         "A missing opcode may still be supported: see [](../opcodes.md).\n"
     )
 
@@ -1205,9 +1206,10 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_role("sfop", SpanRole("sf-op"))
     app.add_role("sfyes", SpanRole("sf-yes"))
     app.add_role("sfhollow", SpanRole("sf-hollow"))
+    app.add_role("sfgrey", SpanRole("sf-default"))
     app.add_role("sfclaimed", MarkRole("sf-yes", "\u2713"))
     app.add_role("sfimplied", MarkRole("sf-hollow", "\u25cb"))
-    app.add_role("sfdefault", MarkRole("sf-default", "\u25cb"))
+    app.add_role("sfdefault", MarkRole("sf-default", "\u25cc"))
     app.add_node(Mark, html=(visit_mark, None))
     app.add_role("sfkind", SpanRole("sf-kind"))
     app.add_role("sfsub", SpanRole("sf-sub"))

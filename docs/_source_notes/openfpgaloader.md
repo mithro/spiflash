@@ -15,5 +15,10 @@ block-protection layout: the `flags` of its records (`bp_offset`,
 capabilities' `via`. The
 opcodes are what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends:
 read, page program, and the erases the table allows. The read and page
-program, sent to every part, are its driver's defaults: they imply no
-capability.
+program, sent to every part, and the 4-byte forms of all of them, which it
+sends for any address above 16 MiB whatever the part, are its driver's
+defaults: they imply no capability.
+
+Its XT25F32B (`0x0b4016`) has `nr_sector = 1024`, which makes the 4 MiB part
+64 MiB: a size the other sources contradict, and the only source of the
+record's `4byte_addr`.

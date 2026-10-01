@@ -539,7 +539,6 @@ def test_openfpgaloader(tmp_path: Path) -> None:
     assert s["id"] == "010219"
     assert s["vendor"] == "spansion"
     assert s["size"] == 32 << 20
-    assert features(s) == ["4byte_addr", "4byte_opcodes", "erase_64k", "lock", "quad_read"]
     assert s["features"] == ["lock", "quad_read"]
     assert s["erasers"] == [{"opcode": 0xD8, "blocks": [[65536, 512]]}]
     assert sector(s) == 65536
@@ -563,9 +562,11 @@ def test_openfpgaloader(tmp_path: Path) -> None:
     }
     assert ops(s)["SE"] == (0xD8, "eraser: 512 x 65536")
     # Every read and write is its driver's, so implies nothing; the erases
-    # the entry allows are the part's.
-    assert assumed(s) == {"READ_1_1_1", "READ_1_1_1_4B", "PP_1_1_1", "PP_1_1_1_4B"}
-    assert "4byte_opcodes" in features(s)  # SE_4B
+    # the entry allows are the part's, but their 4-byte forms the driver's
+    # (any address above 0xffffff, whatever the part).
+    assert assumed(s) == {"READ_1_1_1", "READ_1_1_1_4B", "PP_1_1_1", "PP_1_1_1_4B", "SE_4B"}
+    assert "4byte_opcodes" not in features(s)
+    assert features(s) == ["4byte_addr", "erase_64k", "lock", "quad_read"]
     assert features(r["W25Q128"]) == ["erase_4k", "erase_64k"]
     assert r["W25Q128"]["erasers"] == [
         {"opcode": 0x20, "blocks": [[4096, 4096]]},

@@ -276,8 +276,9 @@ def sector_size(record: Record) -> int | None:
     """The erase block ``record``'s part is usually erased by, from its
     stored erasers: for SPI NAND, the block of its block erase (0xd8); for
     SPI NOR, the block of a uniform 0xd8 eraser, else of a uniform 0xdc
-    (0xd8's 4-byte-address form), else of a uniform 0x52 (the AT25F and
-    SST25LF parts' 32 KiB blocks). ``None`` where the part needs no erase
+    (0xd8's 4-byte-address form), else of a uniform 0x52 (the blocks of the
+    AT25F and SST25LF parts, which have no 0xd8: 32 KiB, or 64 KiB on the
+    AT25F2048 and AT25F4096). ``None`` where the part needs no erase
     (it claims ``no_erase``) or has none of those erasers."""
     if Feature.NO_ERASE in record.stored("features"):
         return None

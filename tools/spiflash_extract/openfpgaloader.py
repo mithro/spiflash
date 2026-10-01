@@ -107,8 +107,9 @@ def _opcodes(
     program for every part (driver defaults: assumed); its sector_erase()
     (0x20) for a table subsector_erase and block64_erase() (0xd8) for
     sector_erase (the erasers give those, but the FLASH_* defines check
-    them); and above 16 MiB the 4-byte form of each. The values are
-    spiFlash.cpp's FLASH_* defines."""
+    them); and above 16 MiB the 4-byte form of each, which its erase
+    functions switch to for any address above 0xffffff, whatever the part:
+    a driver default too. The values are spiFlash.cpp's FLASH_* defines."""
     big = size > 16 * 1024 * 1024
     ops = Opcodes(symbols)
     ops.add("RDID", "JEDEC id match")
@@ -120,9 +121,9 @@ def _opcodes(
     if 0x20 in erasers:
         ops.add("BE_4K", "subsector_erase = true", "FLASH_SE")
         if big:
-            ops.add("BE_4K_4B", "subsector_erase = true, above 16 MiB", "FLASH_4SE")
+            ops.add("BE_4K_4B", "subsector_erase = true, above 16 MiB", "FLASH_4SE", assumed=True)
     if 0xD8 in erasers:
         ops.add("SE", "sector_erase = true", "FLASH_BE64")
         if big:
-            ops.add("SE_4B", "sector_erase = true, above 16 MiB", "FLASH_4BE64")
+            ops.add("SE_4B", "sector_erase = true, above 16 MiB", "FLASH_4BE64", assumed=True)
     return ops.to_json()
