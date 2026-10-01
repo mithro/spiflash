@@ -346,9 +346,9 @@ class Record:
         if facts is not None:
             size = facts.size if size is None else size
             page = facts.page_size if page is None else page
-            erasers += tuple(e for e in facts.erasers if e not in erasers)
         object.__setattr__(self, "size", size)
         object.__setattr__(self, "page_size", page)
+        erasers += tuple(e for e in self.sfdp_erasers if e not in erasers)
         object.__setattr__(self, "erasers", erasers)
         features = self.feature_claims | derive.features(self)
         object.__setattr__(self, "features", features)
@@ -490,11 +490,32 @@ class Record:
         parsed = self.parsed_sfdp
         return parsed.facts() if parsed is not None else None
 
+    @property
+    def sfdp_erasers(self) -> tuple[Eraser, ...]:
+        """The erasers its SFDP tables give, over the record's own
+        :attr:`size`: where the entry states a size the tables contradict
+        (Zephyr's P25Q16H, 2 MiB, carrying a 16 MiB part's BFPT), the
+        record's size is the stated one, and each erase type's blocks are
+        counted over it. An erase type whose block does not divide that size
+        gives none."""
+        facts = self.sfdp_facts
+        if facts is None:
+            return ()
+        if self.size is None or self.size == facts.size:
+            return facts.erasers
+        out = []
+        for e in facts.erasers:
+            (block,) = e.blocks
+            if self.size % block.size == 0:
+                out.append(replace(e, blocks=(EraseBlock(block.size, self.size // block.size),)))
+        return tuple(out)
+
     def sfdp_disagreements(self) -> tuple[SfdpDisagreement, ...]:
         """The values the entry states that its own SFDP tables give
         otherwise: its size or page size (the stated one is the record's
         value, as the upstream's own code uses it), or an eraser whose
-        opcode the tables give with other blocks."""
+        opcode the tables give with other blocks (over the record's size:
+        :attr:`sfdp_erasers`)."""
         facts = self.sfdp_facts
         if facts is None:
             return ()
@@ -506,7 +527,7 @@ class Record:
         out.extend(
             SfdpDisagreement("erasers", e, f)
             for e in self.stored("erasers")
-            for f in facts.erasers
+            for f in self.sfdp_erasers
             if e.opcode is not None and f.opcode == e.opcode and f.blocks != e.blocks
         )
         return tuple(out)

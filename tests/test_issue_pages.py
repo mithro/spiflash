@@ -71,7 +71,7 @@ def test_a_source_disagrees_with_its_own_sfdp() -> None:
     page = generate_all(db, slugs)["sfdp.md"]
     assert "Its SFDP tables say" in page
     assert "0x20, 256 \N{MULTIPLICATION SIGN} 64 KiB" in page
-    assert "0x20, 8,192 \N{MULTIPLICATION SIGN} 4 KiB" in page
+    assert "0x20, 4,096 \N{MULTIPLICATION SIGN} 4 KiB" in page  # over its own 16 MiB
     (f,) = db.flashes
     text = "\n".join(chip_issues(db, slugs, f, found))
     assert "in its SFDP tables" in text

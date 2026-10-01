@@ -334,7 +334,7 @@ def _drop_sfdp(rec: Record) -> None:
     for name in ("size", "page_size"):
         if rec[name] is not None and rec[name] == getattr(facts, name):
             rec[name] = None
-    given = [e.to_json() for e in facts.erasers]
+    given = [e.to_json() for e in Model.from_json(rec).sfdp_erasers]
     kept = [e for e in rec["erasers"] or () if e not in given]
     rec["erasers"] = kept or None
     members = _eraser_members(rec)
