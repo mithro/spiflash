@@ -294,9 +294,12 @@ class DataPhase(StrEnum):
     WRITE = "write"  # the host does
 
 
-class TimingSource(StrEnum):
-    """Where an operation's timing (address size, dummy clocks, bytes moved)
-    comes from. The documentation turns each into a linked explanation."""
+class ShapeSource(StrEnum):
+    """Where an operation's bus shape (address size, dummy clocks, bytes
+    moved) comes from (:attr:`Operation.shape_source
+    <spiflash.opcodes.Operation.shape_source>`): not a duration, which is a
+    :class:`TimedEvent`'s. The documentation turns each into a linked
+    explanation."""
 
     LINUX_DEFAULT = "linux-default"
     LINUX_NO_SFDP = "linux-no-sfdp"

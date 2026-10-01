@@ -295,7 +295,7 @@ Changes in data format 8 (SPI NAND geometry, dies, SPI NAND operations):
   the `NAND_*` ones, [DIE_SELECT](opcodes/DIE_SELECT.md) and
   [DIE_ERASE_61](opcodes/DIE_ERASE_61.md);
   {py:class}`~spiflash.registers.Register` has `NAND_DIE`, and
-  {py:class}`~spiflash.enums.TimingSource` `LINUX_SPINAND`;
+  {py:class}`~spiflash.enums.ShapeSource` (then `TimingSource`) `LINUX_SPINAND`;
 - {py:class}`~spiflash.model.Record` has
   {py:attr}`~spiflash.model.Record.oob_size`,
   {py:attr}`~spiflash.model.Record.planes`,

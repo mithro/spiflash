@@ -14,14 +14,16 @@ so a disagreement fails the build of the data rather than shipping.
 Each operation also says what goes over the bus: how many lines the command,
 address and data use (:attr:`Operation.protocol`), how many address bytes and
 dummy clocks come before the data, and which way the data goes and how much of
-it there is. :attr:`Operation.timing` says where those numbers come from.
+it there is. :attr:`Operation.shape_source` says where those numbers come
+from. It is no duration: how long a part takes to erase, program or wake is
+:attr:`Record.timings <spiflash.model.Record.timings>`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .enums import DataPhase, FlashType, OperationKind, TimingSource
+from .enums import DataPhase, FlashType, OperationKind, ShapeSource
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +51,7 @@ class Operation:
     #: How many data bytes; ``None`` for as many as the host clocks (a read)
     #: or up to a page (a page program).
     data_bytes: int | None = None
-    timing: tuple[TimingSource, ...] = ()
+    shape_source: tuple[ShapeSource, ...] = ()
     flash_type: FlashType = FlashType.NOR
 
     @property
@@ -65,14 +67,14 @@ class Operation:
 
 
 READ, WRITE = DataPhase.READ, DataPhase.WRITE
-_LINUX_READ = (TimingSource.LINUX_DEFAULT,)
-_LINUX_FAST = (TimingSource.LINUX_DEFAULT, TimingSource.FLASHPROG_FEATURES)
-_LINUX_WIDE = (TimingSource.LINUX_NO_SFDP, TimingSource.FLASHPROG_FEATURES)
-_LINUX_4B = (TimingSource.LINUX_4B,)
-_SIZES = (TimingSource.FLASHROM_SIZES,)
+_LINUX_READ = (ShapeSource.LINUX_DEFAULT,)
+_LINUX_FAST = (ShapeSource.LINUX_DEFAULT, ShapeSource.FLASHPROG_FEATURES)
+_LINUX_WIDE = (ShapeSource.LINUX_NO_SFDP, ShapeSource.FLASHPROG_FEATURES)
+_LINUX_4B = (ShapeSource.LINUX_4B,)
+_SIZES = (ShapeSource.FLASHROM_SIZES,)
 
 _NAND = FlashType.NAND
-_SPINAND = (TimingSource.LINUX_SPINAND,)
+_SPINAND = (ShapeSource.LINUX_SPINAND,)
 
 
 def _nand_read(name: str, opcode: int, what: str, protocol: str, dummy: int | None) -> Operation:
@@ -87,7 +89,7 @@ def _nand_read(name: str, opcode: int, what: str, protocol: str, dummy: int | No
         2,
         dummy,
         READ,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     )
 
@@ -104,7 +106,7 @@ def _nand_load(name: str, opcode: int, what: str, protocol: str) -> Operation:
         2,
         0,
         WRITE,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     )
 
@@ -127,7 +129,7 @@ _NAND_OPERATIONS = [
         0,
         0,
         READ,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     ),
     Operation(
@@ -139,7 +141,7 @@ _NAND_OPERATIONS = [
         0,
         8,
         READ,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     ),
     Operation(
@@ -151,7 +153,7 @@ _NAND_OPERATIONS = [
         1,
         0,
         READ,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     ),
     # Read: a page into the cache, then from the cache.
@@ -162,7 +164,7 @@ _NAND_OPERATIONS = [
         "Read a page into the cache",
         "1-1-0",
         3,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     ),
     _nand_read("NAND_READ_CACHE_1_1_1", 0x03, "Read from cache", "1-1-1", 8),
@@ -183,7 +185,7 @@ _NAND_OPERATIONS = [
             3,
             dummy,
             READ,
-            timing=_SPINAND,
+            shape_source=_SPINAND,
             flash_type=_NAND,
         )
         for name, opcode, what, protocol, dummy in (
@@ -209,7 +211,7 @@ _NAND_OPERATIONS = [
         "Program the cache into a page",
         "1-1-0",
         3,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     ),
     # Erase.
@@ -220,7 +222,7 @@ _NAND_OPERATIONS = [
         "Erase a block",
         "1-1-0",
         3,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     ),
     # Features (registers), each read and written by its 1-byte address.
@@ -234,7 +236,7 @@ _NAND_OPERATIONS = [
         0,
         READ,
         1,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     ),
     Operation(
@@ -247,7 +249,7 @@ _NAND_OPERATIONS = [
         0,
         WRITE,
         1,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     ),
     # The bad block lookup table some parts remap blocks with.
@@ -261,7 +263,7 @@ _NAND_OPERATIONS = [
         0,
         WRITE,
         4,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
         flash_type=_NAND,
     ),
     Operation(
@@ -273,7 +275,7 @@ _NAND_OPERATIONS = [
         0,
         8,
         READ,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
         flash_type=_NAND,
     ),
     # Modes. The data byte is the die to select.
@@ -287,7 +289,7 @@ _NAND_OPERATIONS = [
         0,
         WRITE,
         1,
-        timing=_SPINAND,
+        shape_source=_SPINAND,
         flash_type=_NAND,
     ),
 ]
@@ -303,7 +305,7 @@ _ALL = [
         3,
         0,
         READ,
-        timing=_LINUX_READ,
+        shape_source=_LINUX_READ,
     ),
     Operation(
         "READ_1_1_1_FAST",
@@ -314,7 +316,7 @@ _ALL = [
         3,
         8,
         READ,
-        timing=_LINUX_FAST,
+        shape_source=_LINUX_FAST,
     ),
     Operation(
         "READ_1_1_2",
@@ -325,7 +327,7 @@ _ALL = [
         3,
         8,
         READ,
-        timing=_LINUX_WIDE,
+        shape_source=_LINUX_WIDE,
     ),
     Operation(
         "READ_1_2_2",
@@ -336,7 +338,7 @@ _ALL = [
         3,
         4,
         READ,
-        timing=(TimingSource.FLASHPROG_FEATURES,),
+        shape_source=(ShapeSource.FLASHPROG_FEATURES,),
     ),
     Operation(
         "READ_1_1_4",
@@ -347,7 +349,7 @@ _ALL = [
         3,
         8,
         READ,
-        timing=_LINUX_WIDE,
+        shape_source=_LINUX_WIDE,
     ),
     Operation(
         "READ_1_4_4",
@@ -358,7 +360,7 @@ _ALL = [
         3,
         6,
         READ,
-        timing=(TimingSource.FLASHPROG_FEATURES,),
+        shape_source=(ShapeSource.FLASHPROG_FEATURES,),
     ),
     Operation(
         "READ_1_1_8",
@@ -369,7 +371,7 @@ _ALL = [
         3,
         8,
         READ,
-        timing=(TimingSource.LINUX_NO_SFDP,),
+        shape_source=(ShapeSource.LINUX_NO_SFDP,),
     ),
     Operation(
         "READ_1_8_8",
@@ -380,7 +382,7 @@ _ALL = [
         3,
         None,
         READ,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "READ_4_4_4",
@@ -391,7 +393,7 @@ _ALL = [
         3,
         None,
         READ,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "READ_8D_8D_8D",
@@ -402,7 +404,7 @@ _ALL = [
         4,
         20,
         READ,
-        timing=(TimingSource.LINUX_NO_SFDP,),
+        shape_source=(ShapeSource.LINUX_NO_SFDP,),
     ),
     Operation(
         "READ_1_1_1_4B",
@@ -413,7 +415,7 @@ _ALL = [
         4,
         0,
         READ,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "READ_1_1_1_FAST_4B",
@@ -424,7 +426,7 @@ _ALL = [
         4,
         8,
         READ,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "READ_1_1_2_4B",
@@ -435,7 +437,7 @@ _ALL = [
         4,
         8,
         READ,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "READ_1_2_2_4B",
@@ -446,7 +448,7 @@ _ALL = [
         4,
         4,
         READ,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "READ_1_1_4_4B",
@@ -457,7 +459,7 @@ _ALL = [
         4,
         8,
         READ,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "READ_1_4_4_4B",
@@ -468,7 +470,7 @@ _ALL = [
         4,
         6,
         READ,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "READ_4_4_4_4B",
@@ -479,7 +481,7 @@ _ALL = [
         4,
         None,
         READ,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "READ_1_1_8_4B",
@@ -490,7 +492,7 @@ _ALL = [
         4,
         8,
         READ,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "READ_1_8_8_4B",
@@ -501,7 +503,7 @@ _ALL = [
         4,
         None,
         READ,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # Program.
     Operation(
@@ -513,7 +515,7 @@ _ALL = [
         3,
         0,
         WRITE,
-        timing=_LINUX_READ,
+        shape_source=_LINUX_READ,
     ),
     Operation(
         "BP",
@@ -525,7 +527,7 @@ _ALL = [
         0,
         WRITE,
         1,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "AAI_WP",
@@ -537,7 +539,7 @@ _ALL = [
         0,
         WRITE,
         2,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "PP_1_1_4",
@@ -548,7 +550,7 @@ _ALL = [
         3,
         0,
         WRITE,
-        timing=_LINUX_READ,
+        shape_source=_LINUX_READ,
     ),
     Operation(
         "PP_1_4_4",
@@ -559,7 +561,7 @@ _ALL = [
         3,
         0,
         WRITE,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "PP_1_1_8",
@@ -570,7 +572,7 @@ _ALL = [
         3,
         0,
         WRITE,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "PP_1_8_8",
@@ -581,7 +583,7 @@ _ALL = [
         3,
         0,
         WRITE,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "PP_8D_8D_8D",
@@ -592,7 +594,7 @@ _ALL = [
         4,
         0,
         WRITE,
-        timing=(TimingSource.LINUX_NO_SFDP,),
+        shape_source=(ShapeSource.LINUX_NO_SFDP,),
     ),
     Operation(
         "PP_1_1_1_4B",
@@ -603,7 +605,7 @@ _ALL = [
         4,
         0,
         WRITE,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "PP_1_1_4_4B",
@@ -614,7 +616,7 @@ _ALL = [
         4,
         0,
         WRITE,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "PP_1_4_4_4B",
@@ -625,12 +627,12 @@ _ALL = [
         4,
         0,
         WRITE,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # Erase: the command and the address of the block, nothing else.
-    Operation("BE_256", 0xDB, OperationKind.ERASE, "Erase a 256 B page", "1-1-0", 3, timing=_SIZES),
+    Operation("BE_256", 0xDB, OperationKind.ERASE, "Erase a 256 B page", "1-1-0", 3, shape_source=_SIZES),
     Operation(
-        "BE_4K", 0x20, OperationKind.ERASE, "Erase a 4 KiB sector", "1-1-0", 3, timing=_SIZES
+        "BE_4K", 0x20, OperationKind.ERASE, "Erase a 4 KiB sector", "1-1-0", 3, shape_source=_SIZES
     ),
     Operation(
         "BE_4K_PMC",
@@ -639,10 +641,10 @@ _ALL = [
         "Erase a 4 KiB sector (PMC)",
         "1-1-0",
         3,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
-        "BE_32K", 0x52, OperationKind.ERASE, "Erase a 32 KiB block", "1-1-0", 3, timing=_SIZES
+        "BE_32K", 0x52, OperationKind.ERASE, "Erase a 32 KiB block", "1-1-0", 3, shape_source=_SIZES
     ),
     Operation(
         "SE",
@@ -651,7 +653,7 @@ _ALL = [
         "Erase a sector (usually 64 KiB)",
         "1-1-0",
         3,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "BE_ALT1",
@@ -660,7 +662,7 @@ _ALL = [
         "Erase a block (vendor-specific, 0x50)",
         "1-1-0",
         3,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "BE_ALT2",
@@ -669,7 +671,7 @@ _ALL = [
         "Erase a block/page (vendor-specific, 0x81)",
         "1-1-0",
         3,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "BE_40",
@@ -678,7 +680,7 @@ _ALL = [
         "Erase a parameter block (Intel S33, Spansion S25FL-P)",
         "1-1-0",
         3,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "BE_53",
@@ -687,7 +689,7 @@ _ALL = [
         "Erase a 32 KiB block, 4-byte address (Spansion)",
         "1-1-0",
         4,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "BE_4K_4B",
@@ -696,7 +698,7 @@ _ALL = [
         "Erase a 4 KiB sector, 4-byte address",
         "1-1-0",
         4,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "BE_32K_4B",
@@ -705,7 +707,7 @@ _ALL = [
         "Erase a 32 KiB block, 4-byte address",
         "1-1-0",
         4,
-        timing=_LINUX_4B,
+        shape_source=_LINUX_4B,
     ),
     Operation(
         "SE_4B",
@@ -714,21 +716,21 @@ _ALL = [
         "Erase a sector, 4-byte address",
         "1-1-0",
         4,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
-    Operation("CHIP_ERASE", 0xC7, OperationKind.ERASE, "Erase the whole chip", timing=_SIZES),
+    Operation("CHIP_ERASE", 0xC7, OperationKind.ERASE, "Erase the whole chip", shape_source=_SIZES),
     Operation(
         "CHIP_ERASE_ALT",
         0x60,
         OperationKind.ERASE,
         "Erase the whole chip (alternative opcode)",
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
-        "CHIP_ERASE_ATMEL", 0x62, OperationKind.ERASE, "Erase the whole chip (Atmel)", timing=_SIZES
+        "CHIP_ERASE_ATMEL", 0x62, OperationKind.ERASE, "Erase the whole chip (Atmel)", shape_source=_SIZES
     ),
     Operation(
-        "DIE_ERASE", 0xC4, OperationKind.ERASE, "Erase one die (Micron)", "1-1-0", 3, timing=_SIZES
+        "DIE_ERASE", 0xC4, OperationKind.ERASE, "Erase one die (Micron)", "1-1-0", 3, shape_source=_SIZES
     ),
     # Linux's SPINOR_OP_CYPRESS_DIE_ERASE, on parts in 4-byte address mode.
     Operation(
@@ -738,11 +740,11 @@ _ALL = [
         "Erase one die (Infineon S25H and S28H)",
         "1-1-0",
         4,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # Identification.
     Operation(
-        "RDID", 0x9F, OperationKind.ID, "Read JEDEC id", "1-0-1", 0, 0, READ, 3, timing=_SIZES
+        "RDID", 0x9F, OperationKind.ID, "Read JEDEC id", "1-0-1", 0, 0, READ, 3, shape_source=_SIZES
     ),
     Operation(
         "RDID_ATMEL",
@@ -754,7 +756,7 @@ _ALL = [
         0,
         READ,
         2,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "RDID_M95",
@@ -766,7 +768,7 @@ _ALL = [
         0,
         READ,
         3,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "REMS",
@@ -778,7 +780,7 @@ _ALL = [
         0,
         READ,
         2,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     # RES sends three dummy bytes (24 clocks) where others send an address.
     Operation(
@@ -791,7 +793,7 @@ _ALL = [
         24,
         READ,
         1,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "RDSFDP",
@@ -802,7 +804,7 @@ _ALL = [
         3,
         8,
         READ,
-        timing=(TimingSource.JESD216, TimingSource.FLASHROM_SIZES),
+        shape_source=(ShapeSource.JESD216, ShapeSource.FLASHROM_SIZES),
     ),
     # Winbond's unique id: four dummy bytes, then the 64-bit id. Not an OTP
     # read, though some parts keep the id in their OTP area.
@@ -816,7 +818,7 @@ _ALL = [
         32,
         READ,
         8,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # Status and configuration registers.
     Operation(
@@ -829,14 +831,14 @@ _ALL = [
         0,
         WRITE,
         1,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "EWSR",
         0x50,
         OperationKind.REGISTER,
         "Enable write status register (instead of WREN)",
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "WRSR2",
@@ -848,7 +850,7 @@ _ALL = [
         0,
         WRITE,
         1,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "WRSR3",
@@ -860,7 +862,7 @@ _ALL = [
         0,
         WRITE,
         1,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     # The same 0x01 with two or three data bytes: SR1, then SR2 (or a
     # Macronix part's configuration register), then SR3.
@@ -874,7 +876,7 @@ _ALL = [
         0,
         WRITE,
         2,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "WRSR_24",
@@ -886,7 +888,7 @@ _ALL = [
         0,
         WRITE,
         3,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "RDSR2",
@@ -898,7 +900,7 @@ _ALL = [
         0,
         READ,
         1,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     # Winbond's status register 3, and Macronix's configuration register.
     Operation(
@@ -911,7 +913,7 @@ _ALL = [
         0,
         READ,
         1,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "RDSCUR",
@@ -923,14 +925,14 @@ _ALL = [
         0,
         READ,
         1,
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     Operation(
         "WRSCUR",
         0x2F,
         OperationKind.REGISTER,
         "Write security register (set its lock bits)",
-        timing=_SIZES,
+        shape_source=_SIZES,
     ),
     # The one-time-programmable area (OTP). Linux's names for the
     # security-register commands (spi-nor.h SPINOR_OP_RSECR, ...; otp.c
@@ -946,7 +948,7 @@ _ALL = [
         3,
         8,
         READ,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "PSECR",
@@ -957,7 +959,7 @@ _ALL = [
         3,
         0,
         WRITE,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "ESECR",
@@ -966,7 +968,7 @@ _ALL = [
         "Erase a security register (an OTP region)",
         "1-1-0",
         3,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # Micron's and Spansion's "read OTP array" (OTPR): 0x4b with an address
     # and 8 dummy clocks, unlike Winbond's unique id read (RUID).
@@ -979,7 +981,7 @@ _ALL = [
         3,
         8,
         READ,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # Macronix: the OTP area is read and written in place of the array
     # between these two.
@@ -988,14 +990,14 @@ _ALL = [
         0xB1,
         OperationKind.MODE,
         "Enter the secured OTP area",
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "EXSO",
         0xC1,
         OperationKind.MODE,
         "Exit the secured OTP area",
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # Eon: likewise, until write disable (0x04).
     Operation(
@@ -1003,7 +1005,7 @@ _ALL = [
         0x3A,
         OperationKind.MODE,
         "Enter OTP mode (0x3a)",
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "RDFSR",
@@ -1015,28 +1017,28 @@ _ALL = [
         0,
         READ,
         1,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "CLSR",
         0x30,
         OperationKind.REGISTER,
         "Clear status register errors",
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "CLPEF",
         0x82,
         OperationKind.REGISTER,
         "Clear program and erase failure flags",
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "ULBPR",
         0x98,
         OperationKind.REGISTER,
         "Global block protection unlock",
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # Sent in QPI mode, with the parameters as one byte on all four lines.
     Operation(
@@ -1049,14 +1051,14 @@ _ALL = [
         0,
         WRITE,
         1,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # Modes.
     Operation(
-        "EN4B", 0xB7, OperationKind.MODE, "Enter 4-byte address mode", timing=(TimingSource.PART,)
+        "EN4B", 0xB7, OperationKind.MODE, "Enter 4-byte address mode", shape_source=(ShapeSource.PART,)
     ),
     Operation(
-        "EX4B", 0xE9, OperationKind.MODE, "Exit 4-byte address mode", timing=(TimingSource.PART,)
+        "EX4B", 0xE9, OperationKind.MODE, "Exit 4-byte address mode", shape_source=(ShapeSource.PART,)
     ),
     Operation(
         "WREAR",
@@ -1068,7 +1070,7 @@ _ALL = [
         0,
         WRITE,
         1,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "RDEAR",
@@ -1080,7 +1082,7 @@ _ALL = [
         0,
         READ,
         1,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "BRWR",
@@ -1092,7 +1094,7 @@ _ALL = [
         0,
         WRITE,
         1,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "BRRD",
@@ -1104,10 +1106,10 @@ _ALL = [
         0,
         READ,
         1,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
-        "EQPI_38", 0x38, OperationKind.MODE, "Enter QPI mode (0x38)", timing=(TimingSource.PART,)
+        "EQPI_38", 0x38, OperationKind.MODE, "Enter QPI mode (0x38)", shape_source=(ShapeSource.PART,)
     ),
     # In QPI mode the command itself goes out on all four lines.
     Operation(
@@ -1116,10 +1118,10 @@ _ALL = [
         OperationKind.MODE,
         "Exit QPI mode (0xff)",
         "4-0-0",
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
-        "EQPI_35", 0x35, OperationKind.MODE, "Enter QPI mode (0x35)", timing=(TimingSource.PART,)
+        "EQPI_35", 0x35, OperationKind.MODE, "Enter QPI mode (0x35)", shape_source=(ShapeSource.PART,)
     ),
     Operation(
         "RSTQIO_F5",
@@ -1127,7 +1129,7 @@ _ALL = [
         OperationKind.MODE,
         "Exit QPI mode (0xf5)",
         "4-0-0",
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     # The data byte is the die to select (0, 1, ...).
     Operation(
@@ -1140,7 +1142,7 @@ _ALL = [
         0,
         WRITE,
         1,
-        timing=(TimingSource.PART,),
+        shape_source=(ShapeSource.PART,),
     ),
     *_NAND_OPERATIONS,
 ]
