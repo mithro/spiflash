@@ -188,38 +188,90 @@ ALTERNATIVE_TEMPLATES = {
 RES2_MAKERS = {0x62: "Sanyo"}
 
 
-def legacy_ids(chip: dict[str, str], id_hex: str, method: str) -> tuple[list[list[str]], list[str]]:
-    """The ids ``AlternativeID`` says the part also answers, and notes on
-    those left out. Dediprog does not say which command reads it (parse.c
-    and project.c compare it with what the probe read, as with
-    ``UniqueID``); its forms say: one byte is the RES (0xab) electronic
-    signature (M25P16's 0x14, as flashrom's res1 entries for the M25P05 to
-    M25P40-OLD give), two bytes the REMS (0x90) maker and part (W25Q40's
-    0xef12 and EN25QH128's 0x1c17, as their datasheets give). Left out:
-    none, a copy of the id (174 entries; of a legacy id, its tail), a
-    template (:data:`ALTERNATIVE_TEMPLATES`), a one-byte id of a maker
-    whose RES answers two (:data:`RES2_MAKERS`), and three bytes or more."""
-    raw = chip.get("AlternativeID", "").strip()
-    value = raw.lower().removeprefix("0x").lstrip("0") or ""
-    if not value:
-        return [], []
-    value = value.zfill(len(value) + len(value) % 2)
-    if int(value, 16) == int(id_hex, 16) or (method != "rdid" and id_hex.endswith(value)):
-        return [], []
+_NO_RES = (
+    "the M25PX parts answer 0xab only as release from deep power-down, with no "
+    "signature (M25PX80 datasheet, Rev. B, the command table)"
+)
+
+#: ``AlternativeID`` (or ``UniqueID``) values that are wrong, by part and
+#: value as the table writes them, and why, each checked against the part's
+#: datasheet: left out, with a note.
+ALTERNATIVE_WRONG = {
+    (
+        "XM25QH128A",
+        "0x2016",
+    ): "the XM25QH128A answers REMS with 20 17 (its datasheet, Rev. H, Table 6)",
+    ("XM25QU128C", "0x2118"): (
+        "the XM25QU128C answers REMS with 20 17 (its datasheet, Rev. 2.1, 7.1.1)"
+    ),
+    (
+        "ZD25Q40",
+        "0xEF12",
+    ): "0xef is Winbond's maker byte, not Zetta's (0xba): another part's REMS id",
+    ("M25PX80", "0x13"): _NO_RES,
+    ("M25PX16", "0x14"): _NO_RES,
+    ("M25PX32", "0x15"): _NO_RES,
+    ("M25PX64", "0x15"): _NO_RES,
+}
+
+
+def legacy_ids(
+    chip: dict[str, str], id_hex: str, method: str
+) -> tuple[list[list[str]], list[str], bool]:
+    """The ids ``AlternativeID`` and ``UniqueID`` say the part also answers,
+    notes on those left out, and whether ``UniqueID`` was taken (so is no
+    flag). Dediprog does not say which command reads them (parse.c and
+    project.c compare them with what the probe read); their forms say: one
+    byte is the RES (0xab) electronic signature (M25P16's 0x14, as
+    flashrom's res1 entries for the M25P05 to M25P40-OLD give), two bytes the
+    REMS (0x90) maker and part (W25Q40's 0xef12, EN25QH128's 0x1c17 and
+    EN25P20's 0x1c11, as their datasheets give). ``UniqueID`` is mostly the
+    JEDEC id again; only its two-byte REMS forms are taken (Eon's EN25P20,
+    EN25T80, EN25B40, EN25S16), a three-byte one that differs from the id
+    staying a flag. Left out: none, a copy of the id (of a legacy id, its
+    tail), a template (:data:`ALTERNATIVE_TEMPLATES`), a one-byte id of a
+    maker whose RES answers two (:data:`RES2_MAKERS`), a wrong one
+    (:data:`ALTERNATIVE_WRONG`), and three bytes or more."""
+    found: list[list[str]] = []
+    notes: list[str] = []
+    unique_taken = False
     maker = strip_continuation(bytes.fromhex(id_hex))[1][0]
-    token = f"AlternativeID={raw}"
-    if (maker, value) in ALTERNATIVE_TEMPLATES:
-        return [], [f"{token} left out: {ALTERNATIVE_TEMPLATES[(maker, value)]}"]
-    if len(value) == 2:
-        if maker in RES2_MAKERS:
+    for attr in ("AlternativeID", "UniqueID"):
+        raw = chip.get(attr, "").strip()
+        value = raw.lower().removeprefix("0x").lstrip("0") or ""
+        if not value:
+            continue
+        value = value.zfill(len(value) + len(value) % 2)
+        if attr == "UniqueID" and len(value) != 4:
+            continue  # the JEDEC id, or another: not a legacy id
+        if int(value, 16) == int(id_hex, 16) or (method != "rdid" and id_hex.endswith(value)):
+            continue
+        token = f"{attr}={raw}"
+        wrong = ALTERNATIVE_WRONG.get((chip.get("TypeName", ""), raw))
+        if wrong is not None:
+            notes.append(f"{token} left out: {wrong}")
+            unique_taken |= attr == "UniqueID"
+            continue
+        if (maker, value) in ALTERNATIVE_TEMPLATES:
+            notes.append(f"{token} left out: {ALTERNATIVE_TEMPLATES[(maker, value)]}")
+            continue
+        if len(value) == 2 and maker in RES2_MAKERS:
             why = f"{RES2_MAKERS[maker]}'s RES answers two bytes, not one"
-            return [], [f"{token} left out: {why}"]
-        return [["res1", value]], []
-    if len(value) == 4:
-        if id_hex.endswith(value):
-            return [], []  # the id's last two bytes
-        return [["rems", value]], []
-    return [], [f"{token} left out: {len(value) // 2} bytes, not a legacy id"]
+            notes.append(f"{token} left out: {why}")
+            continue
+        if len(value) == 2:
+            given = ["res1", value]
+        elif len(value) == 4:
+            if id_hex.endswith(value):
+                continue  # the id's last two bytes
+            given = ["rems", value]
+        else:
+            notes.append(f"{token} left out: {len(value) // 2} bytes, not a legacy id")
+            continue
+        if given not in found:
+            found.append(given)
+        unique_taken |= attr == "UniqueID"
+    return found, notes, unique_taken
 
 
 class LeftOutError(Exception):
@@ -404,9 +456,13 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         features.add("qpi")
         claims.append(("qpi", "QPIEnable"))
     flags = [f"{key}={chip[key]}" for key in _RAW if chip.get(key)]
+    legacy, legacy_notes, unique_taken = (
+        legacy_ids(chip, id_hex, method) if id_hex else ([], [], False)
+    )
     jedec = chip.get("JedecDeviceID")
-    if chip.get("UniqueID") and jedec and int(chip["UniqueID"], 16) != int(jedec, 16):
-        flags.append(f"UniqueID={chip['UniqueID']}")
+    unique = chip.get("UniqueID")
+    if unique and jedec and int(unique, 16) != int(jedec, 16) and not unique_taken:
+        flags.append(f"UniqueID={unique}")
     flags += [key for key in _BOOLEANS if "true" in chip.get(key, "")]
     via = feature_via(claims)
     quad_enable, qe_notes = _quad_enable(chip) if typ == "nor" and not dataflash else (None, [])
@@ -424,7 +480,6 @@ def _record(line: int, chip: dict[str, str]) -> Record:
     if voltage not in VOLTAGES:
         msg = f"Voltage={voltage!r}: not one of {sorted(VOLTAGES)}"
         raise ValueError(msg)
-    legacy, legacy_notes = legacy_ids(chip, id_hex, method) if id_hex else ([], [])
     return make(
         "dediprog",
         DB,
