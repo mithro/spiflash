@@ -705,3 +705,28 @@ def test_no_flag_a_phase_6_field_holds(source: str, pattern: str) -> None:
     rx = re.compile(pattern)
     found = [f for r in RECORDS if r["source"] == source for f in r["flags"] if rx.match(f)]
     assert not found
+
+
+def test_no_security_register_commands_on_a_function_register_part() -> None:
+    # On ISSI's parts 0x48 and 0x42 read and write the function register,
+    # so a chip with a bit there has no RSECR or PSECR (flashrom's IS25LP
+    # and IS25WP OTP comments name them wrongly).
+    def function_bits(f: spiflash.Flash) -> bool:
+        bits = [b for r in f.records if r.protection for b in r.protection.roles().values()]
+        bits += [r.quad_enable for r in f.records if isinstance(r.quad_enable, RegisterBit)]
+        return any(b.register is Register.FUNCTION for b in bits)
+
+    chips = [f for f in spiflash.flashes() if function_bits(f)]
+    assert chips
+    assert not [f.key for f in chips if {"RSECR", "PSECR"} & set(f.opcodes)]
+    issi = [d for d in RECORDS if d["source"] == "flashrom" and d["name"] == "IS25LP128"]
+    (d,) = issi
+    assert d["otp"] == {"size": 1024}
+    assert any("function register" in n for n in d["notes"])
+
+
+def test_otp_sizes_the_comments_get_wrong_are_the_datasheets() -> None:
+    for name in ("S25FL132K", "W25Q40.V"):
+        for d in [d for d in RECORDS if d["name"] == name and d["otp"]]:
+            assert d["otp"]["size"] == 768, _where(d)
+            assert any(n.startswith("OTP area 768 B") for n in d["notes"]), _where(d)

@@ -852,7 +852,12 @@ def test_flashrom_four_byte_modes_and_otp(tmp_path: Path) -> None:
         ("OTP: 1024B total, 256B reserved; read 0x48; write 0x42 (B version only)", None, None),
         ("OTP: 1024B total, 256B reserved, later 3x 512B; read 0x48", None, None),
         ("OTP: 06E 64B total; enter 0xB1, exit 0xC1", None, None),
-        ("OTP: 256B total; enter 0x3A, (A version only:) read ID 0x4B", None, None),
+        # A command qualified to one model is left out, the rest taken.
+        (
+            "OTP: 256B total; enter 0x3A, (A version only:) read ID 0x4B",
+            {"size": 256},
+            ["ENTER_OTP_3A"],
+        ),
         ("OTP: MX25L12833F has 1KB total, others have 512B total", None, None),
     ],
 )
@@ -2350,6 +2355,32 @@ def test_dediprog_legacy_ids(
     assert w["legacy_ids"] == legacy
     assert any(n.startswith(f"AlternativeID={alternative} left out") for n in w["notes"]) is noted
     assert not any(f.startswith("AlternativeID") for f in w["flags"])
+
+
+def test_dediprog_wrong_legacy_ids_are_left_out(tmp_path: Path) -> None:
+    # The XM25QH128A answers REMS with 20 17 (its datasheet), not 0x2016.
+    (w,) = dediprog_chip(tmp_path, TypeName="XM25QH128A", AlternativeID="0x2016")
+    assert w["legacy_ids"] == []
+    assert any("answers REMS with 20 17" in n for n in w["notes"])
+    # The M25PX parts give no RES signature.
+    (m,) = dediprog_chip(tmp_path, TypeName="M25PX80", AlternativeID="0x13")
+    assert m["legacy_ids"] == []
+    assert any("no signature" in n for n in m["notes"])
+
+
+def test_dediprog_unique_id_in_rems_form_is_a_legacy_id(tmp_path: Path) -> None:
+    # Eon's EN25P20 gives UniqueID 0x1C11, its REMS answer (datasheet Table 5):
+    # a legacy id, not a flag; a three-byte UniqueID that differs from the id
+    # stays a flag.
+    (e,) = dediprog_chip(tmp_path, AlternativeID=None, UniqueID="0x1C11")
+    assert e["legacy_ids"] == [["rems", "1c11"]]
+    assert not any(f.startswith("UniqueID") for f in e["flags"])
+    (o,) = dediprog_chip(tmp_path, AlternativeID=None, UniqueID="0xEF4017")
+    assert o["legacy_ids"] == []
+    assert "UniqueID=0xEF4017" in o["flags"]
+    # The same id twice (AlternativeID and UniqueID) is one.
+    (t,) = dediprog_chip(tmp_path, AlternativeID="0x1C11", UniqueID="0x1C11")
+    assert t["legacy_ids"] == [["rems", "1c11"]]
 
 
 @pytest.mark.parametrize(("voltage", "mv"), [("1.2V", 1200), ("2.5V", 2500), ("1.8V", 1800)])

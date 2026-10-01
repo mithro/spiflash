@@ -134,6 +134,43 @@ OTP_COMMANDS: dict[str, str | None] = {
 OTP_READ = "READ_OTP"
 
 
+#: OTP comments whose size is wrong, by entry name and comment: the
+#: user-programmable bytes the part's datasheet gives, and why. The record
+#: stores the datasheet's, with a note.
+OTP_SIZE_WRONG: dict[tuple[str, str], tuple[int, str]] = {
+    ("S25FL132K", "OTP: 768B total, 256B reserved; read 0x48; write 0x42, erase 0x44"): (
+        768,
+        (
+            "the S25FL1-K datasheet (8.3) gives four 256-byte security registers, register "
+            "0 holding the SFDP tables: three, 768 bytes, are the user's"
+        ),
+    ),
+    ("W25Q40.V", "OTP: 756B total; read 0x48; write 0x42, erase 0x44, read ID 0x4B"): (
+        768,
+        (
+            "the W25Q40BV has four 256-byte security registers, of which Winbond reserves "
+            "register 0: 768 bytes are the user's (756 is a typo)"
+        ),
+    ),
+}
+
+#: Makers (their JEDEC byte) whose OTP comments name the wrong commands,
+#: and the operations left out, with why: on ISSI's parts 0x48 and 0x42
+#: read and write the function register (as openFPGALoader's FUNCR TB is
+#: read, spiFlash.cpp), and the OTP area is the information row, read,
+#: programmed and erased with 0x68, 0x62 and 0x64 (IS25LP128 datasheet;
+#: flashrom's own IS25LP256 comment).
+OTP_COMMANDS_WRONG: dict[int, tuple[frozenset[str], str]] = {
+    0x9D: (
+        frozenset({"RSECR", "PSECR", "ESECR"}),
+        (
+            "0x48 and 0x42 are ISSI's function register read and write, not its OTP "
+            "area, the information row (0x68, 0x62, 0x64)"
+        ),
+    ),
+}
+
+
 def otp(note: str) -> tuple[dict[str, int], list[str]] | None:
     """The OTP area and the operations an OTP comment gives, where it is
     about the whole entry: ``"OTP: 1024B total; read 0x48; write 0x42,
@@ -145,7 +182,8 @@ def otp(note: str) -> tuple[dict[str, int], list[str]] | None:
     exposes. A comment qualified to
     another model of the entry (``"(B version only)"``, ``"later 3x
     1024B"``, ``"06E 64B total"``), or in any form not written here, is
-    ``None``, and stays a note."""
+    ``None``, and stays a note; a command qualified so (``"(A version
+    only:) read ID 0x4B"``) is left out, the rest taken."""
     m = _OTP.fullmatch(note) or _OTP_REGIONS.fullmatch(note)
     if m is None:
         return None
@@ -159,6 +197,8 @@ def otp(note: str) -> tuple[dict[str, int], list[str]] | None:
     verb = ""
     for given in re.split(r"[;,]", (m.groupdict().get("ops") or "").strip()):
         item = re.sub(r"0x([0-9a-f]{2})", lambda h: "0x" + h[1].upper(), given.strip())
+        if re.match(r"\([^)]* only:?\)", item):
+            continue  # "(A version only:) read ID 0x4B": one model's command
         if re.fullmatch(r"0x[0-9A-F]{2}", item):
             item = f"{verb} {item}"  # "read 0x4B, 0x48": the verb before
         if not item:
@@ -346,10 +386,19 @@ def _record(
     otp_area: dict[str, int] | None = None
     otp_ops: list[tuple[str, str]] = []
     otp_via: dict[str, str] = {}
-    for note, (area, ops) in parsed.items():
-        otp_area, otp_ops = area, [(op, note) for op in ops]
-        otp_via = {"otp": "; ".join([note, *(fl for fl in flags if fl == "FEATURE_OTP")])}
+    for note, (given, named) in parsed.items():
         notes.remove(note)
+        otp_area = given
+        fixed = OTP_SIZE_WRONG.get((name, note))
+        if fixed is not None:
+            notes.append(f"OTP area {fixed[0]} B, not the comment's {given['size']} B: {fixed[1]}")
+            otp_area = {**given, "size": fixed[0]}
+        wrong_ops, why = OTP_COMMANDS_WRONG.get(mfr & 0xFF, (frozenset(), ""))
+        if wrong_ops & set(named):
+            left = sorted(wrong_ops & set(named))
+            notes.append(f"OTP comment's {', '.join(left)} left out: {why}")
+        otp_ops = [(op, note) for op in named if op not in wrong_ops]
+        otp_via = {"otp": "; ".join([note, *(fl for fl in flags if fl == "FEATURE_OTP")])}
     modes = {fl: FOUR_BYTE_MODES[fl] for fl in flags if fl in FOUR_BYTE_MODES}
     mode_via = {f"four_byte_modes:{mode}": fl for fl, mode in modes.items()}
     bits = _reg_bits(f.get("reg_bits", ""))
