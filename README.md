@@ -22,7 +22,7 @@ merged from the flash tables of every project that keeps one:
 Together that is 1347 distinct chip ids (1056 SPI NOR, 291 SPI NAND) from 64
 manufacturers, 849 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
-from, and where the sources disagree (92 ids do) both answers are kept.
+from, and where the sources disagree (114 ids do) both answers are kept.
 Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
 (JESD216) tables, and sixteen more the tables Zephyr's boards copy, decoded;
 what the tables say is worked out from them, not stored again.
@@ -106,7 +106,7 @@ wildcards (`W25Q128.V`) are understood.
 Which opcodes does a part support?
 
 ```console
-$ spiflash opcodes W25Q128JV           # or by id: spiflash opcodes ef4018
+$ spiflash opcodes ef4018              # or a part name, W25Q128JV: ef4018 and ef7018 both
 ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
     0x9f  RDID             Read JEDEC id  [flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr]
     0x5a  RDSFDP           Read SFDP (JESD216) parameters  [flashrom, flashprog]
@@ -270,7 +270,8 @@ is not listed may still be supported: no source here describes every opcode of
 every part, and parts that Linux reads from SFDP get their read, program and
 erase opcodes from the chip at run time, so Linux lists only its defaults for
 them. Parts sharing an id can differ too; `because` says who vouches for what.
-SPI NAND parts have no opcodes listed.
+SPI NAND parts list their own operations (`NAND_PAGE_READ`, `NAND_READ_CACHE_1_1_4`,
+...): `spiflash opcodes c22603`.
 
 ## SFDP
 
@@ -397,6 +398,7 @@ d.fields, d.dwords, d.tables, d.describe()
 ## Datasheets
 
 ```python
+chip = spiflash.lookup("ef4018")[0]      # the W25Q128JV again (the SFDP examples took W25Q512JV)
 d = chip.datasheets[0]                   # the best first
 d.url, d.revision, d.date                # ('https://www.winbond.com/resource-files/W25Q128JV...pdf', 'Revision H', ...)
 d.official                               # True: the manufacturer's own site

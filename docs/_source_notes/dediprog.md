@@ -149,8 +149,8 @@ taken. Its `SupportLUT` is the bad block lookup table's swap and read
 [NAND_READ_BBM_LUT](../opcodes/NAND_READ_BBM_LUT.md)), and its read-id is
 SPI NAND's, from the id method.
 
-`ChipEraseTime` (seconds; set on 1,747 entries, 0 on 846) is a chip erase
-time whose bound the table does not say: the record's
+`ChipEraseTime` (seconds; on 1,747 entries: 901 give a time, 846 give 0)
+is a chip erase time whose bound the table does not say: the record's
 `chip_erase.unspecified` ([](../derived.md#times)), 0 being not given.
 Against nine datasheets it is the maximum three times (W25Q16JV 25 s,
 GD25Q32C 80 s, AT25SF128A 120 s), the typical twice (W25Q64JV 20 s, where

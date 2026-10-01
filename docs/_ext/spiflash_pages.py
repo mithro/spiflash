@@ -1159,6 +1159,7 @@ def stats(db: Database) -> dict[str, int]:
         "records": len(db.records),
         "multi": sum(1 for f in fl if len(f.sources) > 1),
         "jep106": len(db.manufacturers),
+        "sfdp": sum(1 for f in fl if f.sfdp_dumps),
     }
 
 

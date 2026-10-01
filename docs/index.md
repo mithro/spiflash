@@ -5,11 +5,16 @@
 {sfsrc}`imsprog` and {sfsrc}`qemu`, and from the flash chips {sfsrc}`zephyr`'s boards describe. For each chip id:
 
 - its part names, size, page and sector sizes, erase layouts, supply voltage,
-  capabilities and [opcodes](opcodes.md);
+  capabilities and [opcodes](opcodes.md) with their dummy clocks;
+- its status and configuration registers (the quad enable and block-protection
+  bits), its ways into 4-byte addressing, its OTP area, its dies, a SPI NAND
+  part's spare area, planes and ECC requirement, its legacy (RES, REMS) ids,
+  and its erase, program and power-down [times](derived.md#times);
 - every value traced back to the upstream line it came from, and every
   [disagreement between the sources](issues/index.md) kept;
 - the [SFDP](https://www.jedec.org/standards-documents/docs/jesd216b) (JESD216)
-  tables, decoded, of the parts {sfsrc}`qemu` has them for;
+  tables, decoded, of the {{sfdp}} chip ids that have them: the dumps {sfsrc}`qemu`
+  ships, and the tables {sfsrc}`zephyr`'s boards copy;
 - links to its datasheets.
 
 ::::{grid} 2 3 3 3
