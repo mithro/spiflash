@@ -7,6 +7,8 @@ body {
   --sf-border: var(--color-background-border);
   --sf-row-alt: var(--color-background-secondary);
   --sf-yes: #16a34a;
+  /* The ring around a page's own source label, whatever its text colour. */
+  --sf-ring: #fff;
 }
 
 /* Furo's content is 46em wide whatever the window: the wide tables scroll
@@ -71,6 +73,7 @@ h1 + p .sf-id { font-size: 1em; }
 .sf-src-linux { background: #1d4ed8; }
 .sf-src-u-boot { background: #7c3aed; }
 .sf-src-dediprog { background: #a21caf; }
+.sf-src-rockchip { background: #facc15; }
 .sf-src-mediatek { background: #005870; }
 .sf-src-openocd { background: #0f766e; }
 .sf-src-openfpgaloader { background: #be185d; }
@@ -80,7 +83,9 @@ h1 + p .sf-id { font-size: 1em; }
 /* A linked label (to the upstream line) and the page's own source. */
 a.sf-src-link { text-decoration: none; }
 a.sf-src-link:hover .sf-src { filter: brightness(1.2); text-decoration: underline; }
-.sf-src-mine { box-shadow: 0 0 0 2px var(--color-background-primary, #fff), 0 0 0 4px currentColor; color: #fff; outline: 2px solid #111827; outline-offset: 1px; }
+.sf-src-mine { box-shadow: 0 0 0 2px var(--color-background-primary, #fff), 0 0 0 4px var(--sf-ring); color: #fff; outline: 2px solid #111827; outline-offset: 1px; }
+/* The one light label: dark text, on its own page too. */
+.sf-src.sf-src-rockchip { color: #1c1917; }
 
 /* Summary cards on a chip page. */
 .sf-cards { margin: 1rem 0 1.5rem; }
@@ -92,11 +97,13 @@ a.sf-src-link:hover .sf-src { filter: brightness(1.2); text-decoration: underlin
   margin-bottom: 0.2rem;
 }
 .sf-card .sd-card-body { padding: 0.8rem 1rem; }
-.sf-card .sd-card-body p:last-child {
+/* The card's value, big; a note under it (parts that differ), small. */
+.sf-card .sd-card-body p:first-of-type {
   font-size: 1.45em;
   font-weight: 650;
   margin: 0;
 }
+.sf-card .sd-card-body p + p { font-size: 0.85em; margin: 0.2rem 0 0; }
 .sf-vendor-card { transition: transform 0.12s ease, box-shadow 0.12s ease; }
 .sf-vendor-card:hover { transform: translateY(-2px); }
 

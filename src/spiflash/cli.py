@@ -48,8 +48,15 @@ def opcode_table(f: Flash, *, verbose: bool = False) -> list[str]:
 
 
 def header(f: Flash) -> str:
-    """The first line describing a chip: its id, maker, part names and type."""
-    return f"{f.key}  {f.manufacturer or '?'}  {', '.join(f.names)}  ({f.type})"
+    """The first line describing a chip: its id, maker (marked where no
+    source names it), part names and type."""
+    maker = f"{f.manufacturer} (inferred)" if f.manufacturer_inferred else f.manufacturer or "?"
+    return f"{f.key}  {maker}  {', '.join(f.names)}  ({f.type})"
+
+
+def volts(v: tuple[int, int]) -> str:
+    """A supply range in volts: ``2.7-3.6 V``."""
+    return f"{v[0] / 1000:g}-{v[1] / 1000:g} V"
 
 
 def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
@@ -60,7 +67,7 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
     if f.sector_size:
         detail.append(f"sector {human_size(f.sector_size)}")
     if f.voltage:
-        detail.append(f"{f.voltage[0] / 1000:g}-{f.voltage[1] / 1000:g} V")
+        detail.append(volts(f.voltage))
     lines.append("    " + ", ".join(detail))
     if f.features:
         lines.append("    features: " + " ".join(sorted(f.features)))
@@ -70,6 +77,11 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             f"{tuple(v) if isinstance(v, tuple) else v} ({', '.join(s)})" for v, s in vals.items()
         )
         lines.append(f"    sources disagree on {attr}: {said}")
+    for attr in ("size", "page_size", "sector_size", "voltage"):
+        if parts := f.by_ext_id(attr):
+            show = volts if attr == "voltage" else human_size
+            said = ", ".join(f"{show(v)} ({e.hex()})" for e, v in parts.items() if v)
+            lines.append(f"    parts differ on {attr} by ext id: {said}")
     if verbose:
         for r in f.records:
             ext = f" ext {r.ext_id.hex()}" if r.ext_id else ""

@@ -147,10 +147,18 @@ def _answers(pairs: Iterable[tuple[Any, Record]]) -> tuple[Answer, ...]:
 def _values(flashes: Iterable[Flash]) -> Iterator[Issue]:
     for f in flashes:
         for attr in ATTRIBUTES:
-            answers = _answers((getattr(r, attr), r) for r in f.records)
-            # One source alone giving two values is the next check's.
-            sources = {r.source for a in answers for r in a.records}
-            if len(answers) > 1 and len(sources) > 1:
+            # Only records describing one part are compared: an extended id
+            # tells two parts at one id apart (Flash.variants). The issue
+            # gathers every variant whose sources disagree.
+            disagree: dict[int, Record] = {}
+            for variant in f.variants:
+                answers = _answers((getattr(r, attr), r) for r in variant)
+                # One source alone giving two values is the next check's.
+                sources = {r.source for a in answers for r in a.records}
+                if len(answers) > 1 and len(sources) > 1:
+                    disagree.update((id(r), r) for r in variant)
+            if disagree:
+                answers = _answers((getattr(r, attr), r) for r in disagree.values())
                 yield Issue(IssueKind.VALUE, f.key, (f,), answers, attribute=attr)
 
 
@@ -199,7 +207,7 @@ def _datasheets(flashes: Iterable[Flash]) -> Iterator[Issue]:
     for f in flashes:
         for part in f.names:
             own = tuple(d for d in f.datasheets if part in d.parts)
-            if own and not any(f.key in d.confirmed for d in own):
+            if own and not any(f.confirms(d) for d in own):
                 listing = tuple(r for r in f.records if part in r.part_names)
                 yield Issue(
                     IssueKind.DATASHEET,

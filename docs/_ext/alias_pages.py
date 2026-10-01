@@ -13,6 +13,10 @@ chip up by its part number. For each name in :attr:`spiflash.Flash.names`
   the name under it, and links to each. The data issues pages explain the
   disagreement ("One part, several ids").
 
+It also writes a redirect for each SPI NAND id folded into a longer one
+(:attr:`spiflash.Flash.ids`), from the page that id had before
+(``chips/98e2-nand.html``) to its chip's (``chips/98e240-nand.html``).
+
 Names are skipped, never mangled into something else:
 
 - flashrom's wildcards (``W25Q128.V``): the ``.`` stands for any character,
@@ -44,7 +48,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -221,6 +225,25 @@ def generate_all(found: Aliases, suffix: str = ".html") -> dict[str, str]:
     return pages
 
 
+def folded_pages(
+    flashes: Iterable[Flash], taken: Iterable[str], suffix: str = ".html"
+) -> dict[str, str]:
+    """A redirect from the page a folded SPI NAND id had (``98e2-nand``,
+    before it joined the TC58CVG0S3HRAIJ's ``98e240``; see
+    :attr:`spiflash.Flash.ids`) to its chip's page, so links to it still
+    work. ``taken`` are the real pages and the part-name pages, which win."""
+    reserved = {t.casefold() for t in taken}
+    pages = {}
+    for f in flashes:
+        for short in f.ids[1:]:
+            old = chip_slug(replace(f, id=short))
+            if old.casefold() in reserved:
+                logger.warning("folded id page %s is taken: no redirect", old)
+                continue
+            pages[old + suffix] = redirect_page(old, chip_slug(f) + suffix)
+    return pages
+
+
 def write(chips_dir: Path, pages: dict[str, str]) -> None:
     """Write ``pages`` into ``chips_dir``, and remove the alias pages an
     earlier build wrote that are no longer wanted. A file this module did
@@ -248,13 +271,15 @@ def _build_finished(app: Sphinx, exception: Exception | None) -> None:
     taken |= {chip_slug(f) for f in db.flashes}
     found = aliases(db.flashes, taken)
     pages = generate_all(found, builder.out_suffix)
-    write(Path(app.outdir) / "chips", pages)
+    folds = folded_pages(db.flashes, taken | set(found.names), builder.out_suffix)
+    write(Path(app.outdir) / "chips", {**pages, **folds})
     choices = sum(len(chips) > 1 for chips in found.names.values())
     why = Counter(found.skipped.values())
     logger.info(
-        "alias pages: %d redirects, %d disambiguation pages, %d names skipped (%s)",
+        "alias pages: %d redirects, %d disambiguation pages, %d folded ids, %d names skipped (%s)",
         len(pages) - choices,
         choices,
+        len(folds),
         len(found.skipped),
         ", ".join(f"{n} {r}" for r, n in sorted(why.items())) or "none",
     )

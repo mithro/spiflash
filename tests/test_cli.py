@@ -30,6 +30,28 @@ def test_id(capsys: pytest.CaptureFixture[str]) -> None:
     assert "from: flashrom" in out
 
 
+def test_id_finds_a_folded_nand_id(capsys: pytest.CaptureFixture[str]) -> None:
+    # Linux matches the TC58CVG0S3HRAIJ's first two bytes, Dediprog three.
+    for query in ("98e2", "98e240"):
+        code, out = run(capsys, "id", "--type", "nand", query)
+        assert code == 0
+        assert out.startswith("98e240  Toshiba  TC58CVG0S3HRAIJ"), query
+
+
+def test_id_marks_an_inferred_manufacturer(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "--type", "nand", "c952")
+    assert out.startswith("c952  HeYangTek (inferred)  HYF2GQ4UAACAE")
+    _, out = run(capsys, "id", "ef4018")
+    assert "(inferred)" not in out
+
+
+def test_id_json_lists_every_id(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "--json", "--type", "nand", "c226")
+    (doc,) = json.loads(out)
+    assert (doc["id"], doc["ids"]) == ("c22603", ["c22603", "c226"])
+    assert doc["manufacturer_inferred"] is False
+
+
 def test_id_verbose_lists_records(capsys: pytest.CaptureFixture[str]) -> None:
     _, out = run(capsys, "id", "-v", "01 20 18 4d 01 80")
     assert "ext 4d0180" in out
@@ -259,3 +281,17 @@ def test_sfdp_garbage() -> None:
 
 def test_sfdp_summary() -> None:
     assert cli.sfdp_summary(parse(W25Q512JV)) == "JESD216B (BFPT 1.6, 4BAIT 1.0)"
+
+
+def test_id_says_where_parts_differ_by_ext_id(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "--type", "nand", "c841")
+    assert "    parts differ on size by ext id: 256 MiB (7f), 128 MiB (c8)\n" in out
+    _, out = run(capsys, "id", "--type", "nand", "c8417f")
+    assert "parts differ" not in out
+    assert "datasheet:" not in out  # GigaDevice's is not the F50L2G41KA's
+
+
+def test_id_says_where_parts_differ_on_supply(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "010220")
+    assert "parts differ on voltage by ext id: " in out
+    assert "1.7-2 V (4d0081)" in out

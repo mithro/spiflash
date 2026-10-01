@@ -84,10 +84,22 @@ Each is named by its part, its id and, for a wrong size, that size, so an
 entry corrected upstream is taken again, and the extraction stops on a
 known error that is no longer there, for it to be removed.
 
+The table names no manufacturer. As for {sfsrc}`rockchip`, a chip that only
+MediaTek lists gets the manufacturer inferred from the other sources' parts
+that answer its first id byte and whose names start like its own (Etron for
+the EM73 parts, ESMT for the F50L2G41LB). A part MediaTek lists under another
+maker's id does not count for that maker: the F50L1G41A, on GigaDevice's
+{sfid}`c8 21`, does not make the F50 parts GigaDevice's. Its two-byte ids
+that start a longer id another source gives for the same part fold into it,
+as {sfsrc}`rockchip`'s do: eleven of them (the MX35LF2G24AD's {sfid}`c2 24`
+into {sfid}`c2 24 03`, the GD5F4GQ4UCxIG's {sfid}`c8 b4` into
+{sfid}`c8 b4 68`, ...).
+
 The table is a chip vendor's production data, the geometry its boards boot
-with, which puts it just after {sfsrc}`dediprog`. It is not reviewed in the
-open, though, and has the errors above, so it ranks below the curated
-tables. It is the only source here for many Etron parts, the older Micron
-MT29F1G01AAADD and MT29F4G01AAADD, and HeYangTek's HYF1GQ4U and HYF2GQ4U.
+with, like {sfsrc}`rockchip`'s, but SPI NAND only, which puts it just after
+Rockchip. It is not reviewed in the open, though, and has the errors above,
+so it ranks below the curated tables. It is the only source here for many
+Etron parts, the older Micron MT29F1G01AAADD and MT29F4G01AAADD, and
+HeYangTek's HYF1GQ4U.
 [Its data issues page](../issues/source-mediatek.md) lists where it
 disagrees with the others.

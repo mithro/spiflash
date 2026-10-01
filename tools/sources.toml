@@ -49,6 +49,21 @@ paths = ["ChipInfoDb.dedicfg"]
 # Its LICENSE is the GPL, version 2; the files carry no licence header.
 license = "GPL-2.0-only"
 
+[rockchip]
+url = "https://github.com/rockchip-linux/u-boot"
+# next-dev is the branch Rockchip maintains rkflash on, and the default one;
+# v5, on a newer U-Boot, has no rkflash.
+branch = "next-dev"
+commit = "1c535d65b8509f388d09e49fb6961f49fda35a1d"
+paths = [
+    "drivers/rkflash/sfc_nor.c",
+    "drivers/rkflash/sfc_nor.h",
+    "drivers/rkflash/sfc_nand.c",
+    "drivers/rkflash/sfc_nand.h",
+    "drivers/rkflash/sfc.h",
+]
+license = "GPL-2.0-only"
+
 [mediatek]
 url = "https://github.com/mtk-openwrt/u-boot"
 # mtksoc is the default branch, which MediaTek's OpenWrt builds use; the

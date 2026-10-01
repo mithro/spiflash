@@ -6,7 +6,7 @@ name: Upstream flash tables
 #    tools/sources.toml produce? A hand edit, or an extractor change committed
 #    without regenerating, fails here.
 # 2. "latest": have the upstreams (flashrom, flashprog, Linux, U-Boot, Dediprog,
-#    MediaTek, OpenOCD, openFPGALoader, IMSProg, QEMU, Zephyr) changed their
+#    Rockchip, MediaTek, OpenOCD, openFPGALoader, IMSProg, QEMU, Zephyr) changed their
 #    flash tables since? Weekly, since that is when drift arrives. A red run means:
 #    `uv run tools/update_db.py --latest`, review the diff of the data, commit.
 #
@@ -47,6 +47,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Is the committed data what the pinned upstream commits give?
         run: uv run --no-project tools/update_db.py --check
+      # The README's and the front page's `spiflash` examples print the data:
+      # a refresh changes them too, and this says so before deb.yml does.
+      - name: Do the documented examples still print what the command prints?
+        run: uv run pytest -q -p no:cacheprovider --no-cov tests/test_doc_examples.py
 
   latest:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -63,5 +67,7 @@ jobs:
           echo "::error::An upstream flash table changed (or its format did)."
           echo "Run \`uv run tools/update_db.py --latest\`, check the diff of"
           echo "src/spiflash/data/, and commit it with tools/sources.toml."
+          echo "Update the README's and docs/index.md's examples to what the"
+          echo "command now prints (\`uv run pytest tests/test_doc_examples.py\`)."
           echo "If an extractor raised instead, the upstream changed its format:"
           echo "fix the extractor in tools/spiflash_extract/ and add a test."

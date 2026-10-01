@@ -4,8 +4,9 @@ The [Linux](https://www.kernel.org/) kernel's memory technology device
 {upstream}`linux:drivers/mtd/nand/spi/`. Each keeps a table per vendor
 ({upstream}`winbond.c <linux:drivers/mtd/spi-nor/winbond.c>`,
 {upstream}`macronix.c <linux:drivers/mtd/spi-nor/macronix.c>`, ...) of the parts it knows, so that a board's
-flash works without the board naming it. With {sfsrc}`dediprog`, it is one
-of the two sources here with SPI NAND.
+flash works without the board naming it. With {sfsrc}`dediprog`,
+{sfsrc}`rockchip` and {sfsrc}`imsprog`, it is one of the four sources here with
+SPI NAND.
 
 Since Linux 6.8 a SPI NOR entry is a `struct flash_info` designated
 initialiser, `.id = SNOR_ID(0xef, 0x40, 0x18)`, with its size, flags and

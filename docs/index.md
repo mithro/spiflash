@@ -1,7 +1,7 @@
 # spiflash
 
 **A database of SPI flash chips**, merged from the flash tables of {sfsrc}`flashrom`,
-{sfsrc}`flashprog`, {sfsrc}`linux`, {sfsrc}`u-boot`, {sfsrc}`dediprog`, {sfsrc}`mediatek`, {sfsrc}`openocd`, {sfsrc}`openfpgaloader`,
+{sfsrc}`flashprog`, {sfsrc}`linux`, {sfsrc}`u-boot`, {sfsrc}`dediprog`, {sfsrc}`rockchip`, {sfsrc}`mediatek`, {sfsrc}`openocd`, {sfsrc}`openfpgaloader`,
 {sfsrc}`imsprog` and {sfsrc}`qemu`, and from the flash chips {sfsrc}`zephyr`'s boards describe. For each chip id:
 
 - its part names, size, page and sector sizes, erase layouts, supply voltage,
@@ -98,7 +98,7 @@ The SPI operations, their opcodes, and how many parts list each.
 :link: sources/index
 :link-type: doc
 
-The eleven upstream projects the data is merged from: what each gives, and every entry taken.
+The twelve upstream projects the data is merged from: what each gives, and every entry taken.
 :::
 
 :::{grid-item-card} {octicon}`search` Search
@@ -114,10 +114,10 @@ Every part name and id is in the site's search: try `W25Q128JV` or `ef 40 18`.
 ```console
 $ pip install spiflash
 $ spiflash id ef4018
-ef4018  Winbond  W25Q128, W25Q128JV, W25Q128BV, W25Q128FV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
+ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
     size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
     features: dual_read erase_32k erase_4k erase_64k fast_read lock otp qpi quad_pp quad_read sfdp
-    from: flashrom, flashprog, linux, u-boot, dediprog, openocd, openfpgaloader, imsprog, zephyr
+    from: flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr
     datasheet: https://www.winbond.com/resource-files/W25Q128JV%20RevH%2003102021%20Plus.pdf
 ```
 
