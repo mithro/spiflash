@@ -9,6 +9,7 @@ from page_markup import EM_SPACE, EN_DASH
 from spiflash import Database, Datasheet
 from spiflash.enums import Source
 from test_db import rec
+from test_sfdp import MX25L25635E
 
 
 def kinds(db: Database) -> list[IssueKind]:
@@ -51,6 +52,33 @@ def test_extended_ids_tell_entries_apart() -> None:
     )
     # Still two answers for the id as a whole, but not one entry twice.
     assert IssueKind.SAME_SOURCE not in kinds(db)
+
+
+def test_a_source_disagrees_with_its_own_sfdp() -> None:
+    # The dump says 32 MiB and erases 4 KiB with 0x20; the entry says
+    # 16 MiB, and 0x20 erases 64 KiB.
+    stated = {"opcode": 0x20, "blocks": [[65536, 256]]}
+    db = Database([rec(source="qemu", id="c22019", sfdp=MX25L25635E.hex(), erasers=[stated])])
+    found = find(db)
+    assert [(i.kind, i.attribute) for i in found] == [
+        (IssueKind.SFDP, "size"),
+        (IssueKind.SFDP, "erasers"),
+    ]
+    size, _ = found
+    assert [a.value for a in size.answers] == [16 << 20, 32 << 20]
+    assert size.sources == (Source.QEMU,)
+    slugs = {id(f): f.key for f in db.flashes}
+    page = generate_all(db, slugs)["sfdp.md"]
+    assert "Its SFDP tables say" in page
+    assert "0x20, 256 \N{MULTIPLICATION SIGN} 64 KiB" in page
+    assert "0x20, 8,192 \N{MULTIPLICATION SIGN} 4 KiB" in page
+    (f,) = db.flashes
+    text = "\n".join(chip_issues(db, slugs, f, found))
+    assert "in its SFDP tables" in text
+    # The entry's own size is the record's, and the issue says so; a dump
+    # that agrees is no issue.
+    assert db.records[0].size == 16 << 20
+    assert find(Database([rec(source="qemu", sfdp=MX25L25635E.hex(), size=32 << 20)])) == []
 
 
 def test_one_part_several_ids() -> None:

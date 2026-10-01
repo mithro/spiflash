@@ -70,3 +70,29 @@ def test_a_card_note_is_small_and_the_value_big() -> None:
     assert ".sf-card .sd-card-body p:first-of-type {" in css
     assert ".sf-card .sd-card-body p + p {" in css
     assert ".sf-card .sd-card-body p:last-child" not in css
+
+
+def nor_page(key: str) -> str:
+    db = spiflash.database()
+    f = next(g for g in db.flashes if g.key == key and g.type == "nor")
+    return chip_page(db, f, "vendor", {id(g): chip_slug(g) for g in db.flashes}, [])
+
+
+def test_tables_a_source_copies_come_after_the_whole_dumps() -> None:
+    # The MX25R6435F: Zephyr's boards copy its BFPT alone, in two versions.
+    text = nor_page("c22817")
+    sfdp = text[text.index("## SFDP") :]
+    assert "copied without the SFDP header (sfdp-bfp)" in sfdp
+    assert "`spiflash sfdp-diff c22817 c22817#2`" in sfdp
+    # The W25Q512JV: QEMU's whole dump.
+    sfdp = nor_page("ef4020")
+    assert "Dump of" in sfdp[sfdp.index("## SFDP") :]
+
+
+def test_a_value_from_a_records_own_tables_is_marked() -> None:
+    text = nor_page("ef4020")
+    sources = text[text.index("## What each source says") :]
+    qemu = next(line for line in sources.split("* - ") if line.startswith("{sfsrc}`qemu`"))
+    assert qemu.count("*(SFDP)*") == 3  # size, page and sector
+    layouts = text[text.index("## Erase layouts") : text.index("## What each source says")]
+    assert "*(SFDP)*" in layouts

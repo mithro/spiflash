@@ -14,7 +14,7 @@ from spiflash.units import human_size
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from spiflash import Flash
+    from spiflash import Eraser, Flash
 
 
 EN_DASH = "\N{EN DASH}"
@@ -195,6 +195,13 @@ def size_text(n: int | None, unit: int | None = None) -> str:
     if unit is None:
         return num(human_size(n))
     return num(f"{n // unit:,} {SIZE_UNITS[unit]}")
+
+
+def eraser_text(e: Eraser) -> str:
+    """An eraser in words: ``0x20, 2,048 x 4 KiB`` (with a multiplication sign)."""
+    blocks = ", ".join(f"{b.count:,} {TIMES} {human_size(b.size)}" for b in e.blocks)
+    head = f"0x{e.opcode:02x}" if e.opcode is not None else e.function or EM_DASH
+    return f"{head}, {blocks}"
 
 
 #: The units of sizes, by scale.

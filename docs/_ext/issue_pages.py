@@ -17,6 +17,7 @@ from page_markup import (
     UP_ARROW,
     common_unit,
     count,
+    eraser_text,
     esc,
     list_table,
     more,
@@ -27,6 +28,7 @@ from page_markup import (
     volt,
 )
 from spiflash.enums import IdFamily, Source
+from spiflash.model import Eraser
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,6 +49,13 @@ KIND_NOTES = {
         "A program that identifies a chip by its id alone cannot tell which of "
         "these entries applies. Often they are variants the source tells apart some "
         "other way; sometimes one entry is simply wrong."
+    ),
+    IssueKind.SFDP: (
+        "The value the source states is the one its own code uses, and the one the "
+        "database keeps for that source; the tables are shown as it carries them. Some "
+        "are a board's or a controller's setting rather than the part's (Zephyr's "
+        "`page-size` is the write chunk some drivers use), and some a table copied "
+        "from another part. `spiflash sfdp-diff` compares tables byte by byte."
     ),
     IssueKind.NAME_IDS: (
         "Some are one name for parts with different ids: a generic name, or a 3 V "
@@ -149,6 +158,8 @@ class _Render:
         return ", ".join(self.record(r) for r in records)
 
     def value(self, issue: Issue, v: Any) -> str:
+        if isinstance(v, Eraser):
+            return esc(eraser_text(v))
         if issue.attribute == "voltage":
             return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if v else volt(None)
         if issue.attribute:
@@ -212,6 +223,19 @@ class _Render:
                     self.names(i.flashes[0]),
                     self.who(i.answers[0].records[:1]),
                     self.answers(i, by_entry=True),
+                ]
+                for i in issues
+            ]
+        elif kind is IssueKind.SFDP:
+            header = ["Chip", "Parts", "Source", "Field", "The entry says", "Its SFDP tables say"]
+            rows = [
+                [
+                    self.chip(i.flashes[0]),
+                    self.names(i.flashes[0]),
+                    self.who(i.answers[0].records),
+                    _attr(i),
+                    self.value(i, i.answers[0].value),
+                    self.value(i, i.answers[1].value),
                 ]
                 for i in issues
             ]
@@ -378,6 +402,13 @@ def chip_issues(db: Database, slugs: dict[int, str], f: Flash, issues: list[Issu
         elif i.kind is IssueKind.MANUFACTURER:
             about = "manufacturer"
             answer = r.answers(i)
+        elif i.kind is IssueKind.SFDP:
+            about = _attr(i)
+            answer = (
+                f"{r.value(i, i.answers[0].value)} in the entry, "
+                f"{r.value(i, i.answers[1].value)} in its SFDP tables\n\n"
+                f"{r.who(i.answers[0].records)}"
+            )
         else:
             about = _attr(i)
             answer = r.answers(i)

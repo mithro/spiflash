@@ -31,6 +31,7 @@ class IssueKind(StrEnum):
 
     VALUE = "value"
     SAME_SOURCE = "same-source"
+    SFDP = "sfdp"
     NAME_IDS = "name-ids"
     MANUFACTURER = "manufacturer"
     DATASHEET = "datasheet"
@@ -55,6 +56,13 @@ _ISSUE_TITLES = {
         (
             "One source lists a chip id more than once, with different values, and "
             "nothing in the id (no extended id) tells the entries apart."
+        ),
+    ),
+    IssueKind.SFDP: (
+        "A source disagrees with its own SFDP tables",
+        (
+            "A source gives a part a size, page size or erase layout, and with it "
+            "the part's own SFDP tables, which say otherwise."
         ),
     ),
     IssueKind.NAME_IDS: (
@@ -106,7 +114,8 @@ class Issue:
     flashes: tuple[Flash, ...]
     #: The answers, the most-given first.
     answers: tuple[Answer, ...]
-    #: For a value: which one (``"size"``, ...; see :data:`ATTRIBUTES`).
+    #: For a value: which one (``"size"``, ...; see :data:`ATTRIBUTES`);
+    #: for :attr:`IssueKind.SFDP`, the field (``"page_size"``, ``"erasers"``).
     attribute: str | None = None
     #: For :attr:`IssueKind.DATASHEET`: the part, and its datasheets.
     part: str | None = None
@@ -126,6 +135,7 @@ def find(db: Database | None = None) -> list[Issue]:
     return [
         *_values(db.flashes),
         *_same_source(db.flashes),
+        *_sfdp(db.flashes),
         *_name_ids(db.flashes),
         *_manufacturers(db.flashes),
         *_datasheets(db.flashes),
@@ -172,6 +182,17 @@ def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
                 answers = _answers((r.given(attr), r) for r in records)
                 if len(answers) > 1:
                     yield Issue(IssueKind.SAME_SOURCE, f.key, (f,), answers, attribute=attr)
+
+
+def _sfdp(flashes: Iterable[Flash]) -> Iterator[Issue]:
+    """One issue per record and field its own SFDP tables give otherwise
+    (:meth:`spiflash.Record.sfdp_disagreements`): the answers are what the
+    entry states, then what its tables say, both the record's."""
+    for f in flashes:
+        for r in f.records:
+            for d in r.sfdp_disagreements():
+                answers = (Answer(d.stored, (r,)), Answer(d.sfdp, (r,)))
+                yield Issue(IssueKind.SFDP, f.key, (f,), answers, attribute=d.field)
 
 
 def _name_ids(flashes: Iterable[Flash]) -> Iterator[Issue]:

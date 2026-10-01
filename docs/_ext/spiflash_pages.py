@@ -339,11 +339,19 @@ def _sfdp(f: Flash) -> list[str]:
         (
             f"The part's SFDP ([JESD216]({JESD216})) tables, as the sources carry them: "
             "what one part answered, decoded by {py:mod}`spiflash.sfdp`; `spiflash sfdp` "
-            "prints every field. SFDP says nothing about the vendor, voltage or protection, "
-            "and {sfsrc}`linux` keeps fixups for tables that are wrong, so read it as the "
-            "part's own claim.\n"
+            "prints every field. The sources carrying them derive their geometry, erase "
+            "layouts, operations and capabilities from them ([](../derived.md)). SFDP says "
+            "nothing about the vendor, voltage or protection, and {sfsrc}`linux` keeps "
+            "fixups for tables that are wrong, so read it as the part's own claim. Whole "
+            "dumps come first, then tables a source copies without the rest.\n"
         ),
     ]
+    if len(f.sfdp_dumps) > 1:
+        out.append(
+            "The sources carry more than one set of tables for this id: "
+            f"`spiflash sfdp-diff {f.key} {f.key}#2` compares the first two, field by "
+            "field and dword by dword ([](../usage.md)).\n"
+        )
     for d in f.sfdp_dumps:
         out.append(list_table(["Parameter", "Value"], _sfdp_rows(d), "sf-table"))
         out.append("")
@@ -354,11 +362,20 @@ def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
     """One dump's table: whose it is, then what it says. Parts sharing an id
     can carry different dumps, so each names its parts."""
     s = d.sfdp
-    tables = ", ".join(f"{esc(h.name)} {h.revision}" for h in s.headers)
-    rows = [
-        ["Dump of", f"{source_badge(d.source)} {esc(', '.join(d.parts))}"],
-        ["Revision", f"{esc(s.revision_name)}, with {tables}"],
-    ]
+    if s.partial:
+        names = " and ".join(esc(h.name) for h in s.headers)
+        props = d.records[0].via.get("sfdp_tables", "")
+        copied = f" ({esc(props)})" if props else ""
+        rows = [
+            ["Tables of", f"{source_badge(d.source)} {esc(', '.join(d.parts))}"],
+            ["Revision", f"{names} only, copied without the SFDP header{copied}"],
+        ]
+    else:
+        tables = ", ".join(f"{esc(h.name)} {h.revision}" for h in s.headers)
+        rows = [
+            ["Dump of", f"{source_badge(d.source)} {esc(', '.join(d.parts))}"],
+            ["Revision", f"{esc(s.revision_name)}, with {tables}"],
+        ]
     geometry = [size_text(s.size)]
     if s.page_size is not None:
         geometry.append(f"{size_text(s.page_size)} pages")
@@ -473,6 +490,8 @@ def _erase_layouts(f: Flash) -> list[str]:
                 operation = f"[`{opname}`](../opcodes/{opname}.md)" if opname else EM_DASH
             if e.assumed:
                 operation += " *(driver default)*"
+            if e not in r.eraser_claims:
+                operation += " *(SFDP)*"
             rows.append(
                 [
                     source_badge(r.source),
@@ -489,6 +508,18 @@ def _erase_layouts(f: Flash) -> list[str]:
         list_table(["Source", "As", "Opcode", "Operation", "Blocks"], rows, "sf-table"),
         "",
     ]
+
+
+def _sfdp_mark(r: Record, attr: str) -> str:
+    """`` (SFDP)`` after a value the record has from its SFDP tables rather
+    than stating it: its size or page size, or the sector size of an eraser
+    the tables give."""
+    if r.sfdp_facts is None or getattr(r, attr) is None:
+        return ""
+    if attr == "sector_size":
+        stated = replace(r, sfdp=None, sfdp_tables={})
+        return "" if stated.sector_size == r.sector_size else " *(SFDP)*"
+    return "" if r.stored(attr) is not None else " *(SFDP)*"
 
 
 def _record_id(r: Record) -> bytes:
@@ -508,9 +539,9 @@ def _sources(db: Database, f: Flash) -> list[str]:
                 esc(r.name),
                 *([f"{{sfid}}`{spaced(_record_id(r).hex())}`"] if folded else []),
                 f"{{sfid}}`{spaced(r.ext_id.hex())}`" if r.ext_id else EM_DASH,
-                size_text(r.size),
-                size_text(r.page_size),
-                size_text(r.sector_size),
+                size_text(r.size) + _sfdp_mark(r, "size"),
+                size_text(r.page_size) + _sfdp_mark(r, "page_size"),
+                size_text(r.sector_size) + _sfdp_mark(r, "sector_size"),
                 volt(r.voltage[0] if r.voltage else None),
                 volt(r.voltage[1] if r.voltage else None),
                 esc(r.tested or EM_DASH),
