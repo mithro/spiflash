@@ -645,7 +645,9 @@ def _drop_derived(rec: Record, held: set[str], via: dict[str, list[str]]) -> set
     only a dropped erase operation's via held moves to ``via``, under its
     eraser (stored, or from its SFDP tables), ``erasers:0x<opcode>``, or
     ``erasers`` for a token that gives several; where the record has no
-    such eraser, the flag stays a flag, and is returned."""
+    such eraser, the flag stays a flag, and is returned, as does one only
+    another dropped operation held (a read its SFDP tables give). One only
+    a dropped id read held raises: the extractor names the command."""
     model = Model.from_json(rec)
     derived = derive.opcodes(model)
     dropped = [o for o in rec["opcodes"] if any(_same_use(o, u) for u in derived)]
@@ -657,9 +659,15 @@ def _drop_derived(rec: Record, held: set[str], via: dict[str, list[str]]) -> set
     for o in dropped:
         for t in held:
             if holds(o["via"], t) and not any(holds(v, t) for v in kept):
-                if OPERATIONS[o["op"]].kind is not OperationKind.ERASE:
+                kind = OPERATIONS[o["op"]].kind
+                if kind is OperationKind.ID:
                     msg = f"{rec['source']} {rec['name']}: {t} would be lost with {o['op']}"
                     raise ValueError(msg)
+                if kind is not OperationKind.ERASE:
+                    # A board's read mode its SFDP tables give the operation
+                    # of (Zephyr's readoc=read4io): the token stays a flag.
+                    flags.add(t)
+                    continue
                 member = f"0x{OPERATIONS[o['op']].opcode:02x}"
                 if member not in members:
                     flags.add(t)

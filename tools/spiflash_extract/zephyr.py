@@ -607,25 +607,44 @@ class _Node:
                 self.fail(f"unknown {prop} {value!r}")
             op, feature = table[value]
             if feature:
-                self.features.add(feature)
+                self.claim(feature, prop)
             if op:
-                self.ops.add(op, f"{prop} = {value}")
+                self.ops.add(op, self.token(prop))
         if "use-fast-read" in self.props:
-            self.features.add("fast_read")
-            self.ops.add("READ_1_1_1_FAST", "use-fast-read")
+            self.claim("fast_read", "use-fast-read")
+            self.ops.add("READ_1_1_1_FAST", self.token("use-fast-read"))
         mode = self.string("mspi-io-mode")
-        for value in (mode, self.string("read-io-mode")):
+        for prop in ("mspi-io-mode", "read-io-mode"):
+            value = self.string(prop)
             if value in _IO_MODE:
-                self.features.add(_IO_MODE[value])
+                self.claim(_IO_MODE[value], prop)
         if (mode or "").startswith("MSPI_IO_MODE_OCTAL") and (
             self.string("mspi-data-rate") == "MSPI_DATA_RATE_DUAL"
         ):
-            self.features.update({"octal_dtr_read", "octal_dtr_pp"})
+            self.claim("octal_dtr_read", "mspi-data-rate")
+            self.claim("octal_dtr_pp", "mspi-data-rate")
+
+    def token(self, prop: str) -> str:
+        """A property as :meth:`flags` writes it: ``name``, or ``name=value``."""
+        value = self.props[prop]
+        return prop if value is None else f"{prop}={_flag_value(value)}"
+
+    def claim(self, feature: str, prop: str) -> None:
+        """Claim ``feature``, with the property giving it as its ``via``
+        (``feature:<feature>``). A token is under one ``via`` key, so a
+        property giving several claims is the first one's via only."""
+        self.features.add(feature)
+        token = self.token(prop)
+        held = {t for v in self.claim_via.values() for t in v.split("; ")}
+        if token in held:
+            return
+        key = f"feature:{feature}"
+        self.claim_via[key] = "; ".join(filter(None, (self.claim_via.get(key), token)))
 
     def capabilities(self, binding: Binding) -> None:
         """What the other properties say the part has."""
         if "has-lock" in self.props:
-            self.features.add("lock")
+            self.claim("lock", "has-lock")
         if "use-flag-status-register" in self.props:
             self.ops.add("RDFSR", "use-flag-status-register")
         # The binding (jedec,spi-nor-common.yaml) says the part needs ULBPR,
@@ -633,13 +652,15 @@ class _Node:
         if "requires-ulbpr" in self.props:
             self.ops.add("ULBPR", "requires-ulbpr")
         if "use-4b-addr-opcodes" in self.props:
-            self.features.update({"4byte_addr", "4byte_opcodes"})
-        if {"address-size-32", "use-4byte-addressing"} & set(self.props):
-            self.features.add("4byte_addr")
+            self.claim("4byte_opcodes", "use-4b-addr-opcodes")
+            self.claim("4byte_addr", "use-4b-addr-opcodes")
+        for prop in ("address-size-32", "use-4byte-addressing"):
+            if prop in self.props:
+                self.claim("4byte_addr", prop)
         self.four_byte_modes()
         erase = self.cell("erase-block-size")
         if binding.type == "nor" and erase in ERASE_FEATURE:
-            self.features.add(ERASE_FEATURE[erase].value)
+            self.claim(ERASE_FEATURE[erase].value, "erase-block-size")
 
     def times(self) -> tuple[dict[str, dict[str, int]], dict[str, str]]:
         """The part's times (:data:`TIMES`, :data:`WAKEUP`), as a record's

@@ -1777,7 +1777,11 @@ def test_zephyr() -> None:
         "quad_read",
         "sfdp",
     ]
-    assert {"nordic,qspi-nor", "readoc=read4io", "writeoc=pp4io"} <= set(m["flags"])
+    # readoc's read is its table's, so derived: the token stays a flag;
+    # writeoc's PP_1_4_4 holds its own, spelt as the flag would be.
+    assert {"nordic,qspi-nor", "readoc=read4io"} <= set(m["flags"])
+    assert stored_ops(m)["PP_1_4_4"] == "writeoc=pp4io"
+    assert "writeoc=pp4io" not in m["flags"]
     # has-dpd: DP and RDPD, which its BFPT's DW14 gives too (so derived),
     # with the exit delay, 40 µs. The node's t-exit-dpd, 35 µs, is more
     # precise: stored, and no disagreement (35 µs is 40 µs on DW14's grid).
@@ -1792,7 +1796,7 @@ def test_zephyr() -> None:
     assert [o["op"] for o in m["opcodes"]] == ["PP_1_4_4"]
     (read,) = (u for u in loaded.opcodes if u.op == "READ_1_4_4")
     assert (read.implied, read.dummy_clocks) == (True, 6)
-    assert ops(m)["PP_1_4_4"] == (0x38, "writeoc = pp4io")
+    assert ops(m)["PP_1_4_4"] == (0x38, "writeoc=pp4io")
     assert m["notes"] == [
         "MX25R64 supports only pp and pp4io",
         "MX25R64 supports all readoc options",
@@ -1811,7 +1815,9 @@ def test_zephyr() -> None:
     # one-maker binding; the MSPI mode.
     x = r["MX25LM51245"]
     assert (x["vendor"], x["size"], x["features"]) == ("mxicy", 64 << 20, ["octal_read"])
-    assert "mspi-io-mode=MSPI_IO_MODE_OCTAL" in x["flags"]
+    # The mode is the claim's via, not a flag too.
+    assert x["via"]["feature:octal_read"] == "mspi-io-mode=MSPI_IO_MODE_OCTAL"
+    assert "mspi-io-mode=MSPI_IO_MODE_OCTAL" not in x["flags"]
     # A descriptive compatible names the part and its maker (here with an id
     # that is not ISSI's, kept as the board has it).
     i = r["IS25LP128"]
@@ -1819,7 +1825,8 @@ def test_zephyr() -> None:
     # bflb: no size; use-sfdp says the part answers SFDP.
     g = r["GD25LQ32D"]
     assert (g["size"], features(g)) == (None, ["erase_4k", "sfdp"])
-    assert "erase-block-size=4096" in g["flags"]
+    assert g["via"]["feature:erase_4k"] == "erase-block-size=4096"
+    assert "erase-block-size=4096" not in g["flags"]
     assert set(ops(g)) == {"RDID", "RDSFDP"}
     # Two boards with the same node are one record, which names the other.
     # Its table is JESD216's first: nine DWORDs, no page size.
@@ -1866,7 +1873,8 @@ def test_zephyr_node_values(tmp_path: Path) -> None:
     assert r["four_byte_modes"] == ["en4b"]
     assert r["via"]["four_byte_modes:en4b"] == "enter-4byte-addr=0x1"
     assert not any(f.startswith("enter-4byte-addr") for f in r["flags"])
-    assert "has-lock=0x1c" in r["flags"]
+    # has-lock is the lock claim's via, not a flag too.
+    assert (r["via"]["feature:lock"], "has-lock=0x1c" in r["flags"]) == ("has-lock=0x1c", False)
     # The wake-up sequence's three times, from one token; no flag.
     assert r["timings"] == {
         "dpd_exit": {"maximum": 30000},

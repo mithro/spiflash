@@ -10,7 +10,9 @@ some with placeholder ids.
 - A node gives the id, the size (in bits in the JESD216-based bindings), and,
   where the board sets them, the page size, the read and program modes it
   uses (`readoc`, `writeoc`, the MSPI I/O mode) and what the chip needs
-  (`enter-4byte-addr`, `has-lock`, ...), kept in the record's `flags`.
+  (`enter-4byte-addr`, `has-lock`, ...): each is the `via` of the operation
+  or capability it gives (`feature:lock` for `has-lock`, spelt as a flag
+  would be, `has-lock=0xbc`), or else kept in the record's `flags`.
 - The part's times are the record's `timings` ([](../derived.md#times)),
   each bounded as its binding's words say
   ({upstream}`jedec,spi-nor-common.yaml <zephyr:dts/bindings/mtd/jedec,spi-nor-common.yaml>`,
