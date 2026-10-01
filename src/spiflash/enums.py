@@ -218,8 +218,15 @@ class FourByteMethod(StrEnum):
 
     @property
     def label(self) -> str:
-        """The way in words: ``"EN4B (0xb7)"``."""
+        """The way in, in words: ``"EN4B (0xb7)"``."""
         return _FOUR_BYTE_LABELS[self]
+
+    @property
+    def exit_label(self) -> str:
+        """The way out, in words (BFPT DW16[18:14]): ``"EX4B (0xe9)"`` for
+        ``EN4B``; a register's way out is clearing it, so its label is the
+        way in's."""
+        return _FOUR_BYTE_EXIT_LABELS.get(self, _FOUR_BYTE_LABELS[self])
 
 
 _FOUR_BYTE_LABELS = {
@@ -234,6 +241,11 @@ _FOUR_BYTE_LABELS = {
     FourByteMethod.HW_RESET: "hardware reset",
     FourByteMethod.SW_RESET: "software reset",
     FourByteMethod.POWER_CYCLE: "power cycle",
+}
+
+_FOUR_BYTE_EXIT_LABELS = {
+    FourByteMethod.EN4B: "EX4B (0xe9)",
+    FourByteMethod.WREN_EN4B: "WREN then EX4B (0x06, 0xe9)",
 }
 
 #: The ways into 4-byte address mode a record's ``four_byte_modes`` may

@@ -1065,6 +1065,23 @@ def name_matches(pattern: str, query: str, *, prefix: bool = False) -> bool:
     return match(rx, query.upper()) is not None
 
 
+#: A suffix naming a supply variant of a part: Winbond's W25X10BL (2.3 V)
+#: of the W25X10, a Puya ...L or ...U, a Winbond ...W.
+_SUPPLY_SUFFIX = re.compile(r"[A-Z]?[LUW]")
+
+
+def same_supply_part(a: str, b: str) -> bool:
+    """Whether part names ``a`` and ``b`` name one part, as far as its supply
+    goes: :func:`same_part`, but a name adding a one- or two-letter supply
+    suffix (``L``, ``U``, ``W``, ``BL``, ...) to the other names another
+    part (``W25X10BL`` is not the ``W25X10``'s supply)."""
+    if not same_part(a, b):
+        return False
+    short, long = sorted((a.upper(), b.upper()), key=len)
+    extra = long[len(short) :]
+    return not (len(extra) <= 2 and _SUPPLY_SUFFIX.fullmatch(extra))
+
+
 def same_part(a: str, b: str) -> bool:
     """Whether part names ``a`` and ``b`` name one part: they agree up to
     the end of the shorter, so one may add a suffix (ZB35Q01B, ZB35Q01BYIG:
@@ -1432,35 +1449,30 @@ class Flash:
     @cached_property
     def supply_mv(self) -> int | None:
         """The supply voltage, in millivolts, the programmers' tables say to
-        power the part at (:attr:`Record.supply_mv`), as most say: a setting,
-        where no source gives a :attr:`voltage` range."""
+        power the part at (:attr:`Record.supply_mv`), as most say: a setting
+        of theirs, given whether or not another source gives the part a
+        :attr:`voltage` range (a record has one or the other, a chip may have
+        both). ``None`` where no programmer's table lists the part."""
         return self._value(lambda r: r.supply_mv)
 
     def supply_outside(self) -> dict[int, tuple[Record, ...]]:
         """Each supply setting a programmer's table gives (:attr:`Record.supply_mv`)
         outside the supply ranges the other sources give (:attr:`Record.voltage`),
-        and the records giving it: of the records of its part where any
-        gives a range (:func:`same_part`), else of any of the records it is
-        compared with (one of :attr:`variants`), outside every one. So
-        Dediprog's 3.3 V for the S25FL256S is not outside flashrom's 1.7 V
-        to 2.0 V for the S25FS256S at the same id, and its 1.8 V for Puya's
-        P25Q32L, which no source gives a range, is outside the P25Q32H's
-        2.3 V to 3.6 V."""
+        and the records giving it: outside every range given for its part
+        (:func:`same_supply_part`), where any is, else outside every range
+        given at the id, for any part. So Dediprog's 3.3 V for the S25FL256S
+        is not outside flashrom's 1.7 V to 2.0 V for the S25FS256S at the same
+        id; its 1.8 V for Puya's P25Q32L, which no source gives a range, is
+        outside the P25Q32H's 2.3 V to 3.6 V, and its 2.5 V for Winbond's
+        W25X10BL outside flashrom's 2.7 V to 3.6 V for the W25X10."""
+        given = [(g.part_names, g.voltage) for g in self.records if g.voltage is not None]
         out: dict[int, list[Record]] = {}
         for r in self.records:
             mv = r.supply_mv
-            # The ranges of every part the record may be (each variant it is in).
-            given = {
-                (g.part_names, g.voltage)
-                for v in self.variants
-                if r in v
-                for g in v
-                if g.voltage is not None
-            }
             if mv is None or not given:
                 continue
             own = r.part_names
-            mine = [v for ps, v in given if any(same_part(a, b) for a in ps for b in own)]
+            mine = [v for ps, v in given if any(same_supply_part(a, b) for a in ps for b in own)]
             if not any(lo <= mv <= hi for lo, hi in mine or (v for _, v in given)):
                 out.setdefault(mv, []).append(r)
         return {mv: tuple(rs) for mv, rs in sorted(out.items())}

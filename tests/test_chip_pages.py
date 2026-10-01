@@ -129,12 +129,12 @@ def test_phase_6_sections() -> None:
     # The OTP area under Registers.
     regs = text[text.index("## Registers") : text.index("## Opcodes")]
     assert "OTP area" in regs
-    # A Zetta part only Dediprog and IMSProg list: their supply setting, and
-    # the REMS id Dediprog says it answers.
+    # A Zetta part only Dediprog and IMSProg list: their supply setting.
     zetta = nor_page("ba4013")
     supply = zetta[zetta.index(":::{grid-item-card} Supply") :]
     assert "power it at" in supply[: supply.index(":::\n")]
-    assert "Also answers REMS" in zetta
+    # The REMS id Dediprog says the W25Q40 answers.
+    assert "Also answers REMS" in nor_page("ef4013")
     # A legacy chip lists the JEDEC chips whose sources give its id.
     legacy = nor_page("res1:14")
     assert "JEDEC chips whose sources give this id" in legacy

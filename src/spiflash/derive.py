@@ -472,7 +472,7 @@ def _implied(g: _Given) -> dict[Feature, str]:
         roles = ", ".join(g.protection.roles())
         out.setdefault(Feature.LOCK, f"its block protection bits ({roles})")
     if g.otp is not None:
-        out.setdefault(Feature.OTP, f"its OTP area, {g.otp}")
+        out[Feature.OTP] = f"its OTP area, {g.otp}"  # before an OTP operation
     return out
 
 

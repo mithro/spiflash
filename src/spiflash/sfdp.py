@@ -96,6 +96,9 @@ def _bit(dword: int, n: int) -> bool:
     return bool(dword >> n & 1)
 
 
+#: The ways in and out of 4-byte mode, in the order they are declared.
+_ORDER = list(FourByteMethod)
+
 _ENTER_4B = {
     24: FourByteMethod.EN4B,
     25: FourByteMethod.WREN_EN4B,
@@ -713,7 +716,8 @@ class Sfdp:
                 (FourByteMethod.BRWR, 0x17),
             ):
                 if method in methods:
-                    mode_ops.setdefault(opcode, []).append(f"{direction} 4-byte mode: {method}")
+                    label = method.label if direction == "enter" else method.exit_label
+                    mode_ops.setdefault(opcode, []).append(f"{direction} 4-byte mode: {label}")
         for opcode, reasons in mode_ops.items():
             yield SfdpOperation(
                 _MODE_BY_OPCODE.get(opcode),
@@ -901,13 +905,13 @@ class Sfdp:
             if bfpt.four_byte_enter:
                 lines.append(
                     "    enter 4-byte mode: "
-                    + ", ".join(m.label for m in sorted(bfpt.four_byte_enter))
+                    + ", ".join(m.label for m in sorted(bfpt.four_byte_enter, key=_ORDER.index))
                     + unused
                 )
             if bfpt.four_byte_exit:
                 lines.append(
                     "    exit 4-byte mode: "
-                    + ", ".join(m.label for m in sorted(bfpt.four_byte_exit))
+                    + ", ".join(m.exit_label for m in sorted(bfpt.four_byte_exit, key=_ORDER.index))
                     + unused
                 )
             if bfpt.soft_reset:

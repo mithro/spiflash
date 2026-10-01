@@ -17,7 +17,15 @@ import spiflash
 from spiflash import db as db_module
 from spiflash import opcodes, vendors
 from spiflash.db import FORMAT, Database, SourceInfo
-from spiflash.enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
+from spiflash.enums import (
+    Feature,
+    FlashType,
+    FourByteMethod,
+    IdFamily,
+    IdMethod,
+    OperationKind,
+    Source,
+)
 from spiflash.model import (
     Claim,
     EraseBlock,
@@ -34,6 +42,7 @@ from spiflash.model import (
     parse_tested,
     part_names,
     same_part,
+    same_supply_part,
     squash_name,
     strip_continuation,
 )
@@ -1337,3 +1346,30 @@ def test_new_fields_round_trip() -> None:
     assert again == r
     assert again.to_json() == r.to_json()
     assert pickle.loads(pickle.dumps(r)) == r
+
+
+def test_a_supply_suffix_names_another_part() -> None:
+    assert same_part("W25X10", "W25X10BL")
+    assert not same_supply_part("W25X10", "W25X10BL")
+    assert not same_supply_part("P25Q32", "P25Q32U")
+    assert same_supply_part("S25FL256S", "S25FL256SXXXXXX1X")  # an order code
+    assert same_supply_part("W25X10BV", "W25X10BV")
+    # So Dediprog's 2.5 V W25X10BL is outside flashrom's W25X10, another part.
+    ranged = rec(source="flashrom", name="W25X10", voltage=[2700, 3600])
+    low = rec(source="dediprog", name="W25X10BL", supply_mv=2500)
+    assert Flash(b"\xef\x30\x11", FlashType.NOR, (ranged, low)).supply_outside() == {2500: (low,)}
+
+
+def test_ways_out_have_their_own_labels() -> None:
+    assert FourByteMethod.EN4B.label == "EN4B (0xb7)"
+    assert FourByteMethod.EN4B.exit_label == "EX4B (0xe9)"
+    assert FourByteMethod.WREAR.exit_label == FourByteMethod.WREAR.label
+
+
+def test_an_otp_area_is_the_otp_reason() -> None:
+    r = rec(
+        source="flashrom",
+        otp={"size": 1024},
+        opcodes=[{"op": "PSECR", "via": "OTP: 1024B total; write 0x42"}],
+    )
+    assert r.feature_reasons()[Feature.OTP] == "implied by its OTP area, 1 KiB"
