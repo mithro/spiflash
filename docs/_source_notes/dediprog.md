@@ -26,6 +26,14 @@ parser ignores; spiflash's reads the id with them:
 - [REMS](../opcodes/REMS.md) (0x90), [RES](../opcodes/RES.md) (0xab) or
   [AT25F](../opcodes/RDID_ATMEL.md) (0x15) for older parts.
 
+`RDIDCommand` is where a record's id method comes from, and the id method
+gives the id operation, so a record whose command is not 0x9f keeps it as
+the provenance of its id method (`via`, under `id_method`), not as a flag.
+0xaf is no operation of its own here: Micron's parts answer it in their dual
+and quad I/O protocols with the bytes 0x9f answers in single-line SPI, and a
+spiflash operation has one shape on the bus. Those 14 MT25Q records read
+their id the JEDEC way, so they give [`RDID`](../opcodes/RDID.md).
+
 The number holds the bytes as they come. An SPI NAND id read with a dummy
 byte first starts with that byte, 00 (`0x00EFAA21`), which is not part of
 the id. RES, read without its three dummy address bytes, starts with three
@@ -78,7 +86,8 @@ Some classes of part are not what their attributes say:
 - SPI NAND sizes that count the spare area are scaled back to the data.
 
 The raw command words, the nominal `Voltage`, the `ProgramIOMethod` and the
-`Class` are kept in the record's `flags`. The entry has much that the
+`Class` are kept in the record's `flags`, unless an operation or a value
+already names one as where it came from (`via`). The entry has much that the
 database has no field for yet: the maximum clock, the status and
 configuration register commands, the quad enable bit, erase and program
 timeouts, the 4 KiB sector size where no opcode goes with it, the die size,

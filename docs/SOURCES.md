@@ -36,10 +36,11 @@ The [JEP106 manufacturer names](jep106/index.md) come from {sfsrc}`openocd`'s co
 
 No code is copied: the tables are parsed, and the database holds the values.
 The one exception is `notes`, which keeps the short comments an upstream
-attached to an entry or its id `#define` ("supports SFDP", "uniform 256 kB
-sectors", "W25Q128BV; W25Q128FV in SPI mode (default)"), or the one-line
-description {sfsrc}`dediprog` gives a part, each traceable to its file and
-line through the record's `file` and `line`.
+attached to an entry or its id `#define` ("uniform 256 kB sectors",
+"W25Q128BV; W25Q128FV in SPI mode (default)"), or the one-line description
+{sfsrc}`dediprog` gives a part, each traceable to its file and line through
+the record's `file` and `line`. A comment read into a value (flashrom's
+"supports SFDP") is not kept twice: it is that value's provenance.
 
 The package is Apache-2.0, as are the files read from {sfsrc}`openfpgaloader` and
 {sfsrc}`zephyr`; {sfsrc}`mediatek`'s are GPL-2.0 or BSD-3-Clause, at the

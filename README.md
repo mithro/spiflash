@@ -170,8 +170,10 @@ is everything any source claims, from this list:
 | `4byte_addr`, `4byte_opcodes` | 4-byte addressing; dedicated 4-byte opcodes |
 | `otp`, `lock`, `rww`, `no_erase` | OTP area; status-register block protection; read-while-write; FRAM/MRAM |
 
-The upstream's own flags (`SPI_NOR_HAS_TB`, `FEATURE_WRSR2`, ...) are kept on
-each record's `flags` for anything this list does not capture.
+The upstream's own flags (`SPI_NOR_HAS_TB`, `FEATURE_WRSR_EXT2`, ...) are kept on
+each record's `flags` where no field or operation holds them; its `via` says
+which token gave each capability the upstream states (`{"feature:qpi":
+"QPIEnable"}`).
 
 ## Searching part names
 

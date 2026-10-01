@@ -68,6 +68,7 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`db.py <src/spiflash/db.py>` | loading, lookup, find |
 | {repo}`enums.py <src/spiflash/enums.py>` | the fixed vocabularies, as enums: sources in priority order, flash types, id families, features, kinds of operation, ... |
 | {repo}`opcodes.py <src/spiflash/opcodes.py>` | the named operations |
+| {repo}`derive.py <src/spiflash/derive.py>` | what a record's stored fields imply, worked out at load (every such rule is here) |
 | {repo}`sfdp.py <src/spiflash/sfdp.py>` | the JESD216 (SFDP) decoder |
 | {repo}`vendors.py <src/spiflash/vendors.py>` | one name per vendor |
 | {repo}`units.py <src/spiflash/units.py>` | sizes and times as people read them |
@@ -78,6 +79,7 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`tools/sources.toml` | the upstream commits the data is built from |
 | {repo}`tools/update_db.py` | fetch, extract, write the data |
 | {repo}`tools/import_datasheets.py` | write the datasheet links from a datasheet manifest |
+| {repo}`tools/db_snapshot.py`, {repo}`tools/db_diff.py` | what the database answers for every chip, and what changed between two of those |
 | {repo}`tools/spiflash_extract/` | the extraction tools |
 | {repo}`cparse.py <tools/spiflash_extract/cparse.py>` | just enough C: find tables, split initialisers, evaluate integer expressions (`SZ_16M`, `BIT(3)`, `64 * 1024`) |
 | {repo}`dts.py <tools/spiflash_extract/dts.py>` | just enough devicetree source: the nodes of a `.dts`, `.dtsi` or `.overlay`, their labels and properties, without the C preprocessor |
@@ -112,6 +114,19 @@ uv run tools/update_db.py --check    # fail if the committed data differs
 
 Commit {repo}`tools/sources.toml` and {repo}`src/spiflash/data/` together. The
 data files hold one record per line, so `git diff` reads chip by chip.
+
+A fact is stored once: what a record's fields imply is derived at load by
+{repo}`src/spiflash/derive.py`, and {func}`spiflash_extract.record.make` drops
+it from what an extractor gives. {repo}`tests/test_one_fact.py` checks the
+shipped data for it. A change to the extractors or the model should change
+the answers only where it means to, so compare them before and after (here
+with the base checked out at `../spiflash-base`):
+
+```sh
+uv run tools/db_snapshot.py --src ../spiflash-base/src tmp/before.json
+uv run tools/db_snapshot.py tmp/after.json
+uv run tools/db_diff.py --summary tmp/before.json tmp/after.json
+```
 
 {repo}`.github/workflows/upstream.yml` runs `--check` on every change to the
 data or the tools, and `--latest --check` weekly. It is deliberately not part
