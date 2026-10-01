@@ -26,7 +26,7 @@ IDENTITY = {"source": "qemu", "file": "x.c", "line": 1, "name": "x"}
 ZEPHYR_BFPTS: dict[tuple[str, int], tuple[int, int | None, list[tuple[int, int]], list[str]]] = {
     ("boards/adi/apard32690/apard32690_max32690_m4.dts", 303): (
         8 << 20,
-        4096,
+        256,  # main stored the driver's page-size, 4096: now a flag
         [(0x20, 4096), (0x52, 32768), (0xD8, 65536)],
         ["READ_1_1_2", "READ_1_1_4", "READ_1_2_2", "READ_1_4_4"],
     ),
@@ -62,7 +62,7 @@ ZEPHYR_BFPTS: dict[tuple[str, int], tuple[int, int | None, list[tuple[int, int]]
     ),
     ("boards/nxp/frdm_mcxe247/frdm_mcxe247.dts", 297): (
         8 << 20,
-        128,
+        256,  # main stored the driver's page-size, 128: now a flag
         [(0x20, 4096), (0x52, 32768), (0xD8, 65536)],
         ["READ_1_1_2", "READ_1_1_4", "READ_1_2_2", "READ_1_4_4"],
     ),

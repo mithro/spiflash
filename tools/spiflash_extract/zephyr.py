@@ -155,6 +155,21 @@ _IO_MODE = {
     "MSPI_IO_MODE_OCTAL_1_1_8": "octal_read",
     "MSPI_IO_MODE_OCTAL_1_8_8": "octal_read",
 }
+#: The bindings whose driver takes ``page-size`` as its own setting rather
+#: than the part's page, so it is kept as a flag (``page-size=128``) and the
+#: part's page is its BFPT's. The binding YAMLs say nothing of this: each
+#: inherits jedec,jesd216.yaml's "Number of bytes in a page from JESD216 BFP
+#: DW11". The drivers differ:
+#:
+#: - ``adi,max32-spixf-nor`` (drivers/flash/flash_max32_spixf_nor.c) uses it
+#:   only as the flash layout page, ``.layout.pages_size =
+#:   DT_INST_PROP(0, page_size)``, and programs by the BFPT's page;
+#: - ``jedec,nor`` (drivers/flash/flash_mspi_nor.c) programs in chunks of it,
+#:   which must fit the controller: ``FLASH_PAGE_SIZE_INST(inst) <=
+#:   PACKET_DATA_LIMIT(inst)``; frdm_mcxe247's node says why it gives 128:
+#:   "Single QSPI IP write must fit the 128-byte Tx FIFO."
+PAGE_SIZE_IS_THE_DRIVERS = frozenset({"adi,max32-spixf-nor", "jedec,nor"})
+
 #: The SFDP parameter tables a node copies, by property: the table id each is.
 SFDP_TABLES = {"sfdp-bfp": BFPT_ID, "sfdp-ff05": PROFILE1_ID, "sfdp-ff84": FOUR_BYTE_ID}
 
@@ -306,6 +321,9 @@ class _Node:
             None,
         )
         page_size = 512 if "ppsize-512" in self.props else self.cell("page-size")
+        driver_page = None
+        if binding_name in PAGE_SIZE_IS_THE_DRIVERS and "page-size" in self.props:
+            driver_page, page_size = page_size, None
         self.notes = _comments(self.text, self.node)
         # The tables' facts are derived at load (spiflash.sfdp); make()
         # drops a size or page size they repeat. Zephyr's spi_nor driver
@@ -334,7 +352,7 @@ class _Node:
             size=size,
             page_size=page_size,
             features=self.features,
-            flags=self.flags(),
+            flags=self.flags() + ([f"page-size={driver_page}"] if driver_page else []),
             via=via if tables else {},
             opcodes=self.ops.to_json() if binding.type == "nor" else [],
             sfdp_tables=tables,

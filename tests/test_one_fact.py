@@ -264,7 +264,7 @@ def test_no_stored_value_its_tables_give() -> None:
         assert r.parsed_sfdp is not None
         facts = r.sfdp_facts
         out = [n for n in ("size", "page_size") if d[n] is not None and d[n] == getattr(facts, n)]
-        out += [f"eraser 0x{e.opcode:02x}" for e in r.eraser_claims if e in facts.erasers]
+        out += [f"eraser 0x{e.opcode:02x}" for e in r.eraser_claims if e in r.sfdp_erasers]
         given = {u.op: u.dummy_clocks for u in facts.opcodes}
         out += [
             o["op"]
@@ -285,13 +285,10 @@ def test_a_disagreement_is_the_stored_value() -> None:
             found.append((d["name"], field))
             if field != "erasers":
                 assert d[field] == stored, _where(d)
-    # Two Zephyr boards' page-size is their controller's write chunk, and
-    # one board copies another part's table (16 MiB for a 2 MiB P25Q16H).
-    assert sorted(found) == [
-        ("MX25U6432F", "page_size"),
-        ("P25Q16H", "size"),
-        ("W25Q64", "page_size"),
-    ]
+    # One board copies another part's table (16 MiB, with DTR, for a 2 MiB
+    # P25Q16H). Two boards' page-size is their driver's setting, kept as a
+    # flag (spiflash_extract.zephyr.PAGE_SIZE_IS_THE_DRIVERS).
+    assert sorted(found) == [("P25Q16H", "size")]
 
 
 def test_no_sfdp_residue() -> None:

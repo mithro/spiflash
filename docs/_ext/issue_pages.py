@@ -52,10 +52,13 @@ KIND_NOTES = {
     ),
     IssueKind.SFDP: (
         "The value the source states is the one its own code uses, and the one the "
-        "database keeps for that source; the tables are shown as it carries them. Some "
-        "are a board's or a controller's setting rather than the part's (Zephyr's "
-        "`page-size` is the write chunk some drivers use), and some a table copied "
-        "from another part. `spiflash sfdp-diff` compares tables byte by byte."
+        "database keeps for that source; the tables are shown as it carries them. A "
+        "table may be another part's, copied by a board's porter: {sfsrc}`zephyr`'s "
+        "wio_tracker_l1 gives its 2 MiB P25Q16H a 16 MiB part's BFPT, with DTR; and "
+        "frdm_mcxe247's W25Q64 carries the MX25R6435F's byte for byte, which agrees "
+        "with the part's size and page, so is no issue here (its "
+        "[source notes](../sources/zephyr.md) say more). `spiflash sfdp-diff` "
+        "compares tables field by field and dword by dword."
     ),
     IssueKind.NAME_IDS: (
         "Some are one name for parts with different ids: a generic name, or a 3 V "

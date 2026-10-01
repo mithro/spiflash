@@ -1261,19 +1261,29 @@ def test_zephyr_modes(tmp_path: Path) -> None:
 
 
 def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
-    # The nRF52840 DK's MX25R6435F table, under a wrong size and page size.
-    (r,) = zephyr_board(
-        tmp_path,
-        """mx25r6435f@0 {
-            compatible = "adi,max32-spixf-nor";
-            jedec-id = [c2 28 17];
-            sfdp-bfp = [e5 20 f1 ff ff ff ff 03 44 eb 08 6b 08 3b 04 bb
+    # The nRF52840 DK's MX25R6435F table (8 MiB, 256-byte pages), under a
+    # wrong size and page size: once where spi_nor's page-size is the
+    # part's page, once where the driver's own setting (the MAX32 SPIXF
+    # driver's flash layout page).
+    table = """sfdp-bfp = [e5 20 f1 ff ff ff ff 03 44 eb 08 6b 08 3b 04 bb
                         ee ff ff ff ff ff 00 ff ff ff 00 ff 0c 20 0f 52
                         10 d8 00 ff 23 72 f5 00 82 ed 04 cc 44 83 68 44
-                        30 b0 30 b0 f7 c4 d5 5c 00 be 29 ff f0 d0 ff ff];
+                        30 b0 30 b0 f7 c4 d5 5c 00 be 29 ff f0 d0 ff ff];"""
+    r, m = zephyr_board(
+        tmp_path,
+        f"""mx25r6435f@0 {{
+            compatible = "jedec,spi-nor";
+            jedec-id = [c2 28 17];
+            {table}
             size = <DT_SIZE_M(16)>;
             page-size = <4096>;
-        };""",
+        }};
+        mx25r6435f@1 {{
+            compatible = "adi,max32-spixf-nor";
+            jedec-id = [c2 28 17];
+            {table}
+            page-size = <4096>;
+        }};""",
     )
     # What the node states and the table does not is stored, and is the
     # record's value; the two are disagreements, not notes.
@@ -1285,6 +1295,17 @@ def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
         ("size", 2 << 20, 8 << 20),
         ("page_size", 4096, 256),
     )
+    # The table's erase types are laid over the record's own size.
+    assert [e.to_json() for e in loaded.erasers] == [
+        {"opcode": 0x20, "blocks": [[4096, 512]]},
+        {"opcode": 0x52, "blocks": [[32768, 64]]},
+        {"opcode": 0xD8, "blocks": [[65536, 32]]},
+    ]
+    assert loaded.sector_size == 65536
+    # The driver's page-size is a flag, and the part's page is the table's.
+    assert (m["page_size"], "page-size=4096" in m["flags"]) == (None, True)
+    assert Record.from_json(m).page_size == 256
+    assert Record.from_json(m).sfdp_disagreements() == ()
 
 
 def test_zephyr_skips(tmp_path: Path) -> None:
