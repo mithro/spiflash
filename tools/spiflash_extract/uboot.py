@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from . import cparse
 from .ops import Opcodes, add_4b_variants, add_spinor
-from .record import Record, make
+from .record import Record, feature_via, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -116,7 +116,8 @@ def _record(
         page = cparse.evaluate(fields.get("page_size", "256"), symbols)
         flag_expr = fields.get("flags", "0")
     flags = cparse.flag_names(flag_expr)
-    features = {_FEATURES[f] for f in flags if f in _FEATURES}
+    claims = [(_FEATURES[f], f) for f in flags if f in _FEATURES]
+    features = {feat for feat, _ in claims}
     if "SPI_NOR_NO_FR" not in flags:
         features.add("fast_read")
     if "4byte_opcodes" in features or (size is not None and size > 16 * 1024 * 1024):
@@ -137,6 +138,7 @@ def _record(
         sector_size=sector,
         features=features,
         flags=flags,
+        via=feature_via(claims),
         opcodes=_opcodes(flags, symbols, features, has_id=id_hex is not None),
         notes=notes,
     )

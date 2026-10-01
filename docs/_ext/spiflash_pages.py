@@ -402,8 +402,16 @@ def _opcodes(f: Flash) -> list[str]:
     )
     out.append("")
     out.append(":::{dropdown} Why each source lists each opcode\n:class-container: sf-why\n")
+    out.append(
+        "*Implied* marks an opcode that follows from what the source's entry "
+        "says rather than being listed: its erasers' opcodes, or how it reads "
+        "the id.\n"
+    )
     for o in f.opcodes.values():
-        reasons = "; ".join(f"{source_badge(s)} {esc(via)}" for s, via in o.because)
+        reasons = "; ".join(
+            f"{source_badge(c.source)} {esc(c.via)}" + (" *(implied)*" if c.implied else "")
+            for c in o.because
+        )
         out.append(f"- [`{o.name}`](../opcodes/{o.name}.md) (0x{o.opcode:02x}): {reasons}")
     out.append(":::\n")
     return out

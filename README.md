@@ -170,8 +170,10 @@ is everything any source claims, from this list:
 | `4byte_addr`, `4byte_opcodes` | 4-byte addressing; dedicated 4-byte opcodes |
 | `otp`, `lock`, `rww`, `no_erase` | OTP area; status-register block protection; read-while-write; FRAM/MRAM |
 
-The upstream's own flags (`SPI_NOR_HAS_TB`, `FEATURE_WRSR2`, ...) are kept on
-each record's `flags` for anything this list does not capture.
+The upstream's own flags (`SPI_NOR_HAS_TB`, `FEATURE_WRSR_EXT2`, ...) are kept on
+each record's `flags` where no field or operation holds them; its `via` says
+which token gave each capability the upstream states (`{"feature:qpi":
+"QPIEnable"}`).
 
 ## Searching part names
 
@@ -226,8 +228,12 @@ part name (`W25Q128*`), and `/.../` is a regular expression on the part names
 chip.supports("READ_1_1_4")              # True
 op = chip.opcodes["READ_1_4_4"]
 op.opcode, op.operation.description      # (235, 'Quad I/O fast read'): 0xeb
-op.because                               # (('flashprog', 'FEATURE_FAST_READ_QIO'), ('openocd', 'qread_cmd'))
+op.because                               # (('flashprog', 'FEATURE_FAST_READ_QIO', False), ('openocd', 'qread_cmd', False))
 ```
+
+Each of `op.because` is a `(source, via, implied)` claim: `implied` where the
+source's entry does not list the operation, but it follows from what the
+entry does say (its erase layouts, the way it reads the id).
 
 Operations are named as [LiteSPI](https://github.com/litex-hub/litespi)'s
 `SpiNorFlashOpCodes` names them, so a list can be used there directly:

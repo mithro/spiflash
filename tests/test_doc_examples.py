@@ -4,6 +4,7 @@ it changes."""
 
 from __future__ import annotations
 
+import ast
 import re
 import shlex
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+import spiflash
 from spiflash import cli
 
 if TYPE_CHECKING:
@@ -66,3 +68,12 @@ def test_example_output(
 def test_examples_split_at_each_command() -> None:
     text = "```console\n$ spiflash a 'b c'  # note\nout\n$ spiflash d\n```\n"
     assert list(examples(text)) == [(["spiflash", "a", "b c"], ["out"]), (["spiflash", "d"], [])]
+
+
+def test_readme_opcode_claims() -> None:
+    """The README's ``op.because`` example is what the data gives."""
+    readme = (ROOT / "README.md").read_text().splitlines()
+    (line,) = [x for x in readme if x.startswith("op.because")]
+    (chip,) = spiflash.lookup("ef4018")
+    shown = ast.literal_eval(line.split("#", 1)[1].strip())
+    assert tuple(tuple(c) for c in chip.opcodes["READ_1_4_4"].because) == shown

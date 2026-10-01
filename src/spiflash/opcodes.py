@@ -726,3 +726,21 @@ _TABLE_ORDER = {op.name: i for i, op in enumerate(_ALL)}
 def sort_key(name: str) -> tuple[int, int]:
     """Order operations by kind, then as listed here."""
     return (_KIND_ORDER[OPERATIONS[name].kind], _TABLE_ORDER[name])
+
+
+@dataclass(frozen=True, slots=True)
+class OpcodeUse:
+    """One operation an upstream entry implies: its name in
+    :data:`OPERATIONS`, and what in the upstream implies it (a flag, a
+    field, or the upstream's default). ``implied`` marks a use
+    :mod:`spiflash.derive` adds from the entry's other fields (its erasers,
+    how it reads the id); it is never stored."""
+
+    op: str
+    via: str
+    implied: bool = False
+
+    @property
+    def opcode(self) -> int:
+        """The opcode byte, from :data:`OPERATIONS`."""
+        return OPERATIONS[self.op].opcode

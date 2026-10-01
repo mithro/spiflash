@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 import update_db
-from spiflash_extract import fetch
+from spiflash import db
+from spiflash.opcodes import OpcodeUse
+from spiflash_extract import fetch, record
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -78,3 +80,19 @@ def test_remote_head_missing_branch(upstream: fetch.Upstream) -> None:
     upstream.branch = "nope"
     with pytest.raises(RuntimeError, match="no branch nope"):
         fetch.remote_head(upstream)
+
+
+def test_data_files_share_the_format() -> None:
+    assert update_db.FORMAT == db.FORMAT == 4
+    for name in ("records.json", "manufacturers.json", "sources.json", "datasheets.json"):
+        assert json.loads((update_db.DATA / name).read_text())["format"] == db.FORMAT, name
+
+
+def test_make_refuses_to_lose_an_operation(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A rule that gives SE while make() drops the stored one, and not after:
+    # the record would lose SE, which make() refuses.
+    se = (OpcodeUse("SE", "eraser", implied=True),)
+    calls = iter([se, se])
+    monkeypatch.setattr(record.derive, "opcodes", lambda _: next(calls, ()))
+    with pytest.raises(AssertionError, match=r"lost \['SE'\]"):
+        record.make("linux", "f", 1, "n", opcodes=[{"op": "SE", "via": "x"}])

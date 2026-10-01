@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 from . import cparse
 from .ops import Opcodes
-from .record import Record, make
+from .record import Record, feature_via, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -58,11 +58,14 @@ def extract(root: Path) -> list[Record]:
             features.add("erase_64k")
         if cparse.evaluate(fields.get("subsector_erase", "false"), symbols):
             features.add("erase_4k")
+        claims = []
         if cparse.evaluate(fields.get("bp_len", "0"), symbols):
             features.add("lock")
+            claims.append(("lock", f"bp_len={fields['bp_len'].strip()}"))
         quad_reg = fields.get("quad_register", "NONER").strip()
         if quad_reg != "NONER":
             features.add("quad_read")
+            claims.append(("quad_read", f"quad_register={quad_reg}"))
         size = nr_sector * 64 * 1024
         if size > 16 * 1024 * 1024:
             features.add("4byte_addr")
@@ -83,6 +86,7 @@ def extract(root: Path) -> list[Record]:
                 sector_size=64 * 1024,
                 features=features,
                 flags=flags,
+                via=feature_via(claims),
                 opcodes=_opcodes(features, size, flash_defs),
                 notes=cparse.comments(raw[entry.offset : entry.offset + len(entry.body)]),
             )

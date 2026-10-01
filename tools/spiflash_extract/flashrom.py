@@ -34,9 +34,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from spiflash.derive import ERASE_BY_OPCODE
+
 from . import cparse
-from .ops import ERASE_BY_OPCODE, Opcodes
-from .record import ERASE_FEATURES, Record, make
+from .ops import Opcodes
+from .record import ERASE_FEATURES, Record, feature_via, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -72,6 +74,8 @@ _FEATURES = [
     (re.compile(r"FEATURE_OTP"), "otp"),
     (re.compile(r"FEATURE_NO_ERASE"), "no_erase"),
 ]
+
+_SUPPORTS_SFDP = re.compile(r"\s*[Ss]upports SFDP\.?\s*")
 
 _SKIP_IDS = {"GENERIC_MANUF_ID", "PROGMANUF_ID", "GENERIC_DEVICE_ID", "SFDP_DEVICE_ID"}
 
@@ -201,18 +205,25 @@ def _record(
     id_hex, ext = id_bytes(method, mfr, model, probe)
 
     flags = cparse.bit_names(f.get("feature_bits", "0"), symbols, "FEATURE_")
-    features = {feat for flag in flags for rx, feat in _FEATURES if rx.fullmatch(flag)}
+    claims = [(feat, flag) for flag in flags for rx, feat in _FEATURES if rx.fullmatch(flag)]
+    features = {feat for feat, _ in claims}
     erasers = _erasers(f.get("block_erasers", "{}"), symbols)
     for e in erasers:
         if len(e["blocks"]) == 1 and e["opcode"] is not None:
             feat = ERASE_FEATURES.get(e["blocks"][0][0])
             if feat:
                 features.add(feat)
-    if any(re.search(r"supports SFDP", n, re.IGNORECASE) for n in notes):
+    # Only a comment about the entry itself: "the latter supports SFDP", or
+    # "F model supports SFDP", is about another part of a multi-part entry.
+    # The RDSFDP operation's via holds the comment.
+    sfdp = [n for n in notes if _SUPPORTS_SFDP.fullmatch(n)]
+    if sfdp:
         features.add("sfdp")
+        notes = [n for n in notes if n not in sfdp]
     reg_bits = f.get("reg_bits", "")
     if re.search(r"\.bp\s*=", reg_bits):
         features.add("lock")
+        claims.append(("lock", ".reg_bits .bp"))
     size = cparse.evaluate(f["total_size"], symbols) * 1024
     if size > 16 * 1024 * 1024:
         features.add("4byte_addr")
@@ -237,6 +248,7 @@ def _record(
         erasers=erasers or None,
         features=features,
         flags=flags,
+        via=feature_via(claims),
         voltage=voltage,
         tested=tested,
         opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp="sfdp" in features),

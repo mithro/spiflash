@@ -29,7 +29,7 @@ from spiflash import sfdp as sfdp_tables
 
 from . import cparse
 from .ops import Opcodes
-from .record import Record, make
+from .record import Record, feature_via, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -157,7 +157,8 @@ def _record(
     ext = f"{kept:0{2 * ext_bytes}x}" if kept else None
     size = sector * n_sectors
     eeprom = "EEPROM" in flags
-    features = {_FEATURES[f] for f in flags if f in _FEATURES}
+    claims = [(_FEATURES[f], f) for f in flags if f in _FEATURES]
+    features = {feat for feat, _ in claims}
     features.add("fast_read")
     if sector == 64 * 1024 and not eeprom:
         features.add("erase_64k")
@@ -233,6 +234,7 @@ def _record(
         erasers=erasers or None,
         features=features,
         flags=flags,
+        via=feature_via(claims),
         opcodes=ops.to_json(),
         sfdp=dump.hex() if dump else None,
         notes=notes,

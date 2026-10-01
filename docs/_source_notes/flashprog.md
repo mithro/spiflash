@@ -19,3 +19,6 @@ With {sfsrc}`flashrom` it has the most detail per part: every erase opcode
 with its block layout, the supply voltage, the test status, the feature bits
 (`FEATURE_*`), and the legacy ids. Its names, like flashrom's, use `.` as a
 wildcard (`W25Q128.V`).
+
+Its "supports SFDP" comments are read as {sfsrc}`flashrom`'s are: only an
+unqualified one claims SFDP.

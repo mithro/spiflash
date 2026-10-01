@@ -87,9 +87,10 @@ The driver takes the first entry an id matches. A later entry for the same
 id is never used, and its record says which line wins
 (`XT26Q04DWSIGT-B`, after `XT26Q04DWSIGA`).
 
-The raw fields are kept in the record's `flags`: the feature bits
-(`FEA_4BIT_READ`, `FEA_SOFT_QOP_BIT`, ...), and the following fields, which
-the database has no field for yet:
+The raw fields are kept in the record's `flags`: the feature bits that give
+no capability (`FEA_SOFT_QOP_BIT`, ...; `FEA_4BIT_READ` and the others that
+do are the capability's `via`), and the following fields, which the
+database has no field for yet:
 
 - the SPI NOR quad enable bit (`QE_bits=9`: status register 2, bit 1) and
   the function that writes the status registers

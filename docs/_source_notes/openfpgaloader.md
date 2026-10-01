@@ -8,7 +8,9 @@ here.
 
 An entry gives the manufacturer and model, the number of 64 KiB sectors,
 which erases the part has (`sector_erase`, `subsector_erase`), and its
-block-protection layout: the `flags` of its records (`bp_len`, `bp_offset`,
-`tb_register`, `quad_register`, ...), which no other source gives. The
+block-protection layout: the `flags` of its records (`bp_offset`,
+`tb_register`, `quad_mask`, ...), which no other source gives. `bp_len` and
+`quad_register`, which give a record its `lock` and `quad_read`, are those
+capabilities' `via`. The
 opcodes are what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends:
 read, page program, and the erases the table allows.

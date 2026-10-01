@@ -180,7 +180,9 @@ def _fields(
             f"program_load={','.join(caps[pl])}",
             *([f"select_die={select_die}"] if select_die else []),
         ],
-        "notes": [f"{oob} B OOB per page; {planes} plane(s), {dies} die(s) of {blocks} blocks"],
+        # The flags hold the geometry (sparesize, planes_per_die, ndies) and
+        # the size the blocks, so no note restates it.
+        "notes": [],
     }
 
 

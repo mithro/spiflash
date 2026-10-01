@@ -30,7 +30,8 @@ from page_markup import (
     vendor_of,
     volt,
 )
-from spiflash.enums import FlashType, IdMethod, Source
+from spiflash.derive import ID_OPERATION
+from spiflash.enums import FlashType, Source
 
 if TYPE_CHECKING:
     from issue_checks import Issue
@@ -138,22 +139,10 @@ FIELDS = {
     "opcodes": "Opcodes",
     "features": "Capabilities",
     "flags": "Upstream flags",
+    "via": "Provenance (via)",
     "tested": "Test status",
     "notes": "Upstream comments",
     "sfdp": "SFDP dump",
-}
-
-#: The operation behind each way of reading an id, for a link to its page.
-ID_OPERATION = {
-    IdMethod.RDID: "RDID",
-    IdMethod.RDID_OPCODE: "RDID",
-    IdMethod.RDID_OPCODE_DUMMY: "RDID",
-    IdMethod.RDID_OPCODE_ADDR: "RDID",
-    IdMethod.REMS: "REMS",
-    IdMethod.RES1: "RES",
-    IdMethod.RES2: "RES",
-    IdMethod.AT25F: "RDID_ATMEL",
-    IdMethod.ST95: "RDID_M95",
 }
 
 
@@ -393,7 +382,21 @@ def _fields() -> list[str]:
         ["Supply voltage", "the minimum and maximum supply"],
         ["Opcodes", "the SPI operations the upstream uses on the part ([](../opcodes.md))"],
         ["Capabilities", "what the part can do, normalised across the sources"],
-        ["Upstream flags", "the upstream's own flag and feature names, kept as they are"],
+        [
+            "Upstream flags",
+            (
+                "the upstream's own flag and feature names that no field holds, kept as "
+                "they are: what is left once the provenance and the opcodes have taken theirs"
+            ),
+        ],
+        [
+            "Provenance (via)",
+            (
+                "which upstream token gave a value that has nothing else to say where it "
+                "came from: a capability the upstream states (`feature:qpi`), how the id "
+                "is read (`id_method`), an erase layout (`erasers:0x20`)"
+            ),
+        ],
         ["Test status", "how far the upstream has tested the part on hardware"],
         ["Upstream comments", "comments the upstream attached to the entry"],
         ["SFDP dump", "the part's whole SFDP area, as it answers the SFDP command"],

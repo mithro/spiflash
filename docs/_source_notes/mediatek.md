@@ -63,7 +63,6 @@ names: `sparesize` (bytes per page), `planes_per_die`, `ndies`, `cap_rd` and
 `cap_pl` (the I/O tables) with the modes each allows (`read_from_cache`,
 `program_load`), and `select_die`, which of the two ways a two-die part is
 switched (Winbond's 0xc2 command, or Micron's die-select feature bit).
-A note repeats the spare area, planes and dies in words.
 
 The table repeats two ids. The IS37SML01G1 is listed after the ESMT
 F50L1G41A under the same {sfid}`c8 21` (ISSI's part answers ESMT's id), so
