@@ -68,7 +68,9 @@ from page_markup import (
 from source_pages import commit_link, page_name
 from source_pages import generate_all as source_pages
 from source_pages import sources_table as sources_list
-from spiflash.enums import Feature, OperationKind, Source
+from spiflash import derive
+from spiflash.derive import ERASE_BY_OPCODE
+from spiflash.enums import Feature, FlashType, OperationKind, Source
 from spiflash.model import strip_continuation
 from spiflash.opcodes import OPERATIONS
 from spiflash.units import human_size, human_time
@@ -81,6 +83,7 @@ if TYPE_CHECKING:
     from sphinx.writers.html5 import HTML5Translator
 
     from spiflash import Database, Flash, Record, SfdpDump
+    from spiflash.model import SupportedOperation
 
 
 def chip_page(
@@ -279,29 +282,52 @@ def _source_header(s: str) -> str:
     return f"{{sfsrc}}`{s}`"
 
 
+def _mark(role: str, text: str) -> str:
+    """A matrix cell's mark, ``{role}`text```: the role draws the mark,
+    ``text`` (why) is its tooltip."""
+    why = text.replace("`", "'")
+    return f"{{{role}}}`{why}`"
+
+
 def _capabilities(f: Flash) -> list[str]:
     if not f.features:
         return []
-    srcs = [s for s in f.sources if any(s in f.feature_sources(x) for x in f.features)]
+    shown = [feat for feat in FEATURE_TEXT if feat in f.features]
+    by = {feat: {s.source: s for s in f.feature_sources(feat)} for feat in shown}
+    srcs = [s for s in f.sources if any(s in given for given in by.values())]
+
+    def cell(feat: str, source: Source) -> str:
+        given = by[feat].get(source)
+        if given is None:
+            return " "
+        return _mark("sfimplied" if given.implied else "sfclaimed", given.because)
+
     rows = [
-        [
-            badge(*FEATURE_TEXT[feat]),
-            esc(Feature(feat).description),
-        ]
-        + ["{sfyes}`✓`" if s in f.feature_sources(feat) else " " for s in srcs]
-        for feat in FEATURE_TEXT
-        if feat in f.features
+        [badge(*FEATURE_TEXT[feat]), esc(Feature(feat).description)] + [cell(feat, s) for s in srcs]
+        for feat in shown
     ]
-    return [
+    out = [
         "## Capabilities\n",
-        "Each capability some source says this part has, and which sources say so.\n",
+        (
+            "Each capability some source says this part has, and which sources say so: "
+            "{sfyes}`✓` where the source's entry claims it, {sfhollow}`○` where it does "
+            "not but implies it, by the operations, erase layouts, size or SFDP tables it "
+            "gives ([](../derived.md)). An operation a source's driver sends to every part, "
+            "whatever the entry says (a driver default), implies nothing.\n"
+        ),
         list_table(
             ["Capability", "What it means", *[_source_header(s) for s in srcs]],
             rows,
             "sf-table sf-matrix sf-capabilities",
         ),
         "",
+        ":::{dropdown} Why each source gives each capability\n:class-container: sf-why\n",
     ]
+    for feat in shown:
+        reasons = "; ".join(f"{source_badge(s.source)} {esc(s.because)}" for s in by[feat].values())
+        out.append(f"- {badge(*FEATURE_TEXT[feat])}: {reasons}")
+    out.append(":::\n")
+    return out
 
 
 def _sfdp(f: Flash) -> list[str]:
@@ -380,9 +406,20 @@ def _opcodes(f: Flash) -> list[str]:
         return out
     srcs = [s for s in f.sources if any(s in o.sources for o in f.opcodes.values())]
     out.append(
-        "Each opcode some source says this part has, and which sources say so. "
+        "Each opcode some source says this part has, and which sources say so: "
+        "{sfyes}`✓` for the part, {sfhollow}`○` only as the source's driver default "
+        "(sent to every part, whatever the entry says). "
         "A missing opcode may still be supported: see [](../opcodes.md).\n"
     )
+
+    def cell(o: SupportedOperation, source: Source) -> str:
+        if source not in o.sources:
+            return " "
+        if source in o.assumed_by:
+            why = "; ".join(c.via for c in o.because if c.source == source)
+            return _mark("sfdefault", f"driver default: {why}")
+        return "{sfyes}`✓`"
+
     rows = [
         [
             f"{{sfop}}`0x{o.opcode:02x}`",
@@ -390,7 +427,7 @@ def _opcodes(f: Flash) -> list[str]:
             kind_link(o.operation.kind, "../opcodes.html"),
             esc(o.operation.description),
         ]
-        + ["{sfyes}`✓`" if s in o.sources else " " for s in srcs]
+        + [cell(o, s) for s in srcs]
         for o in f.opcodes.values()
     ]
     out.append(
@@ -405,11 +442,14 @@ def _opcodes(f: Flash) -> list[str]:
     out.append(
         "*Implied* marks an opcode that follows from what the source's entry "
         "says rather than being listed: its erasers' opcodes, or how it reads "
-        "the id.\n"
+        "the id. *Driver default* marks one the source's driver sends to every "
+        "part, whatever the entry says, which implies no capability.\n"
     )
     for o in f.opcodes.values():
         reasons = "; ".join(
-            f"{source_badge(c.source)} {esc(c.via)}" + (" *(implied)*" if c.implied else "")
+            f"{source_badge(c.source)} {esc(c.via)}"
+            + (" *(implied)*" if c.implied else "")
+            + (" *(driver default)*" if c.assumed else "")
             for c in o.because
         )
         out.append(f"- [`{o.name}`](../opcodes/{o.name}.md) (0x{o.opcode:02x}): {reasons}")
@@ -423,20 +463,19 @@ def _erase_layouts(f: Flash) -> list[str]:
         for e in r.erasers:
             blocks = ", ".join(num(f"{b.count:,} {TIMES} {human_size(b.size)}") for b in e.blocks)
             op = e.opcode
-            opname = next(
-                (
-                    n
-                    for n, o in OPERATIONS.items()
-                    if o.opcode == op and o.kind is OperationKind.ERASE
-                ),
-                None,
-            )
+            opname = ERASE_BY_OPCODE.get(op) if op is not None else None
+            if r.type is FlashType.NAND:
+                # A SPI NAND block erase is not the SPI NOR operation of
+                # the same opcode.
+                operation = "block erase"
+            else:
+                operation = f"[`{opname}`](../opcodes/{opname}.md)" if opname else EM_DASH
             rows.append(
                 [
                     source_badge(r.source),
                     esc(r.name),
                     f"{{sfop}}`0x{op:02x}`" if op is not None else esc(e.function or ""),
-                    f"[`{opname}`](../opcodes/{opname}.md)" if opname else EM_DASH,
+                    operation,
                     blocks,
                 ]
             )
@@ -711,6 +750,44 @@ def stats(db: Database) -> dict[str, int]:
 # --- Sphinx glue -------------------------------------------------------------
 
 
+def derived_table(db: Database) -> str:
+    """Each capability, what implies it (:mod:`spiflash.derive`), and how
+    many entries claim it and how many only imply it."""
+    claimed = Counter(f for r in db.records for f in r.feature_claims)
+    implied = Counter(f for r in db.records for f in r.features - r.feature_claims)
+
+    def ops(names: tuple[str, ...]) -> str:
+        return ", ".join(f"[`{n}`](opcodes/{n}.md)" for n in names)
+
+    erase = {f: size for size, f in derive.ERASE_FEATURE.items()}
+    rows = []
+    for feat in FEATURE_TEXT:
+        why = []
+        if feat in derive.FEATURE_IMPLIED_BY:
+            why.append(ops(derive.FEATURE_IMPLIED_BY[Feature(feat)]))
+        if feat in erase:
+            why.append(f"a SPI NOR eraser of uniform {human_size(erase[Feature(feat)])} blocks")
+        if feat == Feature.FOUR_BYTE_ADDR:
+            why.append(
+                "a size over 16 MiB, or "
+                + ops(derive.FOUR_BYTE_ADDRESS_OPS[-4:])
+                + ", or any `_4B` operation ({py:func}`~spiflash.derive.address_bytes`)"
+            )
+        rows.append(
+            [
+                badge(*FEATURE_TEXT[feat]),
+                "; or ".join(why) or "nothing: only a claim gives it",
+                count(claimed[Feature(feat)]),
+                count(implied[Feature(feat)]),
+            ]
+        )
+    return list_table(
+        ["Capability", "Implied by", "Entries claiming it", "Entries only implying it"],
+        rows,
+        "sf-table",
+    )
+
+
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists() or path.read_text() != text:
@@ -760,6 +837,7 @@ def generate(srcdir: Path) -> dict[str, str]:
     # Fragments the hand-written pages include (docs/_generated is excluded
     # from the build as pages of its own).
     _write(srcdir / "_generated" / "opcodes-table.md", opcodes_table(list(db.flashes)))
+    _write(srcdir / "_generated" / "derived-table.md", derived_table(db))
     _write(srcdir / "_generated" / "sources-table.md", sources_table(db))
     _write(srcdir / "_generated" / "files-read.md", files_read_table(db))
     _write(srcdir / "_generated" / "sources-list.md", sources_list(db, issues, ""))
@@ -859,6 +937,34 @@ class SpanRole(SphinxRole):
         if not has_link:
             return [span], []
         return [nodes.reference(self.rawtext, "", span, refuri=target)], []
+
+
+class Mark(nodes.inline):
+    """A matrix cell's mark from ``{sfclaimed}``, ``{sfimplied}`` or
+    ``{sfdefault}``: ``node["mark"]`` is drawn, ``node["why"]`` its
+    tooltip."""
+
+
+def visit_mark(self: HTML5Translator, node: Mark) -> None:
+    self.body.append(self.starttag(node, "span", "", title=node["why"]))
+    self.body.append(self.encode(node["mark"]))
+    self.body.append("</span>")
+    raise nodes.SkipNode
+
+
+class MarkRole(SphinxRole):
+    """``{role}`why``` as ``mark``, with ``why`` on hover: a capability a
+    source claims or implies, or an operation that is only its driver's
+    default."""
+
+    def __init__(self, css: str, mark: str) -> None:
+        super().__init__()
+        self.css, self.mark = css, mark
+
+    def run(self) -> tuple[list[nodes.Node], list[nodes.system_message]]:
+        node = Mark(self.rawtext, "", classes=[self.css])
+        node["mark"], node["why"] = self.mark, self.text
+        return [node], []
 
 
 class SourceBadge(nodes.inline):
@@ -1098,6 +1204,11 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_role("sfid", SpanRole("sf-id"))
     app.add_role("sfop", SpanRole("sf-op"))
     app.add_role("sfyes", SpanRole("sf-yes"))
+    app.add_role("sfhollow", SpanRole("sf-hollow"))
+    app.add_role("sfclaimed", MarkRole("sf-yes", "\u2713"))
+    app.add_role("sfimplied", MarkRole("sf-hollow", "\u25cb"))
+    app.add_role("sfdefault", MarkRole("sf-default", "\u25cb"))
+    app.add_node(Mark, html=(visit_mark, None))
     app.add_role("sfkind", SpanRole("sf-kind"))
     app.add_role("sfsub", SpanRole("sf-sub"))
     app.add_role("sfsrc", SourceRole())
