@@ -44,6 +44,11 @@ VALUES = (
     "die_select_bit",
     "max_bad_blocks",
     "ecc",
+    "supply_mv",
+    "otp",
+    "four_byte_modes",
+    "address_bytes",
+    "legacy_ids",
 )
 
 #: The values sources are compared on, where a commit has no

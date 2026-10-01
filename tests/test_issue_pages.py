@@ -279,6 +279,7 @@ def test_values_grouped_by_what_disagrees() -> None:
         "## Planes",
         "## Dies",
         "## ECC requirement",
+        "## OTP area",
     ]
     # A heading for every value compared, a layout's roles under one.
     assert set(VALUE_TITLES) == set(COMPARED)

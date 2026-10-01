@@ -364,7 +364,12 @@ class Database:
         are ignored, since many chips leave them out. Bytes past the id narrow
         the answer to the variants whose extended id agrees (an S25FL128S
         answers ``01 20 18 4d 01 80``). ``method`` selects a legacy id
-        instead (``"rems"``, ``"res1"``, ``"res2"``, ``"at25f"``).
+        instead (``"rems"``, ``"res1"``, ``"res2"``, ``"at25f"``): the chips
+        grouped by that id, then the JEDEC chips whose records say their
+        part answers it too (:attr:`Flash.legacy_ids
+        <spiflash.model.Flash.legacy_ids>`), each with
+        :attr:`~spiflash.model.Flash.answers_legacy` set. A RES id is one
+        byte, which parts of several makers share: those are candidates.
 
         Only the longest ids that fit come back, NOR before NAND: a SPI NAND
         id is two bytes, so a NOR id can start with one (``c22018`` also
@@ -390,9 +395,20 @@ class Database:
         for n, f in found:
             longest[f.type] = max(longest.get(f.type, 0), n)
         best = [(n, f) for n, f in found if n == longest[f.type]]
-        return [
+        chips = [
             f for n, f in sorted(best, key=lambda nf: (nf[1].type is not FlashType.NOR, -nf[0]))
         ]
+        if family is IdFamily.JEDEC:
+            return chips
+        # Then the JEDEC chips whose records list the id as one their part
+        # also answers (Record.legacy_ids), each marked with it.
+        for f in self.flashes:
+            if f.family is not IdFamily.JEDEC or (wanted is not None and f.type is not wanted):
+                continue
+            legacy = next((i for i in f.legacy_ids if i.family is family and i.id == core), None)
+            if legacy is not None:
+                chips.append(replace(f, answers_legacy=legacy))
+        return chips
 
     def find(self, name: str) -> list[Flash]:
         """The chips whose part names match ``name``, best first.

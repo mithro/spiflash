@@ -1438,18 +1438,31 @@ class Flash:
 
     def supply_outside(self) -> dict[int, tuple[Record, ...]]:
         """Each supply setting a programmer's table gives (:attr:`Record.supply_mv`)
-        outside the supply range another source gives the same part
-        (:attr:`Record.voltage`, within one of :attr:`variants`), and the
-        records giving it: Dediprog powering a 2.3 to 3.6 V part at 1.8 V."""
+        outside the supply ranges the other sources give (:attr:`Record.voltage`),
+        and the records giving it: of the records of its part where any
+        gives a range (:func:`same_part`), else of any of the records it is
+        compared with (one of :attr:`variants`), outside every one. So
+        Dediprog's 3.3 V for the S25FL256S is not outside flashrom's 1.7 V
+        to 2.0 V for the S25FS256S at the same id, and its 1.8 V for Puya's
+        P25Q32L, which no source gives a range, is outside the P25Q32H's
+        2.3 V to 3.6 V."""
         out: dict[int, list[Record]] = {}
-        for variant in self.variants:
-            ranges = {r.voltage for r in variant if r.voltage is not None}
-            for r in variant:
-                mv = r.supply_mv
-                if mv is None or all(lo <= mv <= hi for lo, hi in ranges):
-                    continue
-                if r not in out.setdefault(mv, []):
-                    out[mv].append(r)
+        for r in self.records:
+            mv = r.supply_mv
+            # The ranges of every part the record may be (each variant it is in).
+            given = {
+                (g.part_names, g.voltage)
+                for v in self.variants
+                if r in v
+                for g in v
+                if g.voltage is not None
+            }
+            if mv is None or not given:
+                continue
+            own = r.part_names
+            mine = [v for ps, v in given if any(same_part(a, b) for a in ps for b in own)]
+            if not any(lo <= mv <= hi for lo, hi in mine or (v for _, v in given)):
+                out.setdefault(mv, []).append(r)
         return {mv: tuple(rs) for mv, rs in sorted(out.items())}
 
     @cached_property

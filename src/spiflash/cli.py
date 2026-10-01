@@ -131,9 +131,20 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
         detail.append(f"ECC {f.ecc}")
     if f.voltage:
         detail.append(volts(f.voltage))
+    elif f.supply_mv:
+        detail.append(f"supply {f.supply_mv / 1000:g} V")
     if f.quad_enable is not None:
         detail.append(f"QE {quad_enable(f.quad_enable)}")
+    if f.otp is not None:
+        detail.append(f"OTP {f.otp}")
     lines.append("    " + ", ".join(detail))
+    if f.answers_legacy is not None:
+        legacy = f.answers_legacy
+        giving = ", ".join(f.legacy_ids.get(legacy, ()))
+        lines.append(f"    also answers {legacy.key} ({giving})")
+    if f.four_byte_modes:
+        modes = ", ".join(sorted(f.four_byte_modes))
+        lines.append(f"    4-byte: {modes} ({f.address_bytes} address bytes)")
     if f.features:
         lines.append("    features: " + " ".join(sorted(f.features)))
     for attr, vals in f.conflicts.items():
@@ -151,6 +162,11 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    quad enable requirement: {qer} ({qer.description})")
         if f.protection is not None:
             lines.append(f"    protection: {f.protection}")
+        for legacy, listing in f.legacy_ids.items():
+            lines.append(f"    legacy id: {legacy.key} ({', '.join(listing)})")
+        for mv, records in f.supply_outside().items():
+            who = ", ".join(dict.fromkeys(r.source for r in records))
+            lines.append(f"    supply {mv / 1000:g} V ({who}) is outside the part's range")
         for r in f.records:
             ext = f" ext {r.ext_id.hex()}" if r.ext_id else ""
             lines.append(f"    {r.source:15} {r.name}{ext}  [{r.url}]")
