@@ -511,7 +511,9 @@ class Compared(StrEnum):
 #: :meth:`Record.given`'s. Not ``supply_mv``: two programmers may power a
 #: part at two voltages in its range, so a supply setting is checked
 #: against the range (:meth:`Flash.supply_outside`) rather than the
-#: other settings.
+#: other settings. The times are compared each (event, bound) on its own
+#: (:data:`TIMING_COMPONENTS`), and ``max_clock_hz`` for equality, though
+#: only Dediprog gives it: its entries sharing an id are compared.
 COMPARED: dict[str, Compared] = {
     "size": Compared.EQUAL,
     "page_size": Compared.EQUAL,
@@ -600,8 +602,8 @@ class Record:
     The fields made from arguments are what the entry states, as the data
     stores them; :attr:`size`, :attr:`page_size`, :attr:`erasers`,
     :attr:`features`, :attr:`opcodes`, :attr:`sector_size`,
-    :attr:`quad_enable_requirement`, :attr:`quad_enable`, :attr:`dies` and
-    :attr:`four_byte_modes` are worked out from them and from its SFDP
+    :attr:`quad_enable_requirement`, :attr:`quad_enable`, :attr:`dies`,
+    :attr:`four_byte_modes` and :attr:`timings` are worked out from them and from its SFDP
     tables (:mod:`spiflash.derive`), as are :attr:`address_bytes` and
     :attr:`test_status`. See :mod:`spiflash_extract.record` for what each
     field means."""
@@ -996,9 +998,11 @@ class Record:
         """The values the entry states that its own SFDP tables give
         otherwise: its size, page size, quad enable requirement or quad
         enable bit (the stated one is the record's value, as the upstream's
-        own code uses it), or an eraser whose
+        own code uses it), an eraser whose
         opcode the tables give with other blocks (over the record's size:
-        :attr:`sfdp_erasers`)."""
+        :attr:`sfdp_erasers`), or a time the tables give otherwise at their
+        resolution (``"timings.dpd_exit.maximum"``: a stated 35 µs is the
+        tables' 40 µs, a stated 5 µs is not)."""
         facts = self.sfdp_facts
         if facts is None:
             return ()
@@ -1666,9 +1670,7 @@ class Flash:
                 if r.source not in by_source or (by_source[r.source].implied and stated):
                     by_source[r.source] = given
         order = sorted(found, key=lambda kb: (kb[0].order, list(Bound).index(kb[1])))
-        return {
-            kb: {ns: tuple(s.values()) for ns, s in sorted(found[kb].items())} for kb in order
-        }
+        return {kb: {ns: tuple(s.values()) for ns, s in sorted(found[kb].items())} for kb in order}
 
     def timing_order(self) -> list[tuple[TimingKey, Bound, int, Bound, int]]:
         """Where the sources give a key's bounds out of order: a typical
@@ -1679,15 +1681,13 @@ class Flash:
         record's own times are in order (``make()`` refuses others), so
         each is two sources' disagreement, or two parts' sharing the id."""
         order = (Bound.MINIMUM, Bound.TYPICAL, Bound.MAXIMUM)
-        out = []
+        out: list[tuple[TimingKey, Bound, int, Bound, int]] = []
         for key in dict.fromkeys(k for k, _ in self.timings):
             for i, low in enumerate(order):
                 lows = self.timings.get((key, low), {})
                 for high in order[i + 1 :]:
                     highs = self.timings.get((key, high), {})
-                    out.extend(
-                        (key, low, a, high, b) for a in lows for b in highs if a > b
-                    )
+                    out.extend((key, low, a, high, b) for a in lows for b in highs if a > b)
         return out
 
     def value(self, name: str) -> Any:

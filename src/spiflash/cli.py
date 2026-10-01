@@ -228,10 +228,10 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    quad enable requirement: {qer} ({qer.description})")
         if f.protection is not None:
             lines.append(f"    protection: {f.protection}")
-        for hz, giving in sorted(f.values("max_clock_hz").items()):
+        for hz, clocked_by in sorted(f.values("max_clock_hz").items()):
             # Dediprog's, which is often a slower mode's limit than the
             # part's fastest (docs/_source_notes/dediprog.md).
-            lines.append(f"    clock: up to {human_frequency(hz)} ({', '.join(giving)})")
+            lines.append(f"    clock: up to {human_frequency(hz)} ({', '.join(clocked_by)})")
         for legacy, listing in f.legacy_ids.items():
             lines.append(f"    legacy id: {legacy.key} ({', '.join(listing)})")
         for mv, records in f.supply_outside().items():

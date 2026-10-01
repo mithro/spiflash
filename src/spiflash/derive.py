@@ -29,7 +29,13 @@ the record stores (:data:`~spiflash.model.CLAIMS`). They are:
   :data:`ERASE_FEATURE` and :data:`SFDP_FEATURES`), among them
   ``4byte_addr`` from :func:`address_bytes`; so do its quad enable bit
   (``quad_read``) and its block-protection bits (``lock``);
-- its erasers give its sector size (:func:`sector_size`).
+- its erasers give its sector size (:func:`sector_size`);
+- its SFDP tables give times (:func:`sfdp_timings`): the erase types',
+  the chip erase's and the programs' typical times with their maxima
+  through BFPT DW10's and DW11's multipliers
+  (:data:`CHIP_ERASE_MULTIPLIER`), DW12's suspend times and DW14's deep
+  power-down exit delay; times are compared at the tables' resolution
+  (:func:`compared_time`).
 
 :func:`opcodes`, :func:`features` and :func:`sector_size` apply them, and
 :func:`sfdp_features` the capability rules to a dump alone. The extractors
@@ -623,7 +629,7 @@ RESUME_UNITS_NS = (64_000,)
 #: vendors reproduce the BFPT (Macronix MX25U25645G Rev. 1.4 p. 101:
 #: DW10 "Multiplier from typical erase time to maximum erase time", DW11
 #: "Multiplier from typical time to max time for Page or byte program";
-#: Cypress S70FS01GS 002-03833 Rev. *E p. 126 alike), scope DW11's to
+#: Cypress S70FS01GS 002-03833 ``Rev. *E`` p. 126 alike), scope DW11's to
 #: programs, and Infineon's SMIF driver (mtb-pdl-cat1
 #: ``drivers/source/cy_smif_sfdp.c:1378-1417``, ``SfdpGetChipEraseTime``)
 #: computes the chip-erase maximum with DW10's, the only driver found that

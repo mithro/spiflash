@@ -36,8 +36,6 @@ from .enums import AddressBytes, Bound, FlashType, FourByteMethod, TimedEvent
 from .model import Eraser, Flash, Record
 from .opcodes import OPERATIONS
 from .registers import QE_NONE, QuadEnableRequirement, Register
-from .timings import Timings
-from .units import human_duration
 from .sfdp import (
     BFPT_ID,
     FOUR_BYTE_ID,
@@ -47,6 +45,8 @@ from .sfdp import (
     Table,
     parse,
 )
+from .timings import Timings
+from .units import human_duration
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

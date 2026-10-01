@@ -285,7 +285,8 @@ def check_bindings(root: Path) -> None:
         if not path.is_file():
             msg = f"{BINDINGS_DIR}/{binding}: not fetched (tools/sources.toml)"
             raise ValueError(msg)
-        found = re.search(rf"^  {re.escape(prop)}:\n    type: (\S+)$", path.read_text(), re.M)
+        text = path.read_text()
+        found = re.search(rf"^  {re.escape(prop)}:\n    type: (\S+)$", text, re.MULTILINE)
         if found is None or found[1] != kind:
             msg = f"{binding}: no {prop} of type {kind}"
             raise ValueError(msg)

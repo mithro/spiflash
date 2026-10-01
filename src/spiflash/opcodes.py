@@ -630,7 +630,9 @@ _ALL = [
         shape_source=(ShapeSource.PART,),
     ),
     # Erase: the command and the address of the block, nothing else.
-    Operation("BE_256", 0xDB, OperationKind.ERASE, "Erase a 256 B page", "1-1-0", 3, shape_source=_SIZES),
+    Operation(
+        "BE_256", 0xDB, OperationKind.ERASE, "Erase a 256 B page", "1-1-0", 3, shape_source=_SIZES
+    ),
     Operation(
         "BE_4K", 0x20, OperationKind.ERASE, "Erase a 4 KiB sector", "1-1-0", 3, shape_source=_SIZES
     ),
@@ -727,10 +729,20 @@ _ALL = [
         shape_source=_SIZES,
     ),
     Operation(
-        "CHIP_ERASE_ATMEL", 0x62, OperationKind.ERASE, "Erase the whole chip (Atmel)", shape_source=_SIZES
+        "CHIP_ERASE_ATMEL",
+        0x62,
+        OperationKind.ERASE,
+        "Erase the whole chip (Atmel)",
+        shape_source=_SIZES,
     ),
     Operation(
-        "DIE_ERASE", 0xC4, OperationKind.ERASE, "Erase one die (Micron)", "1-1-0", 3, shape_source=_SIZES
+        "DIE_ERASE",
+        0xC4,
+        OperationKind.ERASE,
+        "Erase one die (Micron)",
+        "1-1-0",
+        3,
+        shape_source=_SIZES,
     ),
     # Linux's SPINOR_OP_CYPRESS_DIE_ERASE, on parts in 4-byte address mode.
     Operation(
@@ -1055,10 +1067,18 @@ _ALL = [
     ),
     # Modes.
     Operation(
-        "EN4B", 0xB7, OperationKind.MODE, "Enter 4-byte address mode", shape_source=(ShapeSource.PART,)
+        "EN4B",
+        0xB7,
+        OperationKind.MODE,
+        "Enter 4-byte address mode",
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
-        "EX4B", 0xE9, OperationKind.MODE, "Exit 4-byte address mode", shape_source=(ShapeSource.PART,)
+        "EX4B",
+        0xE9,
+        OperationKind.MODE,
+        "Exit 4-byte address mode",
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "WREAR",
@@ -1109,7 +1129,11 @@ _ALL = [
         shape_source=(ShapeSource.PART,),
     ),
     Operation(
-        "EQPI_38", 0x38, OperationKind.MODE, "Enter QPI mode (0x38)", shape_source=(ShapeSource.PART,)
+        "EQPI_38",
+        0x38,
+        OperationKind.MODE,
+        "Enter QPI mode (0x38)",
+        shape_source=(ShapeSource.PART,),
     ),
     # In QPI mode the command itself goes out on all four lines.
     Operation(
@@ -1121,7 +1145,11 @@ _ALL = [
         shape_source=(ShapeSource.PART,),
     ),
     Operation(
-        "EQPI_35", 0x35, OperationKind.MODE, "Enter QPI mode (0x35)", shape_source=(ShapeSource.PART,)
+        "EQPI_35",
+        0x35,
+        OperationKind.MODE,
+        "Enter QPI mode (0x35)",
+        shape_source=(ShapeSource.PART,),
     ),
     Operation(
         "RSTQIO_F5",

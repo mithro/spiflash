@@ -123,7 +123,7 @@ def test_timing_section() -> None:
     text = nor_page("c22817")
     timing = text[text.index("## Timing") : text.index("## What each source says")]
     # A column per bound given, a row per time; SFDP's marked hollow.
-    assert "Minimum" in timing and "Typical" in timing and "Maximum" in timing
+    assert all(b in timing for b in ("Minimum", "Typical", "Maximum"))
     assert "Leave deep power-down (tRES1, tRDP)" in timing
     assert "Block erase ({sfop}`0x20`)" in timing
     assert "{sfimplied}`its SFDP tables (BFPT DW10)`" in timing

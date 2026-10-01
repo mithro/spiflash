@@ -527,12 +527,8 @@ _TWO_CLOCKS = re.compile(r"(\d+)/(\d+) ?MHz", re.IGNORECASE)
 #: ``Clock`` values that are no clock of the part, by value, and why: each
 #: checked against the part's datasheet.
 CLOCK_WRONG = {
-    "416MHz": (
-        "the 104 MHz quad read's 416 Mbit/s (A25LQ64 datasheet: 104 MHz), not a clock"
-    ),
-    "416MHZ": (
-        "the 104 MHz quad read's 416 Mbit/s (W25Q64FW datasheet: 104 MHz), not a clock"
-    ),
+    "416MHz": ("the 104 MHz quad read's 416 Mbit/s (A25LQ64 datasheet: 104 MHz), not a clock"),
+    "416MHZ": ("the 104 MHz quad read's 416 Mbit/s (W25Q64FW datasheet: 104 MHz), not a clock"),
 }
 
 

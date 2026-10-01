@@ -622,9 +622,10 @@ def test_encode_leaves_out_a_time_it_cannot_write() -> None:
     out = encode(rec(erasers=erasers, timings=mixed), assume=True)
     assert "DW10: erase type times, written as typically 1 ms" in out.assumed
     # Without assume, known times are listed as left out of the 1.0 table.
-    assert "DW10: the erase types' times, known but left out" in encode(
-        rec(erasers=erasers, timings=times)
-    ).missing
+    assert (
+        "DW10: the erase types' times, known but left out"
+        in encode(rec(erasers=erasers, timings=times)).missing
+    )
 
 
 def test_encode_writes_deep_power_down_only_with_its_release() -> None:

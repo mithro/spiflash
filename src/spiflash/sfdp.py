@@ -1207,9 +1207,7 @@ def _bfpt(table: Table, warnings: list[str]) -> Bfpt:
             # JESD216B, as Macronix's MX25U25645G datasheet (Rev. 1.4,
             # pp. 102-103) reproduces the table.
             latency = derive.LATENCY_UNITS_NS
-            extra["program_resume_to_suspend_ns"] = _time(
-                dw12, 12, 9, 0, 0, derive.RESUME_UNITS_NS
-            )
+            extra["program_resume_to_suspend_ns"] = _time(dw12, 12, 9, 0, 0, derive.RESUME_UNITS_NS)
             extra["program_suspend_ns"] = _time(dw12, 17, 13, 19, 18, latency)
             extra["erase_resume_to_suspend_ns"] = _time(dw12, 23, 20, 0, 0, derive.RESUME_UNITS_NS)
             extra["erase_suspend_ns"] = _time(dw12, 28, 24, 30, 29, latency)

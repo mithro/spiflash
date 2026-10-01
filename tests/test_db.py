@@ -1453,7 +1453,9 @@ def test_timing_order() -> None:
 
 
 def test_a_records_times_are_its_claims_over_its_tables() -> None:
-    r = rec(source="qemu", size=None, sfdp=W25Q512JV.hex(), timings={"dpd_exit": {"maximum": 2_500}})
+    r = rec(
+        source="qemu", size=None, sfdp=W25Q512JV.hex(), timings={"dpd_exit": {"maximum": 2_500}}
+    )
     assert r.timings.get("dpd_exit", "maximum") == 2_500
     assert r.timings.get("chip_erase", "typical") == 192 * 10**9
     # DW10's multiplier, 14, for the chip erase's maximum (CHIP_ERASE_MULTIPLIER).
@@ -1461,9 +1463,7 @@ def test_a_records_times_are_its_claims_over_its_tables() -> None:
     assert r.timings.get("block_erase", "maximum", 0x20) == 14 * 64 * 10**6
     assert r.timing_claims == Timings.from_json({"dpd_exit": {"maximum": 2_500}})
     # 2.5 µs is 2.56 µs on DW14's grid, not 3 µs: a disagreement.
-    assert r.sfdp_disagreements() == (
-        SfdpDisagreement("timings.dpd_exit.maximum", 2_500, 3_000),
-    )
+    assert r.sfdp_disagreements() == (SfdpDisagreement("timings.dpd_exit.maximum", 2_500, 3_000),)
     assert r.given("timings.page_program.typical") == 704_000
     assert pickle.loads(pickle.dumps(r)).timings == r.timings
 

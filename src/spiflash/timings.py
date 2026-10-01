@@ -131,8 +131,8 @@ class Timings:
 
     def __post_init__(self) -> None:
         checked = {}
-        for (key, bound), ns in self.values.items():
-            bound = Bound(bound)
+        for (key, given), ns in self.values.items():
+            bound = Bound(given)
             if bound not in BOUNDS[key.event]:
                 msg = f"{key}: a {bound} time is none this event has ({sorted(BOUNDS[key.event])})"
                 raise ValueError(msg)
@@ -140,7 +140,9 @@ class Timings:
                 msg = f"{key}.{bound}: {ns!r} is not a duration in whole nanoseconds"
                 raise ValueError(msg)
             checked[key, bound] = ns
-        object.__setattr__(self, "values", MappingProxyType(dict(sorted(checked.items(), key=_sort))))
+        object.__setattr__(
+            self, "values", MappingProxyType(dict(sorted(checked.items(), key=_sort)))
+        )
 
     def __hash__(self) -> int:
         return hash(frozenset(self.values.items()))
@@ -205,7 +207,7 @@ class Timings:
         value, higher bound, its value)`` for each such pair. An
         unspecified value is not ordered against the others."""
         order = (Bound.MINIMUM, Bound.TYPICAL, Bound.MAXIMUM)
-        out = []
+        out: list[tuple[TimingKey, Bound, int, Bound, int]] = []
         for key in self.keys:
             given = [(b, self.values[key, b]) for b in order if (key, b) in self.values]
             for i, (low, a) in enumerate(given):

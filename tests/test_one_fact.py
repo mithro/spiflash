@@ -19,9 +19,9 @@ from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE, ID_OPERATION
 from spiflash.enums import ENTER_METHODS, Bound, Feature, IdMethod, OperationKind
 from spiflash.model import TIMING_COMPONENTS, EraseBlock, Record
-from spiflash.timings import BOUNDS, TimingKey, Timings, component_name, parse_component
 from spiflash.opcodes import OPERATIONS
 from spiflash.registers import Register, RegisterBit
+from spiflash.timings import BOUNDS, TimingKey, Timings, component_name, parse_component
 from spiflash_extract import record
 from spiflash_extract.flashrom import otp as flashrom_otp
 
@@ -746,7 +746,9 @@ def test_otp_sizes_the_comments_get_wrong_are_the_datasheets() -> None:
 
 
 def _times(d: dict[str, Any]) -> list[tuple[str, str, int]]:
-    return [(key, bound, ns) for key, bounds in d["timings"].items() for bound, ns in bounds.items()]
+    return [
+        (key, bound, ns) for key, bounds in d["timings"].items() for bound, ns in bounds.items()
+    ]
 
 
 def test_timing_keys_and_bounds_are_known() -> None:
@@ -754,7 +756,8 @@ def test_timing_keys_and_bounds_are_known() -> None:
         for key, bound, ns in _times(d):
             parsed = TimingKey.parse(key)
             assert Bound(bound) in BOUNDS[parsed.event], _where(d)
-            assert isinstance(ns, int) and ns > 0, _where(d)
+            assert isinstance(ns, int), _where(d)
+            assert ns > 0, _where(d)
             # Every time a record gives is one the sources are compared on.
             assert component_name(parsed, Bound(bound)) in TIMING_COMPONENTS, _where(d)
         r = Record.from_json(d)
