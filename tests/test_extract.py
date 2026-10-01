@@ -69,6 +69,11 @@ def sector(rec: record.Record) -> int | None:
     return Record.from_json(rec).sector_size
 
 
+def stored_ops(rec: record.Record) -> dict[str, str]:
+    """The operations a record stores, {op: via}."""
+    return {o["op"]: o["via"] for o in rec["opcodes"]}
+
+
 def assumed(rec: record.Record) -> set[str]:
     """The operations a record stores as its driver's defaults."""
     return {o["op"] for o in rec["opcodes"] if o.get("assumed")}
@@ -206,7 +211,14 @@ def test_linux_nor(linux_tree: Path) -> None:
     assert "SE" not in ops(j)
     big = r["W25Q512JVQ"]
     assert {"4byte_addr", "4byte_opcodes", "otp"} <= set(features(big))
-    assert big["via"]["feature:otp"] == ".otp"
+    # SNOR_OTP(len, n_regions, base, offset): three 256-byte regions, read,
+    # programmed and erased with winbond_nor_otp_ops' security-register
+    # commands; the area implies otp.
+    assert big["otp"] == {"size": 768, "regions": 3}
+    assert big["via"]["otp"] == "SNOR_OTP(256, 3, 0x1000, 0x1000)"
+    assert "otp" not in big["features"]
+    assert ops(big)["RSECR"] == (0x48, "SNOR_OTP(256, 3, 0x1000, 0x1000) (winbond_nor_otp_ops)")
+    assert {"PSECR", "ESECR"} <= set(ops(big))
     assert ops(big)["READ_1_1_1_4B"] == (0x13, "SPI_NOR_4B_OPCODES")
     assert ops(big)["SE_4B"] == (0xDC, "SPI_NOR_4B_OPCODES")
     assert "SE_4B" in assumed(big)  # the 4-byte form of the default sector erase
@@ -778,18 +790,94 @@ def test_flashrom_only_big_spansion_has_an_extended_id() -> None:
         flashrom.id_bytes("rdid", 0x01, 0x20180080, "SPI_RDID")
 
 
-def test_flashrom_die_erase_gives_the_dies(tmp_path: Path) -> None:
-    micron = fixture("flashrom/flashchips/micron.c")
+def flashrom_micron(tmp_path: Path) -> record.Record:
+    """flashrom's MT25QL01G, from the fixture."""
     write(
         tmp_path,
         {
             **FLASHROM_HEADERS,
-            # FEATURE_4BA_WREN is not in the fixture's flash.h.
-            "flashchips/micron.c": micron.replace(" | FEATURE_4BA_WREN", ""),
+            "flashchips/micron.c": fixture("flashrom/flashchips/micron.c"),
             "flashchips.c": '#include "flashchips/micron.c"',
         },
     )
     (m,) = flashrom.extract(tmp_path, "flashrom")
+    return m
+
+
+def test_flashrom_four_byte_modes_and_otp(tmp_path: Path) -> None:
+    m = flashrom_micron(tmp_path)
+    # FEATURE_4BA_WREN: 0xb7 after a write enable, and the extended address
+    # register (FEATURE_4BA_EAR_C5C8), each from its own bit; 0xe9 out is
+    # stated, EN4B, WREAR and RDEAR derived.
+    assert m["four_byte_modes"] == ["wrear", "wren_en4b"]
+    assert m["via"]["four_byte_modes:wren_en4b"] == "FEATURE_4BA_ENTER_WREN"
+    assert m["via"]["four_byte_modes:wrear"] == "FEATURE_4BA_EAR_C5C8"
+    assert "EX4B" in stored_ops(m)
+    assert not {"EN4B", "WREAR", "RDEAR"} & set(stored_ops(m))
+    assert ops(m)["EN4B"] == (0xB7, "4-byte mode wren_en4b")
+    assert ops(m)["RDEAR"] == (0xC8, "4-byte mode wrear")
+    assert not any(f.startswith("FEATURE_4BA") for f in m["flags"])
+    # "OTP: 64B total; read 0x4B, write 0x42": the area, and Micron's OTP
+    # read and program; the comment leaves the notes for the area's via,
+    # with FEATURE_OTP, which the area implies.
+    comment = "OTP: 64B total; read 0x4B, write 0x42"
+    assert m["otp"] == {"size": 64}
+    assert m["via"]["otp"] == f"{comment}; FEATURE_OTP"
+    assert comment not in m["notes"]
+    assert "otp" not in m["features"]
+    assert stored_ops(m)["READ_OTP"] == comment
+    assert stored_ops(m)["PSECR"] == comment
+
+
+@pytest.mark.parametrize(
+    ("note", "area", "found"),
+    [
+        (
+            "OTP: 1024B total, 256B reserved; read 0x48; write 0x42, erase 0x44, read ID 0x4B",
+            {"size": 768},
+            ["RSECR", "PSECR", "ESECR", "RUID"],
+        ),
+        ("OTP: 3x 512B; read 0x48; write 0x42, erase 0x44", {"size": 1536, "regions": 3}, None),
+        ("OTP: 4 x 256 bytes", {"size": 1024, "regions": 4}, []),
+        ("4 x 256B Security Region (OTP)", {"size": 1024, "regions": 4}, []),
+        ("OTP: 512B total; enter 0xB1, exit 0xC1", {"size": 512}, ["ENSO", "EXSO"]),
+        ("OTP: 8KiB total; enter 0xB1, exit 0xC1", {"size": 8192}, None),
+        ("OTP: 512B total; enter 0x3A", {"size": 512}, ["ENTER_OTP_3A"]),
+        ("OTP: 128B total, 64B pre-programmed; read 0x77; write 0x9B", {"size": 64}, []),
+        ("OTP: 64B total; read 0x4B, 0x48; write 0x42", {"size": 64}, None),
+        # PMC's: 0x4b is read only beside a 0x42 program.
+        ("OTP: 256B total; read 0x4b; write 0xb1", {"size": 256}, []),
+        ("OTP: 506B total (2x 8B, 30x 16B, 1x 10B); read 0x4B; write 0x42", {"size": 506}, None),
+        # Qualified to one model of the entry, or two revisions: a note.
+        ("OTP: 1024B total, 256B reserved; read 0x48; write 0x42 (B version only)", None, None),
+        ("OTP: 1024B total, 256B reserved, later 3x 512B; read 0x48", None, None),
+        ("OTP: 06E 64B total; enter 0xB1, exit 0xC1", None, None),
+        # A command qualified to one model is left out, the rest taken.
+        (
+            "OTP: 256B total; enter 0x3A, (A version only:) read ID 0x4B",
+            {"size": 256},
+            ["ENTER_OTP_3A"],
+        ),
+        ("OTP: MX25L12833F has 1KB total, others have 512B total", None, None),
+    ],
+)
+def test_flashrom_otp_comments(
+    note: str, area: dict[str, int] | None, found: list[str] | None
+) -> None:
+    parsed = flashrom.otp(note)
+    if area is None:
+        assert parsed is None
+        return
+    assert parsed is not None
+    assert parsed[0] == area
+    if found is not None:
+        assert parsed[1] == found
+    if "read 0x4B, 0x48" in note:
+        assert set(parsed[1]) == {"RSECR", "PSECR", "READ_OTP"}
+
+
+def test_flashrom_die_erase_gives_the_dies(tmp_path: Path) -> None:
+    m = flashrom_micron(tmp_path)
     # spi_block_erase_c4 over {64 MiB, 2}: two dies, and the die erase it
     # sends; the layout is the dies', derived, so not stored.
     assert (m["dies"], m["via"]["dies"]) == (2, "spi_block_erase_c4")
@@ -1054,8 +1142,10 @@ def test_rockchip_nor() -> None:
 
     # Feature 0x3c: 4-byte addresses, entering 4-byte mode first.
     w = r["W25Q256F/W25Q256J"]
-    assert ops(w)["EN4B"] == (0xB7, "FEA_4BYTE_ADDR_MODE")
-    assert "FEA_4BYTE_ADDR_MODE" not in w["flags"]  # EN4B holds it
+    assert w["four_byte_modes"] == ["en4b"]
+    assert w["via"]["four_byte_modes:en4b"] == "FEA_4BYTE_ADDR_MODE"
+    assert ops(w)["EN4B"] == (0xB7, "4-byte mode en4b")  # derived from the way in
+    assert "FEA_4BYTE_ADDR_MODE" not in w["flags"]
     assert {"READ_1_1_1_4B", "PP_1_1_1", "PP_1_1_4", "BE_4K", "SE"} <= set(ops(w))
     assert "fast_read" in features(r["MX25U51245G"])  # 0x0c
 
@@ -1234,26 +1324,28 @@ def test_imsprog() -> None:
     assert s["id"] == "010219"
     assert s["size"] == 32 << 20
     # The 256-byte page and 64 KiB block every NOR entry has are IMSProg's
-    # defaults, not the part's (the S25FL256S erases 256 KiB blocks), so
-    # they are flags: no page or sector size, no erase layout.
+    # defaults, not the part's (the S25FL256S erases 256 KiB blocks): no
+    # page or sector size, no erase layout, and no flag.
     assert (s["page_size"], sector(s), s["erasers"]) == (None, None, None)
     assert features(s) == ["4byte_addr"]
-    # The 4-byte operations' via, "4-byte addressing (addr4bit=0x21)", holds it.
-    assert "addr4bit=0x21" not in s["flags"]
-    assert s["flags"] == [
-        "algorithmCode=0x00",
-        "blockSize=64K",
-        "chipVCC=3.3 V",
-        "delay=1000",
-        "pageSize=256",
-    ]
-    # Spansion's 4-byte mode is a bank register; Winbond's also clears its
-    # extended address register on the way out. IMSProg never sends 0xc7.
+    # Spansion's 4-byte mode is a bank register (addr4bit 0x21): its way in,
+    # which gives BRWR and BRRD, holds the token.
+    assert s["four_byte_modes"] == ["brwr"]
+    assert s["via"] == {"four_byte_modes:brwr": "addr4bit=0x21"}
+    assert s["flags"] == ["algorithmCode=0x00", "delay=1000"]
+    assert s["supply_mv"] == 3300
+    # IMSProg never sends 0xc7.
     assert set(ops(s)) == {"RDID", "READ_1_1_1", "PP_1_1_1", "SE", "BRWR", "BRRD"}
-    assert "WREAR" in ops(r["EN25Q256"])
+    assert set(stored_ops(s)) == {"READ_1_1_1", "PP_1_1_1", "SE"}  # RDID is derived
+    # Winbond's (0x11): 0xb7 in, 0xe9 out, then the extended address
+    # register cleared with 0xc5.
+    en = r["EN25Q256"]
+    assert en["four_byte_modes"] == ["en4b"]
+    assert {"EX4B", "WREAR"} <= set(stored_ops(en))
     assert "EN4B" in ops(r["GD25LB512ME(1.8V)"])
     assert set(ops(r["FL016AIF"])) == {"RDID", "READ_1_1_1", "PP_1_1_1", "SE"}
-    assert "chipVCC=1.8 V" in r["XT25Q16D(1.8V)"]["flags"]
+    assert r["XT25Q16D(1.8V)"]["supply_mv"] == 1800
+    assert not any(f.startswith("chipVCC") for f in r["XT25Q16D(1.8V)"]["flags"])
     assert "delay=200" in r["EN25F10A"]["flags"]
     assert r["PN25F08"]["vendor"] == "PARAGON"  # "PARAGON " upstream
     # Known wrong entries are left out: the A25L40PT has the A25L20PT's id,
@@ -1691,8 +1783,45 @@ def test_zephyr_node_values(tmp_path: Path) -> None:
     assert r["size"] is None  # size-in-bytes is nordic,qspi-nor's alone
     assert features(r) == ["4byte_addr", "4byte_opcodes", "fast_read", "lock"]
     assert set(ops(r)) == {"RDID", "READ_1_1_1_FAST", "RDFSR", "EN4B"}
+    # enter-4byte-addr is BFPT DW16[31:24]: 0x01 is 0xb7 alone.
+    assert r["four_byte_modes"] == ["en4b"]
+    assert r["via"]["four_byte_modes:en4b"] == "enter-4byte-addr=0x1"
+    assert not any(f.startswith("enter-4byte-addr") for f in r["flags"])
     assert "has-lock=0x1c" in r["flags"]
     assert "dpd-wakeup-sequence=<30000>, <20>, <30000>" in r["flags"]
+
+
+@pytest.mark.parametrize(
+    ("value", "modes", "claims", "noted"),
+    [
+        # Every way in JESD216 gives, and bit 5: dedicated 4-byte opcodes, a
+        # claim, not a way in.
+        ("<0x7f>", ["always_4b", "brwr", "en4b", "nv_cr", "wrear", "wren_en4b"], True, False),
+        ("<0x02>", ["wren_en4b"], False, False),
+        # 0 and 0xff say nothing (spi_nor_set_address_mode).
+        ("<0x00>", [], False, False),
+        ("<0xff>", [], False, False),
+        # p2d.dts gives the GD25LE255E EN4B's opcode: bit 7 is reserved.
+        ("<0xb7>", [], False, True),
+    ],
+)
+def test_zephyr_enter_4byte_addr(
+    tmp_path: Path, *, value: str, modes: list[str], claims: bool, noted: bool
+) -> None:
+    (r,) = zephyr_board(
+        tmp_path,
+        f"""gd25le255e: memory@0 {{
+            compatible = "nordic,qspi-nor";
+            jedec-id = [c8 60 19];
+            enter-4byte-addr = {value};
+        }};""",
+    )
+    assert r["four_byte_modes"] == modes
+    assert ("4byte_opcodes" in r["features"]) is claims
+    # A byte giving several ways in is their via as a whole.
+    if len(modes) > 1:
+        assert r["via"]["four_byte_modes"] == f"enter-4byte-addr={value.strip('<>')}"
+    assert any("not read" in n for n in r["notes"]) is noted
 
 
 def test_zephyr_modes(tmp_path: Path) -> None:
@@ -1733,7 +1862,10 @@ def test_zephyr_modes(tmp_path: Path) -> None:
     assert features(s) == ["fast_read", "quad_pp"]
     assert o["vendor"] == "infineon"
     assert features(o) == ["4byte_addr", "octal_dtr_pp", "octal_dtr_read", "octal_read"]
-    assert ops(o)["EN4B"] == (0xB7, "enter-4byte-command")
+    # The Renesas OSPI driver sends the command with no write enable.
+    assert o["four_byte_modes"] == ["en4b"]
+    assert o["via"]["four_byte_modes:en4b"] == "enter-4byte-command=0xb7"
+    assert ops(o)["EN4B"] == (0xB7, "4-byte mode en4b")
     assert features(q) == ["erase_4k", "quad_read"]
 
 
@@ -2198,6 +2330,65 @@ def test_dediprog_quad_enable(tmp_path: Path, mask: str, bit: dict[str, object] 
     assert any(n.startswith(f"QEbitAddr={mask} left out") for n in w["notes"]) is left_out
 
 
+@pytest.mark.parametrize(
+    ("alternative", "jedec", "legacy", "noted"),
+    [
+        ("0x17", None, [["res1", "17"]], False),  # one byte: RES's signature
+        ("0xEF17", None, [["rems", "ef17"]], False),  # two: REMS's maker and part
+        ("0x18", None, [["res1", "18"]], False),  # the id's last byte, still RES
+        ("0xEF4018", None, [], False),  # a copy of the id
+        ("0x4018", None, [], False),  # its last two bytes
+        ("0x", None, [], False),
+        ("0x8E4018", None, [], True),  # three bytes: no legacy id
+        ("0x8C", "0x8C2016", [], True),  # ESMT's maker byte, a template
+        ("0x15", "0x898912", [], True),  # Intel's S33 template
+        ("0x07", "0x621600", [], True),  # Sanyo's RES answers two bytes
+    ],
+)
+def test_dediprog_legacy_ids(
+    tmp_path: Path, *, alternative: str, jedec: str | None, legacy: list[list[str]], noted: bool
+) -> None:
+    attrs = {"AlternativeID": alternative}
+    if jedec is not None:
+        attrs |= {"JedecDeviceID": jedec, "UniqueID": jedec}
+    (w,) = dediprog_chip(tmp_path, **attrs)
+    assert w["legacy_ids"] == legacy
+    assert any(n.startswith(f"AlternativeID={alternative} left out") for n in w["notes"]) is noted
+    assert not any(f.startswith("AlternativeID") for f in w["flags"])
+
+
+def test_dediprog_wrong_legacy_ids_are_left_out(tmp_path: Path) -> None:
+    # The XM25QH128A answers REMS with 20 17 (its datasheet), not 0x2016.
+    (w,) = dediprog_chip(tmp_path, TypeName="XM25QH128A", AlternativeID="0x2016")
+    assert w["legacy_ids"] == []
+    assert any("answers REMS with 20 17" in n for n in w["notes"])
+    # The M25PX parts give no RES signature.
+    (m,) = dediprog_chip(tmp_path, TypeName="M25PX80", AlternativeID="0x13")
+    assert m["legacy_ids"] == []
+    assert any("no signature" in n for n in m["notes"])
+
+
+def test_dediprog_unique_id_in_rems_form_is_a_legacy_id(tmp_path: Path) -> None:
+    # Eon's EN25P20 gives UniqueID 0x1C11, its REMS answer (datasheet Table 5):
+    # a legacy id, not a flag; a three-byte UniqueID that differs from the id
+    # stays a flag.
+    (e,) = dediprog_chip(tmp_path, AlternativeID=None, UniqueID="0x1C11")
+    assert e["legacy_ids"] == [["rems", "1c11"]]
+    assert not any(f.startswith("UniqueID") for f in e["flags"])
+    (o,) = dediprog_chip(tmp_path, AlternativeID=None, UniqueID="0xEF4017")
+    assert o["legacy_ids"] == []
+    assert "UniqueID=0xEF4017" in o["flags"]
+    # The same id twice (AlternativeID and UniqueID) is one.
+    (t,) = dediprog_chip(tmp_path, AlternativeID="0x1C11", UniqueID="0x1C11")
+    assert t["legacy_ids"] == [["rems", "1c11"]]
+
+
+@pytest.mark.parametrize(("voltage", "mv"), [("1.2V", 1200), ("2.5V", 2500), ("1.8V", 1800)])
+def test_dediprog_supply(tmp_path: Path, voltage: str, mv: int) -> None:
+    (w,) = dediprog_chip(tmp_path, Voltage=voltage)
+    assert (w["supply_mv"], w["voltage"]) == (mv, None)
+
+
 def test_dediprog_protect_mask_is_no_layout(tmp_path: Path) -> None:
     # ProtectBlockMask is the bits the programmer clears, not where each
     # role is: lock stays a claim, and there is no layout.
@@ -2219,7 +2410,10 @@ def test_dediprog(tmp_path: Path) -> None:
     assert set(ops(w)) == {"RDID", "READ_1_1_1_FAST", "PP_1_1_1", "SE", "CHIP_ERASE"}
     assert ops(w)["READ_1_1_1_FAST"] == (0x0B, "ReadCmd=0x006B3B0B")
     assert features(w) == ["fast_read", "lock", "qpi"]
-    assert {"ProgramIOMethod=SPQD_RSWQW", "Voltage=3.3V"} <= set(w["flags"])
+    assert "ProgramIOMethod=SPQD_RSWQW" in w["flags"]
+    # Voltage is the supply dpcmd powers the part at: a field, not a flag.
+    assert w["supply_mv"] == 3300
+    assert not any(f.startswith(("Voltage", "AlternativeID")) for f in w["flags"])
     assert w["via"] == {"feature:lock": "ProtectBlockMask=0x9C", "feature:qpi": "QPIEnable"}
     assert w["notes"][0].startswith("128 Mbit")
     # Legacy ids: REMS, AT25F, and RES read with its dummy bytes (0xff), or

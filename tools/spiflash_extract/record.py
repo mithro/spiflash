@@ -65,6 +65,10 @@ Fields (``None`` / empty when the upstream does not say):
     ...) need none, and operations have their own ``via``.
 ``voltage``
     ``[min_mV, max_mV]``.
+``supply_mv``
+    The voltage, in millivolts, a programmer's table says to power the part
+    at (Dediprog's ``Voltage``, IMSProg's ``chipVCC``): a setting of the
+    programmer's, never with ``voltage``.
 ``quad_enable``
     Where the part's quad enable bit is, as the entry states it:
     ``{"register": "sr2", "bit": 1}`` (and ``"writability"`` where it is not
@@ -101,6 +105,18 @@ Fields (``None`` / empty when the upstream does not say):
     register (Micron's ``{"register": "nand-d0", "bit": 6}``); one that
     selects it with a command has the ``NAND_DIE_SELECT`` or ``DIE_SELECT``
     operation instead, never both.
+``four_byte_modes``
+    The ways into 4-byte address mode the entry states
+    (:class:`spiflash.enums.FourByteMethod` tokens: ``["en4b", "wrear"]``),
+    not those its SFDP tables give; never ``opcodes_4b`` (the ``_4B``
+    operations say it) nor a way out. The operations a way in gives
+    (:data:`spiflash.derive.FOUR_BYTE_MODE_OPERATIONS`) are not stored.
+``otp``
+    The OTP area: ``{"size": 768, "regions": 3}``, the bytes the user can
+    program, ``"regions"`` only where the entry gives them.
+``legacy_ids``
+    The ids the part also answers to legacy commands, besides its own:
+    ``[["res1", "15"], ["rems", "ef12"]]``; never its own id.
 ``opcodes``
     The operations the entry states (a record's ``opcode_claims``):
     ``[{"op": "READ_1_1_4", "via": "SPI_NOR_QUAD_READ"}, ...]``, ``op`` a name
@@ -137,14 +153,14 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from spiflash import derive
-from spiflash.enums import Feature, FlashType, OperationKind, Source
+from spiflash.enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
 from spiflash.model import SFDP_VALUES
 from spiflash.model import Record as Model
 from spiflash.opcodes import OPERATIONS, OpcodeUse
 from spiflash.registers import ROLES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
 Record = dict[str, Any]
 
@@ -165,6 +181,7 @@ KEYS = (
     "flags",
     "via",
     "voltage",
+    "supply_mv",
     "quad_enable",
     "quad_enable_requirement",
     "protection",
@@ -174,6 +191,9 @@ KEYS = (
     "die_select_bit",
     "max_bad_blocks",
     "ecc",
+    "four_byte_modes",
+    "otp",
+    "legacy_ids",
     "opcodes",
     "sfdp",
     "sfdp_tables",
@@ -248,6 +268,20 @@ def _eraser_members(rec: Record) -> set[str]:
     return {f"0x{opcode:02x}" for opcode in erasers if opcode is not None}
 
 
+def _mode_members(rec: Record) -> set[str]:
+    """The ``four_byte_modes:<member>`` names of a record's ways into 4-byte
+    mode: those it stores, and those its own SFDP tables give it."""
+    modes = set(rec["four_byte_modes"] or ())
+    if rec.get("sfdp") or rec.get("sfdp_tables"):
+        modes |= {str(m) for m in Model.from_json(rec).four_byte_modes}
+    return modes
+
+
+#: The set-valued fields a ``<field>:<member>`` key may name, and the
+#: members a record has.
+_MEMBERS = {"erasers": _eraser_members, "four_byte_modes": _mode_members}
+
+
 def check_via(rec: Record) -> None:
     """Raise for a ``via`` key that names no claimed feature, no field
     :data:`VIA_FIELDS` allows, a field the record leaves empty, a component
@@ -263,8 +297,8 @@ def check_via(rec: Record) -> None:
             field, component, member = m[2], m[3], m[4]
             if field not in VIA_FIELDS:
                 ok = False
-            elif field == "erasers":
-                ok = bool(_eraser_members(rec))
+            elif field in _MEMBERS:
+                ok = bool(_MEMBERS[field](rec))
             elif field in SFDP_VALUES and rec[field] is None:
                 # A value its SFDP tables give, which the entry states too.
                 ok = getattr(Model.from_json(rec), field) is not None
@@ -274,7 +308,8 @@ def check_via(rec: Record) -> None:
                 known = component in VIA_COMPONENTS.get(field, ())
                 ok = ok and known and component in rec[field]
             if member is not None:
-                ok = ok and field == "erasers" and member in _eraser_members(rec)
+                members = _MEMBERS.get(field)
+                ok = ok and members is not None and member in members(rec)
         if not ok:
             msg = f"bad via key {key!r}"
             raise ValueError(msg)
@@ -290,6 +325,21 @@ def holds(via: str, token: str) -> bool:
     a word in one (``"read_cmd_4 (FEA_4BIT_READ)"`` holds ``FEA_4BIT_READ``)."""
     word = re.compile(rf"(?<![\w=]){re.escape(token)}(?![\w=])")
     return any(t == token or word.search(t) for t in tokens(via))
+
+
+def member_via(field: str, given: Mapping[str, str]) -> dict[str, str]:
+    """The ``via`` of a set-valued field's members, from each member's
+    upstream token: ``four_byte_modes:en4b`` for a token giving one member,
+    ``four_byte_modes`` for one giving several (Zephyr's
+    ``enter-4byte-addr``, a byte of bits), as a token is under one key."""
+    by_token: dict[str, list[str]] = {}
+    for member, token in given.items():
+        by_token.setdefault(token, []).append(member)
+    out: dict[str, list[str]] = {}
+    for token, members in by_token.items():
+        key = f"{field}:{members[0]}" if len(members) == 1 else field
+        out.setdefault(key, []).append(token)
+    return {key: "; ".join(tokens) for key, tokens in out.items()}
 
 
 def feature_via(pairs: Iterable[tuple[str, str]]) -> dict[str, str]:
@@ -347,12 +397,16 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         opcodes=[],
         via={},
         sfdp_tables={},
+        four_byte_modes=[],
+        legacy_ids=[],
     )
     rec.update(fields)
     if rec["sfdp"] and rec["sfdp_tables"]:
         msg = f"{source} {name}: a whole SFDP dump and copied tables"
         raise ValueError(msg)
     rec["features"] = sorted(set(rec["features"]))
+    rec["four_byte_modes"] = sorted(set(rec["four_byte_modes"]))
+    _check_legacy_ids(rec)
     check_via(rec)
     _check_kind(rec)
     _drop_sfdp(rec)
@@ -381,6 +435,20 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
         msg = f"{rec['source']} {rec['name']}: dropping implied claims lost {sorted(lost)}"
         raise AssertionError(msg)
     return rec
+
+
+def _check_legacy_ids(rec: Record) -> None:
+    """Raise for a legacy id that is the record's own id, or one listed
+    twice, or read by a JEDEC read-id."""
+    seen = set()
+    for method, ident in rec["legacy_ids"]:
+        if IdMethod(method).family is IdFamily.JEDEC or ident == rec["id"]:
+            msg = f"{rec['source']} {rec['name']}: legacy id {method} {ident} is no legacy id"
+            raise ValueError(msg)
+        if (method, ident) in seen:
+            msg = f"{rec['source']} {rec['name']}: legacy id {method} {ident} twice"
+            raise ValueError(msg)
+        seen.add((method, ident))
 
 
 #: The fields only a SPI NAND part has.
@@ -446,6 +514,7 @@ def _drop_sfdp(rec: Record) -> None:
     given = [e.to_json() for e in Model.from_json(rec).sfdp_erasers]
     kept = [e for e in rec["erasers"] or () if e not in given]
     rec["erasers"] = kept or None
+    rec["four_byte_modes"] = [m for m in rec["four_byte_modes"] if m not in facts.four_byte_modes]
 
 
 def _same_use(stored: dict[str, Any], derived: OpcodeUse) -> bool:

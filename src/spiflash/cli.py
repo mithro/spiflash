@@ -25,7 +25,14 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from . import __version__
 from .db import Database, NameMatch, database
 from .enums import FlashType
-from .model import COMPARED_VALUES, Flash, SfdpDump, SupportedOperation, parse_id
+from .model import (
+    COMPARED_VALUES,
+    Flash,
+    SfdpDump,
+    SupportedOperation,
+    parse_id,
+    strip_continuation,
+)
 from .registers import NoQuadEnable, RegisterBit, Writability
 from .sfdp import SIGNATURE, Sfdp
 from .sfdp import parse as parse_sfdp
@@ -131,9 +138,20 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
         detail.append(f"ECC {f.ecc}")
     if f.voltage:
         detail.append(volts(f.voltage))
+    elif f.supply_mv:
+        detail.append(f"supply {f.supply_mv / 1000:g} V")
     if f.quad_enable is not None:
         detail.append(f"QE {quad_enable(f.quad_enable)}")
+    if f.otp is not None:
+        detail.append(f"OTP {f.otp}")
     lines.append("    " + ", ".join(detail))
+    if f.answers_legacy is not None:
+        legacy = f.answers_legacy
+        giving = ", ".join(f.legacy_ids.get(legacy, ()))
+        lines.append(f"    also answers {legacy.key} ({giving})")
+    if f.four_byte_modes:
+        modes = ", ".join(sorted(f.four_byte_modes))
+        lines.append(f"    4-byte: {modes} ({f.address_bytes} address bytes)")
     if f.features:
         lines.append("    features: " + " ".join(sorted(f.features)))
     for attr, vals in f.conflicts.items():
@@ -151,6 +169,11 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    quad enable requirement: {qer} ({qer.description})")
         if f.protection is not None:
             lines.append(f"    protection: {f.protection}")
+        for legacy, listing in f.legacy_ids.items():
+            lines.append(f"    legacy id: {legacy.key} ({', '.join(listing)})")
+        for mv, records in f.supply_outside().items():
+            who = ", ".join(dict.fromkeys(r.source for r in records))
+            lines.append(f"    supply {mv / 1000:g} V ({who}) is outside the part's range")
         for r in f.records:
             ext = f" ext {r.ext_id.hex()}" if r.ext_id else ""
             lines.append(f"    {r.source:15} {r.name}{ext}  [{r.url}]")
@@ -331,9 +354,29 @@ def _emit(
     if as_json:
         json.dump([f.to_json() for f in found], sys.stdout, indent=1)
         sys.stdout.write("\n")
-    else:
+    elif found:
         print("\n\n".join(describe(f, verbose=verbose, opcodes=opcodes) for f in found))
     return 0 if found else 1
+
+
+def _legacy_hint(db: Database, chip_id: str, flash_type: str | None) -> None:
+    """Where no chip answers ``chip_id`` to JEDEC read-id, say which legacy
+    id methods some chip answers it to, on stderr."""
+    wanted = strip_continuation(parse_id(chip_id))[1]
+
+    def exactly(f: Flash) -> bool:
+        return (f.answers_legacy.id if f.answers_legacy else f.id) == wanted
+
+    methods = [
+        m
+        for m in ("rems", "res1", "res2", "at25f")
+        if any(exactly(f) for f in db.lookup(chip_id, flash_type=flash_type, method=m))
+    ]
+    if methods:
+        tries = ", ".join(f"--method {m}" for m in methods)
+        print(f"no chip answers {chip_id} to JEDEC read-id; try {tries}", file=sys.stderr)
+    else:
+        print(f"no chip answers {chip_id}", file=sys.stderr)
 
 
 def nearest_line(m: NameMatch, width: int) -> str:
@@ -479,12 +522,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     db = database()
     try:
         if args.command == "id":
-            return _emit(
-                db.lookup(args.id, flash_type=args.type, method=args.method),
-                as_json=args.json,
-                verbose=args.verbose,
-                opcodes=args.opcodes,
-            )
+            found = db.lookup(args.id, flash_type=args.type, method=args.method)
+            if not found and args.method == "jedec" and not args.json:
+                _legacy_hint(db, args.id, args.type)
+            return _emit(found, as_json=args.json, verbose=args.verbose, opcodes=args.opcodes)
         if args.command == "find":
             return _find(db, args)
         if args.command == "opcodes":

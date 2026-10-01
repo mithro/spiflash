@@ -50,7 +50,7 @@ SOURCES = REPO / "tools" / "sources.toml"
 DATA = REPO / "src" / "spiflash" / "data"
 UPSTREAM = REPO / "upstream"
 
-FORMAT = 8
+FORMAT = 9
 
 EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
     "flashrom": lambda root: flashrom.extract(root, "flashrom"),

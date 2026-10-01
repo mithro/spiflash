@@ -43,14 +43,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
-from .enums import Feature, FlashType, IdMethod
+from .enums import AddressBytes, Feature, FlashType, FourByteMethod, IdMethod
 from .opcodes import OPERATIONS, OpcodeUse
 from .registers import QuadEnableRequirement, RegisterBit
-from .sfdp import AddressBytes, FourByteMethod
 from .units import human_size
 
 if TYPE_CHECKING:
-    from .model import Eraser, Record
+    from .model import Eraser, Otp, Record
     from .registers import NoQuadEnable, Protection
     from .sfdp import Sfdp, SfdpFacts
 
@@ -166,7 +165,45 @@ def opcodes(record: Record) -> tuple[OpcodeUse, ...]:
     if record.type is not FlashType.NOR:
         return _stored_opcodes(record)
     facts = record.sfdp_facts
-    return _stored_opcodes(record) + (facts.opcodes if facts else ()) + _requirement_opcodes(record)
+    return (
+        _stored_opcodes(record)
+        + (facts.opcodes if facts else ())
+        + _requirement_opcodes(record)
+        + _mode_opcodes(record)
+    )
+
+
+#: The operations each way into 4-byte address mode says the part has
+#: (JESD216B, BFPT DW16[31:24]): ``EN4B`` (0xb7, with or without a write
+#: enable first; ``EX4B``, 0xe9, is a way out, stated where a source
+#: states it), the extended address register written with 0xc5 and read
+#: with 0xc8 (``WREAR``), and the bank address register written with 0x17
+#: and read with 0x16 (``BRWR``). flashrom's setting of bit 7 of the
+#: extended address register (``ear_bit7``) writes it with whichever of
+#: 0xc5 and 0x17 the part's other way gives (spi25.c,
+#: ``spi_write_extended_address_register``); the non-volatile
+#: configuration register and always-4-byte ways name no operation.
+FOUR_BYTE_MODE_OPERATIONS: dict[FourByteMethod, tuple[str, ...]] = {
+    FourByteMethod.EN4B: ("EN4B",),
+    FourByteMethod.WREN_EN4B: ("EN4B",),
+    FourByteMethod.WREAR: ("WREAR", "RDEAR"),
+    FourByteMethod.EAR_BIT7: (),
+    FourByteMethod.BRWR: ("BRWR", "BRRD"),
+    FourByteMethod.NV_CR: (),
+    FourByteMethod.ALWAYS_4B: (),
+}
+
+
+def _mode_opcodes(record: Record) -> tuple[OpcodeUse, ...]:
+    """What :func:`opcodes` gives from the record's ways into 4-byte mode,
+    stated or from its SFDP tables (:data:`FOUR_BYTE_MODE_OPERATIONS`)."""
+    vias: dict[str, list[str]] = {}
+    for mode in sorted(record.four_byte_modes):
+        stated = mode in record.stored("four_byte_modes")
+        via = f"4-byte mode {mode}" + ("" if stated else " (SFDP BFPT DW16)")
+        for op in FOUR_BYTE_MODE_OPERATIONS[mode]:
+            vias.setdefault(op, []).append(via)
+    return tuple(OpcodeUse(op, "; ".join(v), implied=True) for op, v in vias.items())
 
 
 #: The register operations each quad enable requirement says the part
@@ -289,11 +326,15 @@ FEATURE_IMPLIED_BY: dict[Feature, tuple[str, ...]] = {
     Feature.QPI: ("READ_4_4_4", "READ_4_4_4_4B", "EQPI_38", "EQPI_35", "RSTQIO_FF", "RSTQIO_F5"),
     Feature.FOUR_BYTE_OPCODES: _FOUR_BYTE_OPS,
     Feature.SFDP: ("RDSFDP",),
+    # Not RUID: a unique id read is not the OTP area's.
+    Feature.OTP: ("RSECR", "PSECR", "ESECR", "READ_OTP", "ENSO", "EXSO", "ENTER_OTP_3A"),
 }
 
 #: The operations that mean a part takes 4-byte addresses: every ``_4B``
-#: form, and the ways into 4-byte mode (``EN4B``/``EX4B``, and writing the
-#: extended or bank address register, ``WREAR``/``BRWR``).
+#: form, and the ways into and out of 4-byte mode (``EN4B``/``EX4B``, and
+#: writing the extended or bank address register, ``WREAR``/``BRWR``). A
+#: way into 4-byte mode (:attr:`~spiflash.model.Record.four_byte_modes`)
+#: means it too.
 FOUR_BYTE_ADDRESS_OPS = (*_FOUR_BYTE_OPS, "EN4B", "EX4B", "WREAR", "BRWR")
 
 #: More than this many bytes need a fourth address byte.
@@ -334,6 +375,11 @@ class _Given(NamedTuple):
     #: Its quad enable bit, stated or from its quad enable requirement.
     quad_enable: RegisterBit | NoQuadEnable | None = None
     protection: Protection | None = None
+    #: Its ways into 4-byte mode, stated and from its SFDP tables.
+    four_byte_modes: frozenset[FourByteMethod] = frozenset()
+    #: Whether it claims ``4byte_addr``.
+    claims_four_byte: bool = False
+    otp: Otp | None = None
 
 
 def _given(record: Record) -> _Given:
@@ -349,6 +395,9 @@ def _given(record: Record) -> _Given:
         facts,
         record.quad_enable,
         record.protection,
+        record.four_byte_modes,
+        Feature.FOUR_BYTE_ADDR in record.stored("features"),
+        record.otp,
     )
 
 
@@ -372,19 +421,22 @@ def _four_byte_reason(g: _Given) -> str | None:
     for u in g.ops:
         if u.op in FOUR_BYTE_ADDRESS_OPS:
             return f"{u.op} ({u.via})"
-    if g.facts is not None and g.facts.four_byte_enter:
-        ways = ", ".join(sorted(map(str, g.facts.four_byte_enter)))
-        return f"its SFDP tables (BFPT DW16, enter 4-byte mode: {ways})"
+    if g.four_byte_modes:
+        return f"its ways into 4-byte mode ({', '.join(sorted(g.four_byte_modes))})"
+    if g.facts is not None and g.facts.opcodes_4b:
+        return f"its SFDP tables ({_DW16_OPCODES_4B})"
     return None
 
 
 def _address_bytes(g: _Given) -> AddressBytes | None:
     if not g.nor:
         return None
+    if FourByteMethod.ALWAYS_4B in g.four_byte_modes:
+        return AddressBytes.FOUR
     given = g.facts.address_bytes if g.facts else None
     if given is not None and given is not AddressBytes.THREE:
         return given
-    if _four_byte_reason(g) is not None:
+    if _four_byte_reason(g) is not None or g.claims_four_byte:
         return AddressBytes.THREE_OR_FOUR
     if given is not None or g.size is not None:
         return AddressBytes.THREE
@@ -392,13 +444,17 @@ def _address_bytes(g: _Given) -> AddressBytes | None:
 
 
 def address_bytes(record: Record) -> AddressBytes | None:
-    """How many address bytes a SPI NOR record's part takes: what its SFDP
-    tables say where they say 4 (or 3 or 4); else ``THREE_OR_FOUR`` where its
-    size is over 16 MiB, it states a 4-byte operation or its tables give one
-    (:data:`FOUR_BYTE_ADDRESS_OPS`), or its tables give a way into 4-byte
-    mode (BFPT DW16); else ``THREE`` where its size or its tables are known.
-    ``None`` for SPI NAND, and where nothing says. ``4byte_addr`` is implied
-    exactly when this is neither ``THREE`` nor ``None``."""
+    """How many address bytes a SPI NOR record's part takes: ``FOUR`` where
+    it is always in 4-byte mode (``always_4b``); what its SFDP tables say
+    where they say 4 (or 3 or 4); else ``THREE_OR_FOUR`` where its size is
+    over 16 MiB, it states a 4-byte operation or its tables give one
+    (:data:`FOUR_BYTE_ADDRESS_OPS`), it has a way into 4-byte mode
+    (:attr:`~spiflash.model.Record.four_byte_modes`, stated or from BFPT
+    DW16), its tables say it has dedicated 4-byte opcodes, or it claims
+    ``4byte_addr``; else ``THREE`` where its size or its tables are known.
+    ``None`` for SPI NAND, and where nothing says. A record has
+    ``4byte_addr`` (:attr:`~spiflash.model.Record.features`, implied or
+    claimed) exactly when this is neither ``THREE`` nor ``None``."""
     return _address_bytes(_given(record))
 
 
@@ -415,6 +471,8 @@ def _implied(g: _Given) -> dict[Feature, str]:
     if g.protection is not None and g.protection.blocks:
         roles = ", ".join(g.protection.roles())
         out.setdefault(Feature.LOCK, f"its block protection bits ({roles})")
+    if g.otp is not None:
+        out[Feature.OTP] = f"its OTP area, {g.otp}"  # before an OTP operation
     return out
 
 
@@ -425,16 +483,16 @@ def _nor_implied(g: _Given, out: dict[Feature, str]) -> None:
         block = _block(e)
         if e.opcode is not None and block in ERASE_FEATURE:
             out.setdefault(ERASE_FEATURE[block], f"eraser 0x{e.opcode:02x} ({layout(e)})")
-    given = _address_bytes(g)
-    if given not in (None, AddressBytes.THREE):
-        said = g.facts.address_bytes if g.facts else None
-        if said in (AddressBytes.FOUR, AddressBytes.THREE_OR_FOUR):
-            out[Feature.FOUR_BYTE_ADDR] = f"its SFDP tables (BFPT DW1: {said} address bytes)"
-        else:
-            out[Feature.FOUR_BYTE_ADDR] = _four_byte_reason(g) or "its SFDP tables"
+    said = g.facts.address_bytes if g.facts else None
+    if FourByteMethod.ALWAYS_4B in g.four_byte_modes:
+        out[Feature.FOUR_BYTE_ADDR] = "its ways into 4-byte mode (always_4b)"
+    elif said in (AddressBytes.FOUR, AddressBytes.THREE_OR_FOUR):
+        out[Feature.FOUR_BYTE_ADDR] = f"its SFDP tables (BFPT DW1: {said} address bytes)"
+    elif (why := _four_byte_reason(g)) is not None:
+        out[Feature.FOUR_BYTE_ADDR] = why
     if g.facts is not None:
         found = {
-            _DW16_OPCODES_4B: FourByteMethod.OPCODES_4B in g.facts.four_byte_enter,
+            _DW16_OPCODES_4B: g.facts.opcodes_4b,
             _PROFILE1: g.facts.octal_dtr,
         }
         for what, feats in SFDP_FEATURES.items():
@@ -485,6 +543,7 @@ def _alone(sfdp: Sfdp) -> _Given:
         size=facts.size,
         facts=facts,
         quad_enable=facts.quad_enable,
+        four_byte_modes=facts.four_byte_modes,
     )
 
 

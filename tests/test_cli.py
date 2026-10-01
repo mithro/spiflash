@@ -428,3 +428,38 @@ def test_id_says_where_parts_differ_on_supply(capsys: pytest.CaptureFixture[str]
     _, out = run(capsys, "id", "010220")
     assert "parts differ on voltage by ext id: " in out
     assert "1.7-2 V (4d0081)" in out
+
+
+def test_id_shows_phase_6_values(capsys: pytest.CaptureFixture[str]) -> None:
+    # A programmer's supply where no source gives a range; the OTP area; the
+    # ways into 4-byte mode.
+    _, out = run(capsys, "id", "ba4013")
+    assert ", supply 3.3 V" in out
+    _, out = run(capsys, "id", "ef4019")
+    assert "OTP 768 B" in out
+    assert "    4-byte: en4b, wrear, wren_en4b (3 or 4 address bytes)\n" in out
+    # -v: the legacy ids, and a supply outside the part's range.
+    _, out = run(capsys, "id", "-v", "ef4013")
+    assert "    legacy id: rems:ef12 (dediprog)\n" in out
+    _, out = run(capsys, "id", "-v", "1c3813")
+    assert "    supply 3.3 V (dediprog) is outside the part's range\n" in out
+
+
+def test_id_legacy_lists_the_jedec_chips_answering_it(capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = run(capsys, "id", "--method", "rems", "ef12")
+    assert out.startswith("ef4013  Winbond")  # no rems:ef12 chip of its own
+    assert "    also answers rems:ef12 (dediprog)\n" in out
+    # Dediprog's ZD25Q40 0xef12 is Winbond's id, left out.
+    assert "ba4013" not in out
+    _, out = run(capsys, "id", "--json", "--method", "rems", "ef12")
+    assert '"answers_legacy": "rems:ef12"' in out
+
+
+def test_id_without_a_method_hints_at_a_legacy_one(capsys: pytest.CaptureFixture[str]) -> None:
+    code = cli.main(["id", "bf48"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert "try --method rems" in captured.err
+    assert cli.main(["id", "123456"]) == 1
+    assert "try" not in capsys.readouterr().err

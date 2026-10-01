@@ -31,11 +31,11 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
-from enum import StrEnum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from .enums import Feature, FlashType, OperationKind
+from . import derive
+from .enums import ENTER_METHODS, AddressBytes, Feature, FlashType, FourByteMethod, OperationKind
 from .opcodes import OPERATIONS, OpcodeUse
 from .registers import QUAD_ENABLE_REQUIREMENTS, NoQuadEnable, QuadEnableRequirement, RegisterBit
 from .units import human_size, human_time
@@ -96,28 +96,8 @@ def _bit(dword: int, n: int) -> bool:
     return bool(dword >> n & 1)
 
 
-class AddressBytes(StrEnum):
-    """How many address bytes the part takes (BFPT DW1[18:17])."""
-
-    THREE = "3"
-    THREE_OR_FOUR = "3 or 4"
-    FOUR = "4"
-
-
-class FourByteMethod(StrEnum):
-    """A way into or out of 4-byte address mode (BFPT DW16)."""
-
-    EN4B = "EN4B/EX4B (0xb7/0xe9)"
-    WREN_EN4B = "WREN then EN4B/EX4B"
-    WREAR = "extended address register (0xc5)"
-    BRWR = "bank address register (0x17)"
-    NV_CR = "16-bit non-volatile configuration register"
-    OPCODES_4B = "dedicated 4-byte opcodes"
-    ALWAYS_4B = "always 4-byte"
-    HW_RESET = "hardware reset"
-    SW_RESET = "software reset"
-    POWER_CYCLE = "power cycle"
-
+#: The ways in and out of 4-byte mode, in the order they are declared.
+_ORDER = list(FourByteMethod)
 
 _ENTER_4B = {
     24: FourByteMethod.EN4B,
@@ -522,17 +502,25 @@ class SfdpFacts:
     BFPT DW1 where no erase type has it. ``opcodes`` are the named
     operations the tables describe (:meth:`Sfdp.operations`), each
     ``implied``, its ``via`` saying where in the tables it is, and a read
-    with the dummy clocks the tables give it. The rest is what the
-    capability rules read: the BFPT's address bytes, its ways into 4-byte
-    address mode (DW16), and whether there is an xSPI profile 1.0 table
-    (octal DTR)."""
+    with the dummy clocks the tables give it; not those its ways into
+    4-byte mode give (:data:`spiflash.derive.FOUR_BYTE_MODE_OPERATIONS`),
+    which a record derives from :attr:`four_byte_modes`. The rest is what
+    the capability rules read: the BFPT's address bytes, whether DW16 says
+    the part has dedicated 4-byte opcodes, and whether there is an xSPI
+    profile 1.0 table (octal DTR)."""
 
     size: int | None
     page_size: int | None
     address_bytes: AddressBytes | None
     erasers: tuple[Eraser, ...]
     opcodes: tuple[OpcodeUse, ...]
-    four_byte_enter: frozenset[FourByteMethod] = frozenset()
+    #: The ways into 4-byte address mode BFPT DW16 gives
+    #: (:data:`~spiflash.enums.ENTER_METHODS`: not ``OPCODES_4B``, which
+    #: is :attr:`opcodes_4b`), where the part has a 4-byte mode
+    #: (:attr:`Sfdp.four_byte_mode`).
+    four_byte_modes: frozenset[FourByteMethod] = frozenset()
+    #: Whether DW16 says the part has dedicated 4-byte opcodes (bit 29).
+    opcodes_4b: bool = False
     octal_dtr: bool = False
     #: The BFPT's quad enable requirement (DW15); ``None`` where the BFPT
     #: is too short to have one, or gives the reserved code 7.
@@ -728,7 +716,8 @@ class Sfdp:
                 (FourByteMethod.BRWR, 0x17),
             ):
                 if method in methods:
-                    mode_ops.setdefault(opcode, []).append(f"{direction} 4-byte mode: {method}")
+                    label = method.label if direction == "enter" else method.exit_label
+                    mode_ops.setdefault(opcode, []).append(f"{direction} 4-byte mode: {label}")
         for opcode, reasons in mode_ops.items():
             yield SfdpOperation(
                 _MODE_BY_OPCODE.get(opcode),
@@ -800,9 +789,16 @@ class Sfdp:
             eraser(e.opcode_4b, e.size)
         if (dw1 := self._dw1_erase()) is not None:
             eraser(dw1, 4096)
+        bfpt = self.bfpt
+        enter = bfpt.four_byte_enter if bfpt and self.four_byte_mode else frozenset()
+        modes = enter & ENTER_METHODS
+        # A record derives these from its ways into 4-byte mode.
+        by_mode = {op for m in modes for op in derive.FOUR_BYTE_MODE_OPERATIONS[m]}
         uses: dict[str, OpcodeUse] = {}
         for o in self.operations():
             if o.name is None or o.name in uses:
+                continue
+            if o.name in by_mode and o.via.startswith("BFPT DW16"):
                 continue
             read = OPERATIONS[o.name].kind is OperationKind.READ
             uses[o.name] = OpcodeUse(
@@ -810,14 +806,14 @@ class Sfdp:
             )
         # The tables are the answer to RDSFDP, whatever is in them.
         uses.setdefault("RDSFDP", OpcodeUse("RDSFDP", "SFDP: the tables themselves", implied=True))
-        bfpt = self.bfpt
         return SfdpFacts(
             size=size,
             page_size=self.page_size,
             address_bytes=self.address_bytes,
             erasers=tuple(erasers),
             opcodes=tuple(uses.values()),
-            four_byte_enter=bfpt.four_byte_enter if bfpt and self.four_byte_mode else frozenset(),
+            four_byte_modes=modes,
+            opcodes_4b=FourByteMethod.OPCODES_4B in enter,
             octal_dtr=self.profile1 is not None,
             quad_enable_requirement=QuadEnableRequirement.from_code(
                 bfpt.quad_enable if bfpt else None
@@ -909,13 +905,13 @@ class Sfdp:
             if bfpt.four_byte_enter:
                 lines.append(
                     "    enter 4-byte mode: "
-                    + ", ".join(sorted(map(str, bfpt.four_byte_enter)))
+                    + ", ".join(m.label for m in sorted(bfpt.four_byte_enter, key=_ORDER.index))
                     + unused
                 )
             if bfpt.four_byte_exit:
                 lines.append(
                     "    exit 4-byte mode: "
-                    + ", ".join(sorted(map(str, bfpt.four_byte_exit)))
+                    + ", ".join(m.exit_label for m in sorted(bfpt.four_byte_exit, key=_ORDER.index))
                     + unused
                 )
             if bfpt.soft_reset:

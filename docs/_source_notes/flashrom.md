@@ -33,7 +33,58 @@ so its `lock` ([](../derived.md#registers)). The `FEATURE_WRSR*`, `CFGR` and
 `SCUR` bits say how it reads and writes the second and third registers
 ([RDSR2](../opcodes/RDSR2.md), [WRSR_16](../opcodes/WRSR_16.md), ...).
 `FEATURE_WRSR_EXT3` is the `FEATURE_WRSR_EXT2` bit and one of its own,
-with no name, so a record gives it by its own name.
+with no name, so a record gives it by its own name. `.decode_range` (how the
+BP, TB, SEC and CMP bits map to a protected range: `DECODE_RANGE_SPI25` and
+its `_64K_BLOCK`, `_BIT_CMP`, `_2X_BLOCK` and `_BP3_TO_1_16` variants) has no
+field: it is what a layout's bits mean, not where they are, and waits for a
+model of protected ranges. Nor do `FEATURE_ERASED_ZERO`,
+`FEATURE_STATUS_PER_DIE` and `FEATURE_ADDR_2BYTE` (a 2-byte address, which
+the address bytes do not cover).
+
+The `FEATURE_4BA_ENTER`, `_ENTER_WREN`, `_ENTER_EAR7`, `_EAR_C5C8` and
+`_EAR_1716` bits are the record's ways into 4-byte mode, `en4b`,
+`wren_en4b`, `ear_bit7`, `wrear` and `brwr` ({upstream}`flashrom:include/flash.h`;
+spi25.c's `spi_enter_exit_4ba` and `spi_write_extended_address_register`),
+which give their operations ([](../derived.md#4-byte-addressing)); the way
+out, [EX4B](../opcodes/EX4B.md), is stated beside the first two. `_ENTER_EAR7`
+writes bit 7 of the extended address register with 0xc5 or, on the
+Spansion S25FL256S and S25FL512S entries, which have no `_EAR_C5C8`, with
+0x17: it gives no operation of its own. `FEATURE_4BA_READ`, `_FAST_READ`
+and `_WRITE` are 4-byte operations.
+
+An `OTP:` comment about the whole entry is its OTP area, the bytes the user
+can program ("1024B total, 256B reserved" is 768: Winbond reserves security
+register 0), in regions where it says ("3x 512B"), and the commands it
+names are its operations ([RSECR](../opcodes/RSECR.md),
+[PSECR](../opcodes/PSECR.md), [ESECR](../opcodes/ESECR.md),
+[READ_OTP](../opcodes/READ_OTP.md) where 0x4b reads what 0x42 programs,
+[ENSO](../opcodes/ENSO.md), [EXSO](../opcodes/EXSO.md),
+[ENTER_OTP_3A](../opcodes/ENTER_OTP_3A.md); "read ID 0x4B" is
+[RUID](../opcodes/RUID.md)); the comment leaves the notes for the area's
+`via`, with `FEATURE_OTP`, which the area implies
+([](../derived.md#otp)). ISSI's information row (0x68, 0x62, 0x64),
+Atmel's security register (0x77, 0x9b, 0x9a) and PMC's 0xb1 program have no
+operation here, and stay in the comment. A comment qualified to one model
+or revision of the entry ("(B version only)", "later 3x 512B", "06E 64B
+total") stays a note; a command qualified so ("(A version only:) read ID
+0x4B") is left out, and the rest taken.
+
+Some comments are wrong, and the record says so in a note:
+- ISSI's IS25LP and IS25WP entries give "read 0x48; write 0x42", but on
+  ISSI's parts those read and write the function register (as
+  {sfsrc}`openfpgaloader` reads its TB bit); their OTP area is the
+  information row, read, programmed and erased with 0x68, 0x62 and 0x64
+  (the IS25LP128 datasheet, and flashrom's own IS25LP256 comment). The area's
+  size is taken; [RSECR](../opcodes/RSECR.md) and [PSECR](../opcodes/PSECR.md)
+  are not.
+- The S25FL132K's "768B total, 256B reserved" would leave 512 bytes, but
+  its datasheet (S25FL1-K, 8.3) gives four 256-byte registers, register 0
+  holding the SFDP tables: 768 are the user's.
+- The W25Q40.V's "756B total" is 768 (four 256-byte registers, register 0
+  reserved).
+
+(`OTP_COMMANDS_WRONG` and `OTP_SIZE_WRONG` in
+{repo}`tools/spiflash_extract/flashrom.py`.)
 
 A comment on an entry saying it "supports SFDP" gives it the `sfdp`
 capability and the [RDSFDP](../opcodes/RDSFDP.md) operation, whose `via`

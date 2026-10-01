@@ -212,8 +212,12 @@ def _nor_record(values: list[int], symbols: dict[str, str | int]) -> dict[str, A
             )
     ops.add(_op("sector_erase_cmd", _SECTOR_ERASE, sec_erase), "sector_erase_cmd", value=sec_erase)
     ops.add(_op("block_erase_cmd", _BLOCK_ERASE, blk_erase), "block_erase_cmd", value=blk_erase)
-    if "FEA_4BYTE_ADDR_MODE" in bits:
-        ops.add("EN4B", "FEA_4BYTE_ADDR_MODE", "CMD_ENTER_4BYTE_MODE")
+    # snor_init() sends CMD_ENTER_4BYTE_MODE (0xb7, no write enable) for it
+    # (sfc_nor.c snor_enter_4byte_mode); the way in gives EN4B.
+    modes = {"en4b": "FEA_4BYTE_ADDR_MODE"} if "FEA_4BYTE_ADDR_MODE" in bits else {}
+    if modes and cparse.evaluate("CMD_ENTER_4BYTE_MODE", symbols) != 0xB7:
+        msg = "CMD_ENTER_4BYTE_MODE is not 0xb7"
+        raise ValueError(msg)
 
     quad_enable, via, notes_qe = _nor_quad_enable(chip_id, qe_bits, feature & mask, bits, ops)
     notes += notes_qe
@@ -237,8 +241,9 @@ def _nor_record(values: list[int], symbols: dict[str, str | int]) -> dict[str, A
         ],
         "features": {feat for feat, _ in claims},
         "flags": [*bits, f"write_status={_WRITE_STATUS[feature & mask]}", f"QE_bits={qe_bits}"],
-        "via": feature_via(claims) | via,
+        "via": feature_via(claims) | via | {f"four_byte_modes:{m}": t for m, t in modes.items()},
         "quad_enable": quad_enable,
+        "four_byte_modes": list(modes),
         "opcodes": ops.to_json(),
         "notes": notes,
     }

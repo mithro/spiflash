@@ -112,9 +112,10 @@ def chip_page(
         out.append(f"Also listed as: {', '.join(esc(n) for n in others)}.\n")
     out += _summary_cards(f)
     out += _datasheets(f)
-    out += _identification(db, f, kind)
+    out += _identification(db, f, kind, slugs)
     out += _extended_ids(db, f)
     out += _capabilities(f)
+    out += _addressing(f)
     out += _registers(f)
     out += _geometry(f)
     out += _sfdp(f)
@@ -136,6 +137,14 @@ def _summary_cards(f: Flash) -> list[str]:
     out = ["::::{grid} 2 2 4 4\n:gutter: 2\n:class-container: sf-cards\n"]
     for label, attr in [*cards, ("Supply", "voltage")]:
         value = volts(f.voltage) if attr == "voltage" else size_text(getattr(f, attr))
+        if attr == "voltage" and f.voltage is None and f.supply_mv is not None:
+            # No source gives a range: the voltage the programmers' tables
+            # say to power the part at, a setting of theirs.
+            setters = {r.source for r in f.records if r.supply_mv == f.supply_mv}
+            value = (
+                f"{volt(f.supply_mv)}\n\n{_who(tuple(sorted(setters, key=lambda s: s.priority)))} "
+                "power it at"
+            )
         # Parts an extended id tells apart differ on it: each's is in the
         # Extended ids table.
         if f.by_ext_id(attr):
@@ -190,7 +199,7 @@ def _datasheets(f: Flash) -> list[str]:
     ]
 
 
-def _identification(db: Database, f: Flash, kind: str) -> list[str]:
+def _identification(db: Database, f: Flash, kind: str, slugs: dict[int, str]) -> list[str]:
     rows = []
     if f.family == "jedec":
         rows.append(["Read id (0x9f) answers", f"{{sfid}}`{spaced(f.id_hex)}`"])
@@ -211,6 +220,34 @@ def _identification(db: Database, f: Flash, kind: str) -> list[str]:
                 jep106_link(db, (f.bank, f.id[0])),
             ]
         )
+    # The legacy ids the sources say the part also answers (no chip of
+    # their own), and a legacy chip's JEDEC chips whose records give its id.
+    for legacy, giving in f.legacy_ids.items():
+        rows.append(
+            [
+                f"Also answers {legacy.family.upper()}",
+                f"{{sfid}}`{spaced(legacy.id.hex())}` {_who(giving)}"
+                + "".join(
+                    f" ([the {legacy.family.upper()} chip](../chips/{slugs[id(o)]}.md))"
+                    for o in db.flashes
+                    if o.family is legacy.family and o.id == legacy.id
+                ),
+            ]
+        )
+    if f.family != "jedec":
+        mine = (f.family, f.id)
+        answering = [
+            o
+            for o in db.flashes
+            if o.family == "jedec" and any((i.family, i.id) == mine for i in o.legacy_ids)
+        ]
+        if answering:
+            rows.append(
+                [
+                    "JEDEC chips whose sources give this id",
+                    ", ".join(f"[{esc(o.name)}](../chips/{slugs[id(o)]}.md)" for o in answering),
+                ]
+            )
     exts = sorted({r.ext_id.hex() for r in f.records if r.ext_id})
     if exts:
         rows.append(
@@ -341,13 +378,41 @@ def _who(sources: tuple[Source, ...]) -> str:
     return " ".join(source_badge(s) for s in sources)
 
 
+def _addressing(f: Flash) -> list[str]:
+    """How many address bytes the part takes, and its ways into 4-byte
+    address mode, each with the sources giving it (stated, or from their
+    SFDP tables)."""
+    if not f.four_byte_modes:
+        return []
+    rows = [["Address bytes", esc(str(f.address_bytes)), ""]]
+    for mode in sorted(f.four_byte_modes):
+        given = f.four_byte_mode_sources(mode)
+        marks = [(_mark("sfimplied" if s.implied else "sfclaimed", s.because), s) for s in given]
+        who = " ".join(f"{mark} {source_badge(s.source)}" for mark, s in marks)
+        ops = ", ".join(
+            f"[`{op}`](../opcodes/{op}.md)" for op in derive.FOUR_BYTE_MODE_OPERATIONS[mode]
+        )
+        rows.append([esc(f"Way in: {mode.label}"), ops or EM_DASH, who])
+    return [
+        "## 4-byte addressing\n",
+        (
+            "The ways into 4-byte address mode the sources give, stated "
+            "({sfyes}`✓`) or from their SFDP tables ({sfhollow}`○`, BFPT DW16), and "
+            "the operations each way is ([](../derived.md#4-byte-addressing)).\n"
+        ),
+        list_table(["", "Operations", "Sources"], rows, "sf-table sf-registers"),
+        "",
+    ]
+
+
 def _registers(f: Flash) -> list[str]:
     """The quad enable bit and requirement, and the block-protection bits,
     each value with the sources giving it."""
     qe = f.values("quad_enable")
     qer = f.values("quad_enable_requirement")
     roles = {role: f.values(f"protection.{role}") for role in ROLES}
-    if not (qe or qer or any(roles.values())):
+    otp = {part: f.values(f"otp.{part}") for part in ("size", "regions")}
+    if not (qe or qer or any(roles.values()) or any(otp.values())):
         return []
     out = [
         "## Registers\n",
@@ -382,6 +447,13 @@ def _registers(f: Flash) -> list[str]:
         for value, who in given.items():
             what, mine = shown(value, layout.get(role))
             rows.append([f"Protection: {role}", esc(what) + mine, _who(who)])
+    # The OTP area: the bytes the user can program, and in how many regions.
+    chip_otp = f.otp
+    for part, label in (("size", "OTP area"), ("regions", "OTP regions")):
+        for value, who in otp[part].items():
+            mine = " {bdg-primary}`chip`" if chip_otp and getattr(chip_otp, part) == value else ""
+            text = size_text(value) if part == "size" else esc(str(value))
+            rows.append([label, text + mine, _who(who)])
     out.append(list_table(["Field", "Bit", "Sources"], rows, "sf-table sf-registers"))
     out.append("")
     out.append(
@@ -556,7 +628,7 @@ def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
         if bfpt.quad_enable_description is not None:
             rows.append(["Quad enable", esc(bfpt.quad_enable_description)])
         if bfpt.four_byte_enter:
-            ways = ", ".join(sorted(map(str, bfpt.four_byte_enter)))
+            ways = ", ".join(m.label for m in sorted(bfpt.four_byte_enter))
             if not s.four_byte_mode:
                 ways += " (not read: the part has no 4-byte mode)"
             rows.append(["Enter 4-byte mode", esc(ways)])

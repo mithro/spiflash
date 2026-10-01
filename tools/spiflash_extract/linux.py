@@ -318,8 +318,7 @@ def _nor_record(
         if key in fields:
             flags += cparse.flag_names(fields[key])
     claims = [(_NOR_FEATURES[f], f) for f in flags if f in _NOR_FEATURES]
-    if "otp" in fields:
-        claims.append(("otp", ".otp"))
+    otp, otp_via = _otp(fields, rel, symbols)
     features = {feat for feat, _ in claims}
     if "4byte_opcodes" in features:
         features.add("4byte_addr")
@@ -345,7 +344,12 @@ def _nor_record(
         opcodes += ops.to_json()
     dies, die_ops, dies_via = _dies(fixup, name, fixups, symbols)
     opcodes += die_ops
-    via = feature_via(claims) | dies_via
+    if otp is not None:
+        ops = Opcodes(symbols)
+        for op in ("RSECR", "PSECR", "ESECR"):
+            ops.add(op, f"{otp_via['otp']} (winbond_nor_otp_ops)", f"SPINOR_OP_{op}")
+        opcodes += ops.to_json()
+    via = feature_via(claims) | dies_via | otp_via
     layout = None
     if fixup in fixups.locking:
         notes.append(f"no block protection bits: its {fixup} replace the status register locking")
@@ -384,9 +388,34 @@ def _nor_record(
         quad_enable=quad_enable,
         protection=layout,
         dies=dies,
+        otp=otp,
         opcodes=opcodes,
         notes=notes,
     )
+
+
+def _otp(
+    fields: dict[str, str], rel: str, symbols: dict[str, str | int]
+) -> tuple[dict[str, int] | None, dict[str, str]]:
+    """The OTP area an entry's ``.otp = SNOR_OTP(len, n_regions, base,
+    offset)`` gives (core.h: ``n_regions`` regions of ``len`` bytes, the
+    first at ``base``, each ``offset`` after the last), and its ``via``,
+    which keeps where the regions are. Only Winbond's entries have one, and
+    winbond_nor_late_init() reads, programs and erases it with the
+    security-register commands (winbond_nor_otp_ops: spi_nor_otp_read_secr,
+    ...), which the caller adds; one elsewhere raises, to be looked at."""
+    if "otp" not in fields:
+        return None, {}
+    args = cparse.macro_call(fields["otp"], "SNOR_OTP")
+    if args is None or len(args) != 4:
+        msg = f"unexpected .otp {fields['otp']!r}"
+        raise ValueError(msg)
+    if not rel.endswith("/winbond.c"):
+        msg = f"{rel}: an .otp outside winbond.c, whose OTP operations are not known here"
+        raise ValueError(msg)
+    length, regions = (cparse.evaluate(a, symbols) for a in args[:2])
+    given = ", ".join(a.strip() for a in args)
+    return {"size": length * regions, "regions": regions}, {"otp": f"SNOR_OTP({given})"}
 
 
 def _nor_erasers(

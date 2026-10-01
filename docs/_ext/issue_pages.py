@@ -8,6 +8,7 @@ source's label links to its page; the arrow after it, to the line.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from issue_checks import IssueKind, find
@@ -50,6 +51,15 @@ KIND_NOTES = {
         "A program that identifies a chip by its id alone cannot tell which of "
         "these entries applies. Often they are variants the source tells apart some "
         "other way; sometimes one entry is simply wrong."
+    ),
+    IssueKind.SUPPLY: (
+        "The supply a programmer's table gives is the voltage that programmer "
+        "powers the part at, a setting of its own rather than a datasheet range. "
+        "Most of these are parts sharing an id, each with its own supply: Puya's "
+        "P25Q32H, which flashrom gives 2.3 V to 3.6 V, and P25Q32L, which Dediprog "
+        "powers at 1.8 V, answer one id; Macronix's MX25V and MX25L, and Winbond's "
+        "W25X..BL and W25X..BV, likewise. The note says where the parts differ; "
+        "where the same part has both, one source is wrong."
     ),
     IssueKind.SFDP: (
         "The value the source states is the one its own code uses, and the one the "
@@ -107,10 +117,11 @@ VALUE_TITLES = {
     "die_select_bit": "Die select bit",
     "max_bad_blocks": "Bad blocks per die",
     "ecc": "ECC requirement",
+    "otp": "OTP area",
 }
 
 #: The compared values that are counts, not sizes in bytes.
-COUNTS = frozenset({"planes", "dies", "max_bad_blocks", "ecc.strength_bits"})
+COUNTS = frozenset({"planes", "dies", "max_bad_blocks", "ecc.strength_bits", "otp.regions"})
 
 
 def value_of(attribute: str) -> str:
@@ -196,6 +207,9 @@ class _Render:
         if isinstance(v, RegisterBit | NoQuadEnable | QuadEnableRequirement):
             role = (issue.attribute or "").partition(".")[2]
             return esc(f"{role}: {v}" if role else str(v))
+        if issue.attribute == "supply_mv":
+            # A supply range, or a programmer's supply setting.
+            return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if isinstance(v, tuple) else volt(v)
         if issue.attribute == "voltage":
             return f"{volt(v[0])}{EM_SPACE}{volt(v[1])}" if v else volt(None)
         if issue.attribute == "ecc.strength_bits":
@@ -267,6 +281,21 @@ class _Render:
                 ]
                 for i in issues
             ]
+        elif kind is IssueKind.SUPPLY:
+            header = ["Chip", "Parts", "Ranges: V min, V max", "Supplies outside them"]
+            rows = []
+            for i in issues:
+                given = [a for a in i.answers if isinstance(a.value, tuple)]
+                ranges = replace(i, answers=tuple(given))
+                settings = replace(i, answers=tuple(a for a in i.answers if a not in given))
+                rows.append(
+                    [
+                        self.chip(i.flashes[0]),
+                        self.names(i.flashes[0]),
+                        self.answers(ranges),
+                        self.answers(settings) + _note(i),
+                    ]
+                )
         elif kind is IssueKind.SFDP:
             header = ["Chip", "Parts", "Source", "Field", "The entry says", "Its SFDP tables say"]
             rows = [

@@ -804,6 +804,20 @@ _ALL = [
         READ,
         timing=(TimingSource.JESD216, TimingSource.FLASHROM_SIZES),
     ),
+    # Winbond's unique id: four dummy bytes, then the 64-bit id. Not an OTP
+    # read, though some parts keep the id in their OTP area.
+    Operation(
+        "RUID",
+        0x4B,
+        OperationKind.ID,
+        "Read unique id",
+        "1-0-1",
+        0,
+        32,
+        READ,
+        8,
+        timing=(TimingSource.PART,),
+    ),
     # Status and configuration registers.
     Operation(
         "WRSR",
@@ -917,6 +931,79 @@ _ALL = [
         OperationKind.REGISTER,
         "Write security register (set its lock bits)",
         timing=_SIZES,
+    ),
+    # The one-time-programmable area (OTP). Linux's names for the
+    # security-register commands (spi-nor.h SPINOR_OP_RSECR, ...; otp.c
+    # reads with 8 dummy clocks): Winbond's and GigaDevice's OTP regions,
+    # read, programmed and erased by address. ISSI's function register is
+    # read with 0x48 too, but with no address.
+    Operation(
+        "RSECR",
+        0x48,
+        OperationKind.REGISTER,
+        "Read security registers (the OTP area)",
+        "1-1-1",
+        3,
+        8,
+        READ,
+        timing=(TimingSource.PART,),
+    ),
+    Operation(
+        "PSECR",
+        0x42,
+        OperationKind.REGISTER,
+        "Program security registers (the OTP area)",
+        "1-1-1",
+        3,
+        0,
+        WRITE,
+        timing=(TimingSource.PART,),
+    ),
+    Operation(
+        "ESECR",
+        0x44,
+        OperationKind.REGISTER,
+        "Erase a security register (an OTP region)",
+        "1-1-0",
+        3,
+        timing=(TimingSource.PART,),
+    ),
+    # Micron's and Spansion's "read OTP array" (OTPR): 0x4b with an address
+    # and 8 dummy clocks, unlike Winbond's unique id read (RUID).
+    Operation(
+        "READ_OTP",
+        0x4B,
+        OperationKind.REGISTER,
+        "Read the OTP area (0x4b)",
+        "1-1-1",
+        3,
+        8,
+        READ,
+        timing=(TimingSource.PART,),
+    ),
+    # Macronix: the OTP area is read and written in place of the array
+    # between these two.
+    Operation(
+        "ENSO",
+        0xB1,
+        OperationKind.MODE,
+        "Enter the secured OTP area",
+        timing=(TimingSource.PART,),
+    ),
+    Operation(
+        "EXSO",
+        0xC1,
+        OperationKind.MODE,
+        "Exit the secured OTP area",
+        timing=(TimingSource.PART,),
+    ),
+    # Eon: likewise, until write disable (0x04).
+    Operation(
+        "ENTER_OTP_3A",
+        0x3A,
+        OperationKind.MODE,
+        "Enter OTP mode (0x3a)",
+        timing=(TimingSource.PART,),
     ),
     Operation(
         "RDFSR",

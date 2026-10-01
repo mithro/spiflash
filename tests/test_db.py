@@ -17,20 +17,32 @@ import spiflash
 from spiflash import db as db_module
 from spiflash import opcodes, vendors
 from spiflash.db import FORMAT, Database, SourceInfo
-from spiflash.enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
+from spiflash.enums import (
+    Feature,
+    FlashType,
+    FourByteMethod,
+    IdFamily,
+    IdMethod,
+    OperationKind,
+    Source,
+)
 from spiflash.model import (
     Claim,
     EraseBlock,
     Eraser,
     FeatureSource,
     Flash,
+    LegacyId,
+    Otp,
     Record,
     Voltage,
     name_distance,
     name_matches,
     parse_id,
+    parse_tested,
     part_names,
     same_part,
+    same_supply_part,
     squash_name,
     strip_continuation,
 )
@@ -251,8 +263,33 @@ def test_unknown_id() -> None:
 def test_legacy_ids_are_separate() -> None:
     res = spiflash.lookup("05", method="res1")
     assert res
-    assert all(f.family == "res1" for f in res)
+    # The legacy chips first, then the JEDEC chips whose records say their
+    # part answers the id too (Dediprog's M25P05A), marked.
+    legacy = [f for f in res if f.family == "res1"]
+    assert res[: len(legacy)] == legacy
+    assert all(f.answers_legacy is None for f in legacy)
+    also = res[len(legacy) :]
+    assert all(f.family == "jedec" for f in also)
+    assert all(f.answers_legacy == LegacyId(IdMethod.RES1, b"\x05") for f in also)
+    assert "M25P05A" in [n for f in also for n in f.names]
     assert "M25P05" not in [n for f in spiflash.lookup("05") for n in f.names]
+    # Legacy ids make no chip of their own, nor a JEDEC lookup's answer.
+    assert all(f.answers_legacy is None for f in spiflash.lookup("202010"))
+
+
+def test_legacy_ids_lookup() -> None:
+    db = spiflash.database()
+    (w25q40,) = db.lookup("ef4013", flash_type="nor")
+    rems = LegacyId(IdMethod.REMS, bytes.fromhex("ef12"))
+    assert w25q40.legacy_ids[rems] == ("dediprog",)
+    found = db.lookup("ef12", method="rems")
+    assert w25q40.key in [f.key for f in found]
+    (marked,) = [f for f in found if f.key == w25q40.key]
+    assert marked.answers_legacy == rems
+    assert marked.to_json()["answers_legacy"] == "rems:ef12"
+    assert {"method": "rems", "id": "ef12", "sources": ["dediprog"]} in marked.to_json()[
+        "legacy_ids"
+    ]
 
 
 def test_dediprog_does_not_outvote() -> None:
@@ -1199,3 +1236,140 @@ def test_name_match_to_json() -> None:
     doc = m.to_json()
     assert (doc["name"], doc["score"], doc["reason"]) == ("W25Q128JV", 3, "the query adds SIQ")
     assert doc["chip"]["jedec_id"] == "ef4018"
+
+
+def test_supply_setting_against_the_ranges() -> None:
+    # Dediprog's 1.8 V for a part no source gives a range is outside the
+    # other part's 2.3 to 3.6 V at the id; its 3.3 V for the 3 V part is
+    # not, though another part at the id is a 1.8 V one.
+    ranged = rec(source="flashrom", name="P25Q32H", voltage=[2300, 3600])
+    low = rec(source="dediprog", name="P25Q32L", supply_mv=1800)
+    f = Flash(b"\x85\x60\x16", FlashType.NOR, (ranged, low))
+    assert f.supply_outside() == {1800: (low,)}
+    assert (f.voltage, f.supply_mv) == (Voltage(2300, 3600), 1800)
+    fs = rec(source="flashrom", name="S25FS256S", voltage=[1700, 2000])
+    fl = rec(source="flashrom", name="S25FL256S", voltage=[2700, 3600])
+    set_fl = rec(source="dediprog", name="S25FL256S", supply_mv=3300)
+    set_fs = rec(source="dediprog", name="S25FS256S", supply_mv=1800)
+    assert Flash(b"\x01\x02\x19", FlashType.NOR, (fs, fl, set_fl, set_fs)).supply_outside() == {}
+    # A record states a range or a setting, not both.
+    with pytest.raises(ValueError, match="a supply voltage range and a supply setting"):
+        rec(voltage=[2700, 3600], supply_mv=3300)
+
+
+def test_otp_compared_by_component() -> None:
+    sized = rec(source="flashrom", otp={"size": 768})
+    regions = rec(source="linux", otp={"size": 768, "regions": 3})
+    f = Flash(b"\xef\x60\x16", FlashType.NOR, (sized, regions))
+    # A source giving no regions does not vote on them.
+    assert f.otp == Otp(768, 3)
+    assert f.conflicts == {}
+    assert str(f.otp) == "768 B (3 x 256 B)"
+    assert Otp(768).compatible(Otp(768, 3))
+    assert not Otp(1024).compatible(Otp(768, 3))
+    other = rec(source="flashprog", otp={"size": 1024})
+    assert "otp.size" in Flash(b"\xef\x60\x16", FlashType.NOR, (sized, other)).conflicts
+    with pytest.raises(ValueError, match="not 3 equal regions"):
+        Otp(1000, 3)
+    # The area implies otp.
+    assert "otp" in sized.features
+
+
+def test_four_byte_modes() -> None:
+    stated = rec(source="flashrom", size=32 << 20, four_byte_modes=["wren_en4b", "wrear"])
+    assert stated.four_byte_modes == {"wren_en4b", "wrear"}
+    assert {"EN4B", "WREAR", "RDEAR"} <= {u.op for u in stated.opcodes}
+    assert stated.to_json()["four_byte_modes"] == ["wrear", "wren_en4b"]
+    small = rec(source="imsprog", size=1 << 20, four_byte_modes=["en4b"])
+    assert str(small.address_bytes) == "3 or 4"
+    assert "4byte_addr" in small.features
+    always = rec(size=1 << 20, four_byte_modes=["always_4b"])
+    assert str(always.address_bytes) == "4"
+    f = Flash(b"\xef\x40\x19", FlashType.NOR, (stated, small))
+    assert f.four_byte_modes == {"wren_en4b", "wrear", "en4b"}
+    assert [s.source for s in f.four_byte_mode_sources("en4b")] == ["imsprog"]
+    assert str(f.address_bytes) == "3 or 4"
+    # opcodes_4b is the 4-byte operations', and a way out is no way in.
+    with pytest.raises(ValueError, match="are not ways in"):
+        rec(four_byte_modes=["opcodes_4b"])
+    with pytest.raises(ValueError, match="are not ways in"):
+        rec(four_byte_modes=["hw_reset"])
+
+
+@pytest.mark.parametrize(
+    ("tested", "status"),
+    [
+        (None, None),
+        ("TEST_OK_PREW", ("ok", "ok", "ok", "ok", "nt")),
+        ("TEST_UNTESTED", ("nt", "nt", "nt", "nt", "nt")),
+        ("TEST_BAD_PR", ("bad", "bad", "nt", "nt", "nt")),
+        # A field the entry leaves out is unknown (C would make it OK).
+        ("{ .probe = NA, .read = OK }", ("na", "ok", None, None, None)),
+        (
+            "{.probe = OK, .read = OK, .erase = NA, .write = NA, .wp = NA}",
+            ("ok", "ok", "na", "na", "na"),
+        ),
+        ("{.probe = OK, .block_protection = DEP}", ("ok", None, None, None, "dep")),
+    ],
+)
+def test_test_status(tested: str | None, status: tuple[str | None, ...] | None) -> None:
+    parsed = parse_tested(tested)
+    if status is None:
+        assert parsed is None
+        return
+    assert parsed is not None
+    assert (parsed.probe, parsed.read, parsed.erase, parsed.write, parsed.wp) == status
+    assert rec(tested=tested).test_status == parsed
+
+
+def test_test_status_errors() -> None:
+    with pytest.raises(ValueError, match="not a test status"):
+        parse_tested("TEST_SOMETIMES")
+    with pytest.raises(ValueError, match="not a test status"):
+        parse_tested("{.probe = OK, .smell = OK}")
+
+
+def test_new_fields_round_trip() -> None:
+    r = rec(
+        source="dediprog",
+        supply_mv=1800,
+        otp={"size": 768, "regions": 3},
+        legacy_ids=[["res1", "17"], ["rems", "ef17"]],
+        four_byte_modes=["en4b"],
+    )
+    assert r.legacy_ids == (
+        LegacyId(IdMethod.RES1, b"\x17"),
+        LegacyId(IdMethod.REMS, b"\xef\x17"),
+    )
+    assert r.legacy_ids[1].key == "rems:ef17"
+    again = Record.from_json(r.to_json())
+    assert again == r
+    assert again.to_json() == r.to_json()
+    assert pickle.loads(pickle.dumps(r)) == r
+
+
+def test_a_supply_suffix_names_another_part() -> None:
+    assert same_part("W25X10", "W25X10BL")
+    assert not same_supply_part("W25X10", "W25X10BL")
+    assert not same_supply_part("P25Q32", "P25Q32U")
+    assert same_supply_part("S25FL256S", "S25FL256SXXXXXX1X")  # an order code
+    assert same_supply_part("W25X10BV", "W25X10BV")
+    # So Dediprog's 2.5 V W25X10BL is outside flashrom's W25X10, another part.
+    ranged = rec(source="flashrom", name="W25X10", voltage=[2700, 3600])
+    low = rec(source="dediprog", name="W25X10BL", supply_mv=2500)
+    assert Flash(b"\xef\x30\x11", FlashType.NOR, (ranged, low)).supply_outside() == {2500: (low,)}
+
+
+def test_ways_out_have_their_own_labels() -> None:
+    assert FourByteMethod.EN4B.label == "EN4B (0xb7)"
+    assert FourByteMethod.EN4B.exit_label == "EX4B (0xe9)"
+    assert FourByteMethod.WREAR.exit_label == FourByteMethod.WREAR.label
+
+
+def test_an_otp_area_is_the_otp_reason() -> None:
+    r = rec(
+        source="flashrom",
+        otp={"size": 1024},
+        opcodes=[{"op": "PSECR", "via": "OTP: 1024B total; write 0x42"}],
+    )
+    assert r.feature_reasons()[Feature.OTP] == "implied by its OTP area, 1 KiB"

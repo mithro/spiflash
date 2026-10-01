@@ -21,7 +21,7 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 
 | Source | Where the opcodes come from |
 |---|---|
-| {sfsrc}`flashrom`, {sfsrc}`flashprog` | the probe, the `.read`/`.write` functions, each block eraser (`spi_block_erase_20` sends 0x20), and the feature bits (`FEATURE_FAST_READ_QIO`, `FEATURE_4BA_ENTER`, `FEATURE_QPI_38_FF`, ...) |
+| {sfsrc}`flashrom`, {sfsrc}`flashprog` | the probe, the `.read`/`.write` functions, each block eraser (`spi_block_erase_20` sends 0x20), the feature bits (`FEATURE_FAST_READ_QIO`, `FEATURE_QPI_38_FF`, ...; the `FEATURE_4BA_` ways into 4-byte mode give theirs), and the commands an `OTP:` comment names |
 | {sfsrc}`linux` | what {upstream}`linux:drivers/mtd/spi-nor/core.c` sets up for the entry: read, fast read and page program by default; the `no_sfdp_flags` (dual, quad and octal read, 4 KiB erase); sector and chip erase; the 4-byte forms for `SPI_NOR_4B_OPCODES`; and the die erase and die select its fixups set. For SPI NAND, the entry's read-from-cache, write-cache and update-cache op variants, each read with the part's dummy clocks, its die select, and the page read, program execute and feature commands {upstream}`linux:drivers/mtd/nand/spi/core.c` sends every part |
 | {sfsrc}`u-boot` | the same from its {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` (`SPI_NOR_NO_FR`, `SST_WRITE`, `USE_FSR`, `NO_CHIP_ERASE`, ...) |
 | {sfsrc}`dediprog` | the id command, and the opcodes its entry packs into `ReadCmd`, `ProgramCmd` and `EraseCmd`: the single-line read and page program, and the chip, block and die erase (SPI NOR); for SPI NAND, the bad block lookup table's swap and read where its `SupportLUT` says |
@@ -33,14 +33,18 @@ Operations are named as {github}`LiteSPI <litex-hub/litespi>`'s
 | {sfsrc}`qemu` | what its model ({upstream}`qemu:hw/block/m25p80.c`) decodes for every part (read, fast read, page program, sector erase, and chip erase as 0xc7 and 0x60), the erases its `ER_4K`/`ER_32K` flags allow, die erase for stacked parts, and, for the parts it has SFDP tables for ({upstream}`qemu:hw/block/m25p80_sfdp.c`), everything those tables list, with the part's own dummy clocks, worked out from the stored tables ([](derived.md#sfdp-tables)) |
 | {sfsrc}`zephyr` | the board's devicetree: everything in the chip's own SFDP tables where the board copies them (`sfdp-bfp`, JESD216's Basic Flash Parameter table, and `sfdp-ff84`), worked out from the stored tables, and the read and program modes the board uses (`readoc`, `writeoc`, `use-fast-read`, `enter-4byte-addr`, ...) |
 
-Two kinds follow from what any entry already says, so they are worked
+Some follow from what any entry already says, so they are worked
 out when the data is loaded rather than stored ({py:mod}`spiflash.derive`):
 the id read of the way the entry reads its id ([`RDID`](opcodes/RDID.md),
 [`REMS`](opcodes/REMS.md), [`RES`](opcodes/RES.md), ..., and a SPI NAND
 part's [`NAND_RDID_DUMMY`](opcodes/NAND_RDID_DUMMY.md) and the others),
 unless the entry names the command it reads the id with ({sfsrc}`dediprog`'s
-`RDIDCommand`), and the erase each of its erase layouts sends (a SPI NAND
-part's [`NAND_BLOCK_ERASE`](opcodes/NAND_BLOCK_ERASE.md)). A chip page marks those *implied* in "Why each source
+`RDIDCommand`), the erase each of its erase layouts sends (a SPI NAND
+part's [`NAND_BLOCK_ERASE`](opcodes/NAND_BLOCK_ERASE.md)), and the
+operations each of its ways into 4-byte mode is ([`EN4B`](opcodes/EN4B.md),
+[`WREAR`](opcodes/WREAR.md) and [`RDEAR`](opcodes/RDEAR.md),
+[`BRWR`](opcodes/BRWR.md) and [`BRRD`](opcodes/BRRD.md):
+[](derived.md#4-byte-addressing)). A chip page marks those *implied* in "Why each source
 lists each opcode". An operation a source's driver sends to every part, whatever the
 entry says (Linux's fast read, U-Boot's quad page program for every quad-read part), is
 marked a *driver default*: it says nothing of the part, so implies no capability

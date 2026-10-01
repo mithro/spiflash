@@ -24,7 +24,12 @@ the entry's number in it, from 1.
 Every SPI NOR entry has a 256-byte page and a 64 KiB block: IMSProg programs
 every part in 256-byte pages and erases it with 0xd8 at every 64 KiB, and
 its GUI offers little else, so they are its defaults, not the part's. They
-are kept as flags, not as the record's page and sector size.
+are not kept (an entry with others raises), as a template says nothing of
+a part.
+
+The VCC byte is the supply IMSProg says to power the part at (the
+record's ``supply_mv``), and the 4-byte addressing byte its ways into
+4-byte mode (``four_byte_modes``: :data:`ADDR4`).
 
 A SPI NAND id is the three bytes after 0x9f and a dummy byte. A part with a
 two-byte id sends its manufacturer byte again as the third; for the makers
@@ -109,15 +114,24 @@ TWO_BYTE_IDS = {0x0B, 0x2C, 0xBA, 0xC2, 0xC8, 0xE5}
 #: dummy byte (GigaDevice's GD5F1GQ4xF: "9FH MID DID DID").
 NO_DUMMY = {"c8a148", "c8a348", "c8b148", "c8b348"}
 
-VCC = {0: "3.3 V", 1: "1.8 V", 2: "5.0 V", 3: "2.5 V"}
+#: The supply, in millivolts, each VCC code says to power the part at
+#: (mainwindow.cpp: the "chipVCC" the GUI shows, which picks the picture of
+#: how to wire the part, 1.8 V through an adapter): the record's
+#: ``supply_mv``.
+VCC = {0: 3300, 1: 1800, 2: 5000, 3: 2500}
 
-# How IMSProg's snor_4byte_mode() enters 4-byte addressing, by the entry's
-# 0x3e byte: the operations it sends.
-ADDR4 = {
-    0x00: (),
-    0x01: ("EN4B", "EX4B"),
-    0x11: ("EN4B", "EX4B", "WREAR"),
-    0x21: ("BRWR", "BRRD"),
+#: How IMSProg's snor_4byte_mode() (spi_nor_flash.c) enters 4-byte
+#: addressing, by the entry's 0x3e byte (the high nibble is its algType):
+#: 0xb7 in (0x01; 0x11, Winbond's, also clears the extended address
+#: register with 0xc5 on the way out), or the bank register with 0x17, read
+#: back with 0x16 (0x21, Spansion's). The record's ``four_byte_modes``, and
+#: the operations it states beside those they give: 0xe9 out, and 0x11's
+#: 0xc5.
+ADDR4: dict[int, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    0x00: ((), ()),
+    0x01: (("en4b",), ("EX4B",)),
+    0x11: (("en4b",), ("EX4B", "WREAR")),
+    0x21: (("brwr",), ()),
 }
 
 
@@ -179,6 +193,7 @@ def extract(root: Path, wrong: Mapping[tuple[str, str, int | None], str] = WRONG
             msg = f"{where}: unknown VCC code 0x{e[0x43]:02x}"
             raise ValueError(msg)
         rec = _nor(e, where) if e[0x3A] == NOR else _nand(e, where)
+        rec["supply_mv"] = VCC[e[0x43]]
         records.append(make("imsprog", DAT, n, fields[2], vendor=fields[1].strip(), **rec))
     return records
 
@@ -190,7 +205,6 @@ def _flags(e: bytes) -> list[str]:
         f"algorithmCode=0x{e[0x3B]:02x}",
         f"delay={int.from_bytes(e[0x3C:0x3E], 'little')}",
         f"addr4bit=0x{e[0x3E]:02x}",
-        f"chipVCC={VCC[e[0x43]]}",
     ]
 
 
@@ -199,15 +213,17 @@ def _nor(e: bytes, where: str) -> dict[str, object]:
     if addr4 not in ADDR4:
         msg = f"{where}: unknown 4-byte addressing 0x{addr4:02x}"
         raise ValueError(msg)
+    page, block = int.from_bytes(e[0x38:0x3A], "little"), int.from_bytes(e[0x3F:0x41], "big")
+    if (page, block) != (256, 64):
+        msg = f"{where}: a {page}-byte page and {block} KiB block, not IMSProg's 256 and 64"
+        raise ValueError(msg)
+    modes = ADDR4[addr4][0]
     return {
         "id": _id(e),
         "size": int.from_bytes(e[0x34:0x38], "little"),
-        "features": {"4byte_addr"} if addr4 else set(),
-        "flags": [
-            *_flags(e),
-            f"pageSize={int.from_bytes(e[0x38:0x3A], 'little')}",
-            f"blockSize={int.from_bytes(e[0x3F:0x41], 'big')}K",
-        ],
+        "flags": _flags(e),
+        "four_byte_modes": list(modes),
+        "via": {f"four_byte_modes:{m}": f"addr4bit=0x{addr4:02x}" for m in modes},
         "opcodes": _opcodes(addr4),
     }
 
@@ -247,6 +263,6 @@ def _opcodes(addr4: int) -> list[dict[str, object]]:
     ops.add("READ_1_1_1", "every read", assumed=True)
     ops.add("PP_1_1_1", "every write, in 256-byte pages", assumed=True)
     ops.add("SE", "every erase, at every 64 KiB", assumed=True)
-    for op in ADDR4[addr4]:
+    for op in ADDR4[addr4][1]:
         ops.add(op, f"4-byte addressing (addr4bit=0x{addr4:02x})")
     return ops.to_json()

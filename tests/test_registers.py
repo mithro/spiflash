@@ -154,6 +154,8 @@ def test_compared_values() -> None:
         "max_bad_blocks",
         "ecc.strength_bits",
         "ecc.step_bytes",
+        "otp.size",
+        "otp.regions",
     )
     # Every one is a value a record gives and a chip has.
     r = Record.from_json(rec().to_json())

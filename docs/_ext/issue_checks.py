@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from spiflash import database
 from spiflash.enums import IdFamily, Source
-from spiflash.model import COMPARED_VALUES, register_bits
+from spiflash.model import COMPARED_VALUES, register_bits, same_supply_part
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -32,6 +32,7 @@ class IssueKind(StrEnum):
 
     VALUE = "value"
     SAME_SOURCE = "same-source"
+    SUPPLY = "supply"
     SFDP = "sfdp"
     SHARED_BIT = "shared-bit"
     NAME_IDS = "name-ids"
@@ -55,7 +56,7 @@ _ISSUE_TITLES = {
             "Two sources give one chip id a different size, page size, sector size, "
             "supply voltage, quad enable bit or requirement, block-protection bit, "
             "SPI NAND spare area, planes, bad blocks or ECC requirement, number of "
-            "dies, or die select bit."
+            "dies, die select bit, or OTP area."
         ),
     ),
     IssueKind.SAME_SOURCE: (
@@ -63,6 +64,13 @@ _ISSUE_TITLES = {
         (
             "One source lists a chip id more than once, with different values, and "
             "nothing in the id (no extended id) tells the entries apart."
+        ),
+    ),
+    IssueKind.SUPPLY: (
+        "A programmer's supply outside the part's range",
+        (
+            "A programmer's table (Dediprog's or IMSProg's) says to power a part at "
+            "a voltage outside the supply range another source gives the same part."
         ),
     ),
     IssueKind.SFDP: (
@@ -114,6 +122,17 @@ _LUNS = (
     "plane in each of two LUNs."
 )
 
+_AT45 = (
+    'flashrom\'s comment on the entry: "2.5-3.6V & 2.7-3.6V models available"; it '
+    "gives the 2.7 V model's range, and Dediprog's 2.5 V is the other model's: no "
+    "source is wrong."
+)
+_MX25V = (
+    "flashrom's entry covers the {l} and the {v}, and gives the {l}'s 2.7 V to 3.6 V; "
+    'its comment gives "2.35-3.6V for {v}", which Dediprog\'s 2.5 V for the MX25V is '
+    "in: no source is wrong."
+)
+
 #: What is known of an issue, by its chip and value: why the sources
 #: disagree where that is not plain from their answers.
 EXPLAINED = {
@@ -136,6 +155,54 @@ EXPLAINED = {
     ("0b51", "oob_size"): (
         "The XT26Q01D datasheet gives 128 B of spare per page: Dediprog's 64 is wrong."
     ),
+    ("1f8901", "supply_mv"): (
+        "The AT25SF128A datasheet gives a supply of 2.7 V to 3.6 V: flashrom's 1.7 V to "
+        "2.0 V range is wrong, and Dediprog's 3.3 V right."
+    ),
+    ("010219", "supply_mv"): (
+        "The S25FL256S is a 2.7 V to 3.6 V part, as flashrom's S25FL256S......0 entry "
+        'says; its "S25FL256S Large Sectors" and "Small Sectors" entries give 1.7 V to '
+        "2.0 V, the S25FS256S's, so Dediprog's 3.3 V for the S25FL256S is outside a "
+        "wrong range."
+    ),
+    ("1f2400", "supply_mv"): _AT45,
+    ("1f2500", "supply_mv"): _AT45,
+    ("1f2600", "supply_mv"): _AT45,
+    ("c22010", "supply_mv"): _MX25V.format(l="MX25L512(E)", v="MX25V512(C)"),
+    ("c22014", "supply_mv"): _MX25V.format(l="MX25L8005", v="MX25V8005"),
+    ("c22015", "supply_mv"): (
+        "The MX25V16066 datasheet (v1.5) gives 2.3 V to 3.6 V: flashrom's 2.7 V to 3.6 V "
+        "for its MX25V16066 entry is wrong, and Dediprog's 2.5 V right."
+    ),
+    ("1f4502", "supply_mv"): (
+        "flashrom's comment on the AT25DF081 says its datasheet gives 1.65 V to 1.95 V: "
+        "Dediprog's 3.3 V is wrong for it."
+    ),
+    ("1c3813", "supply_mv"): (
+        "The EN25S40 is a 1.65 V to 1.95 V part (Eon's datasheet): Dediprog's 3.3 V is wrong."
+    ),
+    ("ef5014", "supply_mv"): (
+        "The W25Q80BW is a 1.65 V to 1.95 V part (Winbond's datasheet, Rev. L): Dediprog's "
+        "and IMSProg's 3.3 V are wrong."
+    ),
+    ("c22515", "otp.size"): (
+        "The MX25L1635E datasheet (v1.6) gives a 4K-bit (512-byte) secured OTP area: "
+        "flashprog's 64 B is wrong for it."
+    ),
+    ("ef6016", "otp.size"): (
+        'The W25Q32DW has four 256-byte security registers, register 0 "Reserved by '
+        "Winbond for future use\" (its datasheet, Rev. E): flashrom's 1024 B counts it, "
+        "Linux's 768 B (three regions) does not."
+    ),
+    ("c84018", "otp.size"): (
+        "Parts sharing the id: the GD25Q128B, C and E. The GD25Q128B's 768 B is flashrom's "
+        '"1024B total, 256B reserved"; whether 256 B are reserved is uncertain (its '
+        "datasheet is said to disagree with itself; not checked here)."
+    ),
+    ("c86318", "otp.size"): (
+        "flashrom gives the GD25LF128E 1024 B less 256 B reserved, flashprog three 1 KiB "
+        "regions; the datasheet was not to hand to say which is right."
+    ),
 }
 
 
@@ -143,7 +210,8 @@ EXPLAINED = {
 class Answer:
     """One answer to an issue's question, and the records giving it."""
 
-    #: A size in bytes, a :class:`~spiflash.Voltage`, a register bit, a quad
+    #: A size in bytes, a :class:`~spiflash.Voltage`, a supply setting in
+    #: millivolts, a register bit, a quad
     #: enable requirement, a manufacturer's name, a chip id as
     #: :attr:`spiflash.Flash.key` writes it, or for
     #: :attr:`IssueKind.SHARED_BIT` a role and its bit.
@@ -193,6 +261,7 @@ def find(db: Database | None = None) -> list[Issue]:
     return [
         *_values(db.flashes),
         *_same_source(db.flashes),
+        *_supply(db.flashes),
         *_sfdp(db.flashes),
         *_shared_bits(db.flashes),
         *_name_ids(db.flashes),
@@ -245,6 +314,41 @@ def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
                     yield Issue(
                         IssueKind.SAME_SOURCE, f.key, (f,), answers, attribute=attr, note=note
                     )
+
+
+def _supply(flashes: Iterable[Flash]) -> Iterator[Issue]:
+    """One issue per chip a programmer's table says to power outside the
+    supply range another source gives the same part
+    (:meth:`spiflash.Flash.supply_outside`): the answers are the ranges (a
+    :class:`~spiflash.Voltage`) of the parts concerned, then the settings
+    outside them (millivolts)."""
+    for f in flashes:
+        outside = f.supply_outside()
+        if not outside:
+            continue
+        ranges = [(r.voltage, r) for r in f.records if r.voltage is not None]
+        settings = [(mv, r) for mv, rs in outside.items() for r in rs]
+        answers = (*_answers(ranges), *_answers(settings))
+        computed = _other_parts(ranges, settings)
+        explained = EXPLAINED.get((f.key, "supply_mv"))
+        note = " ".join(n for n in (computed, explained) if n) or None
+        yield Issue(IssueKind.SUPPLY, f.key, (f,), answers, attribute="supply_mv", note=note)
+
+
+def _other_parts(
+    ranges: list[tuple[Any, Record]], settings: list[tuple[Any, Record]]
+) -> str | None:
+    """Where the supply settings outside the ranges are for other parts
+    than the ranges (Dediprog's 1.8 V for Puya's P25Q32L, against the
+    P25Q32H's 2.3 to 3.6 V, at one id): saying so."""
+    ranged = {n for _, r in ranges for n in r.part_names}
+    set_for = {n for _, r in settings for n in r.part_names}
+    if any(same_supply_part(a, b) for a in ranged for b in set_for):
+        return None
+    return (
+        f"Parts sharing the id: the ranges are given for {', '.join(sorted(ranged))}, "
+        f"the supplies outside them for {', '.join(sorted(set_for))}."
+    )
 
 
 def _sfdp(flashes: Iterable[Flash]) -> Iterator[Issue]:

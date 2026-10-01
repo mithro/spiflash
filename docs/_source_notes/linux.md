@@ -78,6 +78,22 @@ Winbond's W25Q01JV and W25Q02JV have `size / SZ_64M` dies (2 and 4, by
 their density) and no die erase; the kernel selects each with 0xc2
 ([DIE_SELECT](../opcodes/DIE_SELECT.md)) to poll it.
 
+An entry's `.otp = SNOR_OTP(len, n_regions, base, offset)` (core.h) is its
+OTP area, `n_regions` regions of `len` bytes ([](../derived.md#otp)), the
+whole macro its `via` (`base` and `offset`, where the regions are, have no
+field). Only Winbond's entries have one, and `winbond_nor_late_init()` reads,
+programs and erases it with the security-register commands
+(`winbond_nor_otp_ops`: [RSECR](../opcodes/RSECR.md),
+[PSECR](../opcodes/PSECR.md), [ESECR](../opcodes/ESECR.md)), which those
+records state. Its `set_4byte_addr_mode` functions (Micron's WREN then
+0xb7, micron-st.c:647; Winbond's 0xb7, then clearing the extended address
+register on the way out, winbond.c:491; the core's bank register for any
+other part, core.c:3037) are drivers' defaults for every part of a maker,
+or every part, not an entry's, so give no way into 4-byte mode; SFDP
+overrides them at run time. A comment naming a part's supply (`/* 3.3V */`, on
+the Winbond SPI NAND entries) stays a note: a nominal supply, not a
+programmer's setting, so not `supply_mv`.
+
 A SPI NAND entry's `NAND_MEMORG` gives its spare area per page (`oob_size`),
 planes, most bad blocks per die and dies (LUNs per target times targets),
 and `NAND_ECCREQ` its ECC requirement. Its oobsize is not always the

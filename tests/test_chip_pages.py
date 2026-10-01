@@ -118,6 +118,29 @@ def test_registers() -> None:
     assert "## Registers" not in nor_page("1f6601")
 
 
+def test_phase_6_sections() -> None:
+    text = nor_page("ef4019")  # W25Q256FV/JV
+    # The ways into 4-byte mode, each with its operations and sources.
+    four = text[text.index("## 4-byte addressing") : text.index("## Registers")]
+    assert "Address bytes" in four
+    assert "Way in: WREN then EN4B (0x06, 0xb7)" in four
+    assert "[`RDEAR`](../opcodes/RDEAR.md)" in four
+    assert "{sfsrc}`imsprog`" in four
+    # The OTP area under Registers.
+    regs = text[text.index("## Registers") : text.index("## Opcodes")]
+    assert "OTP area" in regs
+    # A Zetta part only Dediprog and IMSProg list: their supply setting.
+    zetta = nor_page("ba4013")
+    supply = zetta[zetta.index(":::{grid-item-card} Supply") :]
+    assert "power it at" in supply[: supply.index(":::\n")]
+    # The REMS id Dediprog says the W25Q40 answers.
+    assert "Also answers REMS" in nor_page("ef4013")
+    # A legacy chip lists the JEDEC chips whose sources give its id.
+    legacy = nor_page("res1:14")
+    assert "JEDEC chips whose sources give this id" in legacy
+    assert "M25P16" in legacy
+
+
 def test_a_spi_nand_page_has_its_geometry() -> None:
     text = page("efab21")  # the W25M02GV: two dies, Winbond's die select
     cards = text[text.index("{grid-item-card} Capacity") : text.index("## ")]

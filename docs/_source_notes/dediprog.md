@@ -89,7 +89,39 @@ Some classes of part are not what their attributes say:
   [byte program](../opcodes/BP.md).
 - SPI NAND sizes that count the spare area are scaled back to the data.
 
-The raw command words, the nominal `Voltage`, the `ProgramIOMethod` and the
+`Voltage` is the supply dpcmd powers the part at once it has found it
+(parse.c maps "3.3V", "2.5V" and "1.8V" to `VoltageInMv`; project.c,
+`GetFirstDetectionMatch`, sets `g_Vcc` from it), so it is the record's
+`supply_mv`: a setting of the programmer's, not a supply range, which is
+checked against the ranges other sources give the part
+([data issues](../issues/supply.md)). Nine parts are 1.2 V, which dpcmd
+would power at 3.3 V; the table's value is kept.
+
+`AlternativeID` is another id the part answers, compared with what dpcmd's
+probe read as `UniqueID` is; Dediprog does not say which command reads it,
+and its forms do: one byte is RES's (0xab) electronic signature (the
+M25P16's 0x14, as {sfsrc}`flashrom`'s M25P05 to M25P40-OLD res1 entries
+give), two bytes REMS's (0x90) maker and part (the W25Q40's 0xef12, the
+EN25QH128's 0x1c17, as their datasheets give). Those are the record's
+`legacy_ids` ([](../derived.md#legacy-ids)). Left out: a copy of the id (174
+entries, and a legacy-id entry's own tail), an empty `0x`, two templates
+noted on their records (Intel's S33 parts of 16, 32 and 64 Mbit all give
+0x15; ESMT's F25L parts of every density their maker's byte, 0x8c), Sanyo's
+one-byte values (its RES answers two bytes, as flashrom's res2 entries
+read it), ZB25VQ80B's three-byte 0x8E6014, and the wrong ones
+({py:data}`spiflash_extract.dediprog.ALTERNATIVE_WRONG`, each noted):
+XM25QH128A's and XM25QU128C's REMS ids (their datasheets give 20 17, not
+0x2016 and 0x2118), ZD25Q40's 0xef12 (Winbond's maker byte, not Zetta's),
+and the M25PX parts' one-byte values (0xab only releases them from deep
+power-down, with no signature: M25PX80 datasheet). The XM25QH128B's 0x2016,
+the 64 Mbit parts' REMS id, looks copied too: not checked.
+
+`UniqueID` is mostly the JEDEC id again (a copy, or with its 0x7f
+continuation codes). Its two-byte forms are REMS answers, Eon's (EN25P20's
+0x1c11, its datasheet's 90h answer; EN25T80, EN25B40, EN25S16), and are
+legacy ids too; a three-byte one that is another JEDEC id stays a flag.
+
+The raw command words, the `ProgramIOMethod` and the
 `Class` are kept in the record's `flags`, unless an operation or a value
 already names one as where it came from (`via`). `QEbitAddr` is the quad
 enable bit, a mask over the status registers (SR1 its low byte, then SR2):
