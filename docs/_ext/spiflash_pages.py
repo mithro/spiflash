@@ -407,9 +407,10 @@ def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
         if bfpt.quad_enable_description is not None:
             rows.append(["Quad enable", esc(bfpt.quad_enable_description)])
         if bfpt.four_byte_enter:
-            rows.append(
-                ["Enter 4-byte mode", esc(", ".join(sorted(map(str, bfpt.four_byte_enter))))]
-            )
+            ways = ", ".join(sorted(map(str, bfpt.four_byte_enter)))
+            if not s.four_byte_mode:
+                ways += " (not read: the part has no 4-byte mode)"
+            rows.append(["Enter 4-byte mode", esc(ways)])
         if bfpt.soft_reset:
             rows.append(["Soft reset", esc("; ".join(bfpt.soft_reset))])
     if s.warnings:

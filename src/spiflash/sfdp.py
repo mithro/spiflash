@@ -848,8 +848,12 @@ class Sfdp:
         for t in self.tables:
             h = t.header
             note = " (truncated)" if t.truncated else ""
-            where = "" if h.synthetic else f" at 0x{h.pointer:x}"
-            lines.append(f"    {h.name} {h.revision}, {h.length} dwords{where}{note}")
+            if h.synthetic:
+                lines.append(f"    {h.name}, {h.length} dwords{note}")
+            else:
+                lines.append(
+                    f"    {h.name} {h.revision}, {h.length} dwords at 0x{h.pointer:x}{note}"
+                )
         bfpt = self.bfpt
         if bfpt is None:
             lines.append("no BFPT")
@@ -889,13 +893,18 @@ class Sfdp:
                 lines.append(f"    quad enable: {bfpt.quad_enable_description}")
             if bfpt.qpi_enable:
                 lines.append(f"    enter 4-4-4: {'; '.join(bfpt.qpi_enable)}")
+            unused = "" if self.four_byte_mode else " (not read: the part has no 4-byte mode)"
             if bfpt.four_byte_enter:
                 lines.append(
-                    "    enter 4-byte mode: " + ", ".join(sorted(map(str, bfpt.four_byte_enter)))
+                    "    enter 4-byte mode: "
+                    + ", ".join(sorted(map(str, bfpt.four_byte_enter)))
+                    + unused
                 )
             if bfpt.four_byte_exit:
                 lines.append(
-                    "    exit 4-byte mode: " + ", ".join(sorted(map(str, bfpt.four_byte_exit)))
+                    "    exit 4-byte mode: "
+                    + ", ".join(sorted(map(str, bfpt.four_byte_exit)))
+                    + unused
                 )
             if bfpt.soft_reset:
                 lines.append(f"    soft reset: {'; '.join(bfpt.soft_reset)}")
