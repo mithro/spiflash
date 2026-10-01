@@ -21,3 +21,11 @@ erase opcode with its block layout, the supply voltage, the test status
 (`FEATURE_*`), and the legacy ids. Its names use `.` as a wildcard
 (`W25Q128.V` is the BV, FV and JV), so such a name is a family rather than a
 part.
+
+A comment on an entry saying it "supports SFDP" gives it the `sfdp`
+capability and the [RDSFDP](../opcodes/RDSFDP.md) operation, whose `via`
+then holds the comment. A comment qualified to one model of a multi-part
+entry ("the latter supports SFDP", "F model supports SFDP", "MX25L1006E
+supports SFDP") is kept as a note and claims nothing: the database has no
+per-model claim within an entry yet, so that model's SFDP is a known loss
+(six entries, in {sfsrc}`flashprog` too).
