@@ -198,6 +198,9 @@ class _Part:
     #: Its times: a record's own (stated, or from its SFDP tables), or each
     #: (key, bound) as a chip's sources agree on it.
     timings: Timings = field(default_factory=Timings)
+    #: The ways out of 4-byte mode the part's own SFDP tables list (BFPT
+    #: DW16[21:14]), where some have a DW16; ``None`` where none do.
+    own_exits: frozenset[FourByteMethod] | None = None
 
     def time(self, event: TimedEvent, bound: Bound, opcode: int | None = None) -> int | None:
         return self.timings.get(event, bound, opcode)
@@ -219,6 +222,16 @@ def _uniform(erasers: Iterable[Eraser], size: int | None) -> list[tuple[int, int
     return out
 
 
+def _own_exits(dumps: Iterable[Sfdp]) -> frozenset[FourByteMethod] | None:
+    """The ways out of 4-byte mode SFDP tables list, those with a DW16
+    (JESD216A on); ``None`` where none has one."""
+    found: frozenset[FourByteMethod] | None = None
+    for s in dumps:
+        if s.bfpt is not None and len(s.bfpt.dwords) >= 16:
+            found = (found or frozenset()) | s.bfpt.four_byte_exit
+    return found
+
+
 def _from_record(r: Record) -> _Part:
     ops: dict[str, int | None] = {}
     for u in r.opcodes:
@@ -236,6 +249,7 @@ def _from_record(r: Record) -> _Part:
         r.quad_enable,
         r.four_byte_modes,
         r.timings,
+        _own_exits([r.parsed_sfdp] if r.parsed_sfdp is not None else []),
     )
 
 
@@ -276,6 +290,7 @@ def _from_flash(f: Flash) -> _Part:
                 if (ns := f.timing(key.event, bound, key.opcode)) is not None
             }
         ),
+        _own_exits(d.sfdp for d in f.sfdp_dumps),
     )
 
 
@@ -548,25 +563,35 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
         out.unknown.append(
             ("DW15", "the QPI enable and disable sequences", "written from the operations")
         )
-    # DW16[31:24], the ways in, are the part's own (an extended or bank
-    # address register is left at 0 the same way, so is a way out too);
-    # DW16[18:14], the ways out, are written from EX4B, with a write enable
-    # where the way in has one.
+    # DW16[31:24], the ways in, are the part's own. DW16[18:14], the ways
+    # out, the database does not hold: they are written from EX4B (with a
+    # write enable where the way in has one), and as clearing each register
+    # the part is put in 4-byte mode by, as Linux takes a way in only beside
+    # its way out (spi_nor_parse_bfpt's SFDP_MASK_CHECK on the
+    # BFPT_DWORD16_4B_ADDR_MODE_* pairs), so a register way in alone would
+    # be lost on it. None the part's own tables deny is written: the
+    # MT35XU01G's leave by EX4B and resets, not by clearing its register.
     modes = part.four_byte_modes
     modes_in = sum(1 << bit for bit, m in _ENTER_BITS.items() if m in modes)
-    modes_out = sum(1 << (bit - 10) for bit, m in _ENTER_BITS.items() if m in _REGISTERS & modes)
+    exits = set(_REGISTERS & modes)
     if "EX4B" in ops:
-        modes_out |= 1 << (15 if FourByteMethod.WREN_EN4B in modes else 14)
+        exits.add(
+            FourByteMethod.WREN_EN4B if FourByteMethod.WREN_EN4B in modes else FourByteMethod.EN4B
+        )
+    denied = set() if part.own_exits is None else exits - part.own_exits
+    exits -= denied
+    modes_out = sum(1 << (bit - 10) for bit, m in _ENTER_BITS.items() if m in exits)
     if any(op.endswith("_4B") for op in ops):
         modes_in |= 1 << 29
     if modes:
         out.lost.append(("DW16", f"the ways into 4-byte mode, {', '.join(sorted(modes))}"))
     if FourByteMethod.EAR_BIT7 in modes:
         out.blocked.append(("DW16", "setting bit 7 of the extended address register"))
-    if modes_out:
-        out.unknown.append(
-            ("DW16", "how to exit 4-byte address mode", "written from the ways in and EX4B")
-        )
+    if exits:
+        how = f"written as {', '.join(sorted(exits))}, from EX4B and the registers it is entered by"
+        if denied:
+            how += f" (not {', '.join(sorted(denied))}, which its own SFDP tables do not list)"
+        out.unknown.append(("DW16", "how to exit 4-byte address mode", how))
     out.unknown.append(("DW16", "soft reset", "written as none"))
     out.unknown.append(("DW16", "the status register 1 write enable", "written as none"))
     if not assume:

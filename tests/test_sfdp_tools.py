@@ -4,15 +4,17 @@
 from __future__ import annotations
 
 import functools
+from collections import Counter
 from typing import Any
 
 import pytest
 
 import spiflash
 from spiflash import derive, sfdp_tools
-from spiflash.enums import Feature, FourByteMethod
+from spiflash.enums import Bound, Feature, FourByteMethod, TimedEvent
 from spiflash.model import Flash, Record
 from spiflash.opcodes import OPERATIONS
+from spiflash.registers import QE_NONE, QuadEnableRequirement
 from spiflash.sfdp import AddressBytes, Sfdp, from_tables, parse
 from spiflash.sfdp_tools import ENCODE_LOSSES, EncodedSfdp, diff, encode, to_entry
 from test_db import rec
@@ -367,6 +369,94 @@ def test_encode_round_trips_each_field() -> None:
                     assert o.dummy_clocks == known, (f.key, o.name)
 
 
+def test_encode_with_assume_never_contradicts_the_database() -> None:
+    # Every chip, assuming what the database does not hold: what the tables
+    # say, read back, never denies what the database says of the chip.
+    checked = Counter[str]()
+    for f, out in encoded(assume=True):
+        s = out.sfdp
+        bfpt = s.bfpt
+        assert bfpt is not None
+        later = out.revision == (1, 6)
+        facts = s.facts()
+        # QE: the requirement where the database gives it; "no QE bit" (0)
+        # only where it says so.
+        if later and f.quad_enable_requirement is not None:
+            assert bfpt.quad_enable == f.quad_enable_requirement.code, f.key
+            checked["qe requirement"] += 1
+        if bfpt.quad_enable == 0:
+            qer = f.quad_enable_requirement
+            assert qer is QuadEnableRequirement.NONE or (
+                qer is None and f.quad_enable == QE_NONE
+            ), f.key
+        # The ways into 4-byte mode are the database's (but flashrom's EAR
+        # bit 7, which DW16 has no bit for); the ways out are none the
+        # chip's own tables deny.
+        if later:
+            assert facts.four_byte_modes <= f.four_byte_modes, f.key
+            assert f.four_byte_modes - facts.four_byte_modes <= {
+                FourByteMethod.EAR_BIT7,
+                FourByteMethod.OPCODES_4B,
+            }, f.key
+            for d in f.sfdp_dumps:
+                own = d.sfdp.bfpt
+                if own is not None and len(own.dwords) >= 16:
+                    assert bfpt.four_byte_exit <= own.four_byte_exit, (f.key, d.source)
+                    checked["4-byte exits"] += 1
+        # Erasers: the database's, and its 4 KiB erase where it has one.
+        uniform = {(e.opcode, b.size) for r in f.records for e in r.erasers for b in e.blocks}
+        assert {(e.opcode, e.size) for e in s.erase_types} <= uniform, f.key
+        if Feature.ERASE_4K in f.features:
+            assert any(e.size == 4096 for e in s.erase_types), f.key
+            checked["erase_4k"] += 1
+        # Times: the database's typical time, its maximum or one above it;
+        # never a time where it gives one of another bound only.
+        for key in facts.timings.keys:
+            given = {b: f.timing(key.event, b, key.opcode) for b in Bound}
+            if not any(given.values()):
+                continue
+            checked["times"] += 1
+            for bound in (Bound.TYPICAL, Bound.MAXIMUM):
+                ns = facts.timings.get(key.event, bound, key.opcode)
+                known = given[bound]
+                assert ns is None or known is not None, (f.key, str(key), bound)
+                if ns is not None and known is not None and bound is Bound.TYPICAL:
+                    assert ns == known, (f.key, str(key))
+                if ns is not None and known is not None and bound is Bound.MAXIMUM:
+                    assert ns >= known, (f.key, str(key))
+        # The page size, where the tables give one.
+        if s.page_size is not None and f.page_size is not None:
+            assert s.page_size == f.page_size, f.key
+            checked["page size"] += 1
+        # Deep power-down, suspend: never "not supported" where it is known.
+        if later and "DP" in f.opcodes:
+            assert bfpt.enter_deep_power_down == 0xB9, f.key
+            checked["dpd"] += 1
+        suspends = any(k.event is TimedEvent.ERASE_SUSPEND for k, _ in f.timings)
+        if later and suspends:
+            assert bfpt.suspend_resume is True, f.key
+            checked["suspend"] += 1
+        # QPI and quad read: a read of each where the database says so.
+        if Feature.QPI in f.features:
+            assert "4-4-4" in s.reads, f.key
+            checked["qpi"] += 1
+        if Feature.QUAD_READ in f.features:
+            assert {"1-1-4", "1-4-4"} & set(s.reads), f.key
+            checked["quad_read"] += 1
+    # Each check checked something.
+    assert set(checked) == {
+        "qe requirement",
+        "4-byte exits",
+        "erase_4k",
+        "times",
+        "page size",
+        "dpd",
+        "suspend",
+        "qpi",
+        "quad_read",
+    }, checked
+
+
 def test_entry_to_sfdp_to_entry_gives_back_what_encode_wrote() -> None:
     for f, out in encoded(assume=True):
         back = Record.from_json(to_entry(out.sfdp) | IDENTITY)
@@ -583,6 +673,13 @@ def test_encode_writes_the_ways_into_4_byte_mode() -> None:
     ear7 = encode(rec(size=32 << 20, four_byte_modes=["ear_bit7", "brwr"]), assume=True)
     assert any("bit 7" in m for m in ear7.missing)
     assert ear7.sfdp.facts().four_byte_modes == {FourByteMethod.BRWR}
+    # A register's way out is assumed (Linux takes a way in only beside its
+    # way out), but none the part's own tables deny: the MT35XU01G's leave
+    # by EX4B and resets, not by clearing its registers.
+    out = encode(chip("2c5b1b"), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.four_byte_exit == {FourByteMethod.WREN_EN4B}
+    assert any("(not nv_cr, wrear, which its own SFDP tables" in a for a in out.assumed)
 
 
 def test_sfdp_facts_give_the_ways_in_not_their_operations() -> None:
