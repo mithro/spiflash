@@ -51,9 +51,16 @@ def test_no_erase_operation_an_eraser_gives() -> None:
 
 
 def test_no_operation_the_record_derives() -> None:
+    # As make() decides it: a stored use is a derived one when its operation
+    # is, and it gives no dummy clocks of its own or the same ones.
     def stored(r: dict[str, Any]) -> set[str]:
-        derived = {u.op for u in derive.opcodes(Record.from_json(r))}
-        return derived & {o["op"] for o in r["opcodes"]}
+        derived = derive.opcodes(Record.from_json(r))
+        return {
+            o["op"]
+            for o in r["opcodes"]
+            for u in derived
+            if o["op"] == u.op and o.get("dummy_clocks") in (None, u.dummy_clocks)
+        }
 
     assert not [(_where(r), stored(r)) for r in RECORDS if stored(r)]
 
