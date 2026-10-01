@@ -338,6 +338,12 @@ EDIT_COST = 4
 TAIL_COST = 1
 
 
+def _spelling(name: str) -> str:
+    """A part name without its hyphens, underscores and spaces, which
+    sources write differently (``CS11G1-T0A0AA``, ``CS11G1T0A0AA``)."""
+    return re.sub(r"[-_ ]", "", name)
+
+
 def squash_name(name: str, *, wildcards: bool = False) -> str:
     """A part name as :func:`name_distance` compares it: upper case, letters
     and digits only (``"W25Q16JV-IM"`` is ``W25Q16JVIM``); with
@@ -504,27 +510,33 @@ class Flash:
         gives (not a rebrand's, like Spansion's S25FL016K on a Winbond id);
         then the one the most sources give, the higher-priority sources, the
         most records (as :func:`_consensus` ranks values), and the one
-        listed first."""
+        listed first. Names that differ only in hyphens, underscores and
+        spaces (``CS11G1-T0A0AA``, ``CS11G1T0A0AA``) vote together, and the
+        spelling shown is the higher-priority source's."""
         sources: dict[str, set[int]] = {}
+        votes: dict[str, set[int]] = {}
         records: Counter[str] = Counter()
         first: dict[str, int] = {}
         own: set[str] = set()
         for i, r in enumerate(self.records):
             for n in r.part_names:
                 sources.setdefault(n, set()).add(r.source.priority)
-                records[n] += 1
+                votes.setdefault(_spelling(n), set()).add(r.source.priority)
+                records[_spelling(n)] += 1
                 first.setdefault(n, i)
                 if r.manufacturer == self.manufacturer:
-                    own.add(n)
+                    own.add(_spelling(n))
         made_up = f"-{self.id_hex.upper()}"
 
-        def rank(n: str) -> tuple[bool, bool, int, list[int], int, int]:
+        def rank(n: str) -> tuple[bool, bool, int, list[int], int, list[int], int]:
+            part = _spelling(n)
             return (
                 "." in n or n.endswith(made_up),
-                n not in own,
-                -len(sources[n]),
+                part not in own,
+                -len(votes[part]),
+                sorted(votes[part]),
+                -records[part],
                 sorted(sources[n]),
-                -records[n],
                 first[n],
             )
 

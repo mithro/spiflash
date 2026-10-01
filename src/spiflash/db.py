@@ -211,7 +211,10 @@ def infer_manufacturer(flash: Flash, chips: Iterable[Flash]) -> str | None:
     (Rockchip's sfc.h makes ESMT's F50L2G41KA, answering 0xc8, GigaDevice's).
     Each chip counts with the maker its sources agree on, not each record's,
     so one source's slip (Dediprog's FM25Q64 made by Fidelix, on Fudan's
-    0xa1) does not stop the inference."""
+    0xa1) does not stop the inference; and only with the names records
+    naming that maker give, so another maker's part a source names no maker
+    for, sharing the id, does not either (MediaTek's ESMT F50L1G41A on
+    GigaDevice's GD5F1GQ5REXXH's ``c8 21``)."""
     prefixes = {n[:3] for n in flash.names}
     found = {
         g.manufacturer
@@ -219,7 +222,12 @@ def infer_manufacturer(flash: Flash, chips: Iterable[Flash]) -> str | None:
         if g.manufacturer
         and (g.type, g.key) != (flash.type, flash.key)  # other chips
         and (g.bank, g.id[0]) == (flash.bank, flash.id[0])
-        and any(n[:3] in prefixes for n in g.names)
+        and any(
+            n[:3] in prefixes
+            for r in g.records
+            if r.manufacturer == g.manufacturer
+            for n in r.part_names
+        )
     }
     return found.pop() if len(found) == 1 else None
 

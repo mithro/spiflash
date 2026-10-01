@@ -27,16 +27,22 @@ class Source(StrEnum):
        boards boot from, per part and with SPI NAND geometry; but a small
        table of the parts its own boards use, not reviewed in the open,
        with entries the driver never reaches (a second entry for an id).
-    5. OpenOCD and openFPGALoader: their tables are the smallest and the
+    5. MediaTek: like Rockchip, a chip vendor's production driver, whose
+       SPI NAND geometry (spare area, planes, dies) its boards boot from,
+       per part; but SPI NAND only, not reviewed in the open, with entries
+       its own others contradict (one part under two ids) and id-method
+       labels that decide nothing (the driver tries every entry with a
+       dummy byte and without).
+    6. OpenOCD and openFPGALoader: their tables are the smallest and the
        least specific.
-    6. IMSProg: a programmer's table of parts it reads, but every SPI NOR
+    7. IMSProg: a programmer's table of parts it reads, but every SPI NOR
        entry has the same page and block size, and its format (and some of
        its values) came from the closed databases of commercial programmers
        (EZP2019 to EZP2023, Minipro, XP866+), which cannot be checked.
-    7. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
+    8. QEMU: its table is a 2012 copy of Linux's, kept for the parts its
        boards emulate, though its SFDP dumps are the only complete ones any
        upstream has.
-    8. Zephyr: it has no table of parts, only boards describing the chip
+    9. Zephyr: it has no table of parts, only boards describing the chip
        each carries, whose values are written (and copied between boards)
        by each board's porter."""
 
@@ -46,6 +52,7 @@ class Source(StrEnum):
     UBOOT = "u-boot"
     DEDIPROG = "dediprog"
     ROCKCHIP = "rockchip"
+    MEDIATEK = "mediatek"
     OPENOCD = "openocd"
     OPENFPGALOADER = "openfpgaloader"
     IMSPROG = "imsprog"
@@ -72,6 +79,7 @@ _SOURCE_LABELS = {
     Source.UBOOT: "U-Boot",
     Source.DEDIPROG: "Dediprog",
     Source.ROCKCHIP: "Rockchip",
+    Source.MEDIATEK: "MediaTek",
     Source.OPENOCD: "OpenOCD",
     Source.OPENFPGALOADER: "openFPGALoader",
     Source.IMSPROG: "IMSProg",

@@ -17,6 +17,7 @@ from spiflash_extract import (
     flashrom,
     imsprog,
     linux,
+    mediatek,
     openfpgaloader,
     openocd,
     qemu,
@@ -1492,3 +1493,126 @@ def test_dediprog_refuses_what_it_cannot_read(tmp_path: Path) -> None:
         dediprog.extract(dediprog_tree(tmp_path, '<Chip TypeName="a/>\n'))
     with pytest.raises(ValueError, match="no <Chip> entries"):
         dediprog.extract(dediprog_tree(tmp_path, "<x/>\n"))
+
+
+MEDIATEK = FIXTURES / "mediatek"
+
+MEDIATEK_IDS = (MEDIATEK / mediatek.IDS).read_text()
+
+
+def mediatek_tree(tmp_path: Path, ids: str) -> Path:
+    return write(
+        tmp_path, {mediatek.IDS: ids, mediatek.DEF_H: (MEDIATEK / mediatek.DEF_H).read_text()}
+    )
+
+
+def test_mediatek() -> None:
+    recs = mediatek.extract(MEDIATEK)
+    # Thirteen entries, two of them known to be wrong.
+    assert len(recs) == 11
+    r = by_name(recs)
+    w = r["W25N01GV"]
+    assert (w["file"], w["line"], w["type"], w["vendor"]) == (mediatek.IDS, 56, "nand", None)
+    assert (w["id"], w["id_method"]) == ("efaa21", "rdid_opcode_dummy")
+    assert (w["size"], w["page_size"], w["sector_size"]) == (128 << 20, 2048, 128 << 10)
+    assert w["features"] == ["dual_read", "quad_pp", "quad_read"]
+    assert w["flags"] == [
+        "cap_pl=snand_cap_program_load_x4",
+        "cap_rd=snand_cap_read_from_cache_quad",
+        "ndies=1",
+        "planes_per_die=1",
+        "program_load=1_1_1,1_1_4",
+        "read_from_cache=1_1_1,1_1_2,1_2_2,1_1_4,1_4_4",
+        "sparesize=64",
+    ]
+    assert w["notes"] == ["64 B OOB per page; 1 plane(s), 1 die(s) of 1024 blocks"]
+    assert w["opcodes"] == []
+    # The size is the main area of every die; the spare area is not in it.
+    m = r["W25M02GV"]
+    assert m["size"] == 256 << 20
+    assert {"ndies=2", "select_die=mtk_snand_winbond_select_die"} <= set(m["flags"])
+    # Planes are not counted again: a two-plane part's blocks are all its
+    # blocks.
+    t = r["MT29F2G01AAAED"]
+    assert (t["size"], t["sector_size"]) == (256 << 20, 128 << 10)
+    assert "planes_per_die=2" in t["flags"]
+    # Read from cache on one, two or four lines; program load on one only.
+    assert t["features"] == ["dual_read", "quad_read"]
+    assert "program_load=1_1_1" in t["flags"]
+    d = r["MT29F4G01ADAGD"]
+    assert d["size"] == 512 << 20
+    assert "select_die=mtk_snand_micron_select_die" in d["flags"]
+    # The id method is the one the entry names.
+    g = r["GD5F1GQ4UAWXX"]
+    assert (g["id"], g["id_method"]) == ("c810", "rdid_opcode_addr")
+    # A memory organisation written out: 128 pages per block.
+    a = r["EM73C044SNA"]
+    assert (a["size"], a["sector_size"]) == (128 << 20, 256 << 10)
+    # The driver takes the first entry an id matches.
+    assert r["IS37SML01G1"]["notes"][0] == (
+        "never used: the driver matches the entry on line 85 first"
+    )
+    assert len(r["F50L1G41A"]["notes"]) == 1
+    # Known wrong entries are left out: the second EM73D044SND, under the
+    # EM73C044SND's id, and the EM73E044SNE at 8 Gbit.
+    (snd,) = [x for x in recs if x["name"] == "EM73D044SND"]
+    assert snd["id"] == "d51e"
+    assert "EM73E044SNE" not in r
+
+
+def test_mediatek_skipped() -> None:
+    assert mediatek.skipped(MEDIATEK) == {
+        "wrong id: the table gives the part again, with another id": 1,
+        "size contradicts its part number's density": 1,
+    }
+    assert set(mediatek.WRONG) == {
+        ("EM73D044SND", "d51d", None),
+        ("EM73E044SNE", "d50e", 1 << 30),
+    }
+
+
+def test_mediatek_stale_keys_raise(tmp_path: Path) -> None:
+    # The EM73E044SNE at 2 Gbit: not the known error any more, so its key,
+    # matching nothing, raises, in extract and in skipped.
+    fixed = mediatek_tree(
+        tmp_path,
+        MEDIATEK_IDS.replace(
+            "0xd5, 0x0e),\n\t\t   SNAND_MEMORG_8G_4K_256",
+            "0xd5, 0x0e),\n\t\t   SNAND_MEMORG_2G_2K_64",
+        ),
+    )
+    with pytest.raises(ValueError, match=r"no entry is \[\('EM73E044SNE'.*remove it from WRONG"):
+        mediatek.extract(fixed)
+    with pytest.raises(ValueError, match="EM73E044SNE"):
+        mediatek.skipped(fixed)
+    wrong = {k: v for k, v in mediatek.WRONG.items() if k[0] != "EM73E044SNE"}
+    assert by_name(mediatek.extract(fixed, wrong))["EM73E044SNE"]["size"] == 256 << 20
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "error"),
+    [
+        ("SNAND_ID_ADDR, 0xc8, 0x10", "SNAND_ID_DIRECT, 0xc8, 0x10", "cannot read the id"),
+        ("SNAND_MEMORG(2048, 64, 128, 512, 1, 1)", "SNAND_MEMORG(2048, 64, 128)", "organisation"),
+        ("2048, 128, 64, 2048, 2, 2)", "2048, 128, 64, 2048, 4, 2)", "4 planes"),
+        ("mtk_snand_micron_select_die),", "mtk_snand_other_select_die),", "die select"),
+        ("&snand_cap_program_load_x1)", "&snand_cap_program_load_x2)", "unknown I/O"),
+        (
+            "SPI_IO_1_1_1 | SPI_IO_1_1_4,\n\tSNAND_OP(SNAND_IO_1_1_1, SNAND_CMD_PROGRAM",
+            "SPI_IO_1_1_4,\n\tSNAND_OP(SNAND_IO_1_1_1, SNAND_CMD_PROGRAM",
+            "allows",
+        ),
+        ("SNAND_OP(SNAND_IO_1_1_1, SNAND_CMD_PROGRAM_LOAD, 0));", "OP(1, 2, 0));", "cannot read"),
+        ("&snand_cap_program_load_x1),", "&snand_cap_program_load_x1, 0, 0),", "7 arguments"),
+    ],
+)
+def test_mediatek_refuses(tmp_path: Path, old: str, new: str, error: str) -> None:
+    assert MEDIATEK_IDS.count(old) == 1
+    tree = mediatek_tree(tmp_path, MEDIATEK_IDS.replace(old, new))
+    with pytest.raises(ValueError, match=rf"mtk-snand-ids\.c:\d+: .*{error}"):
+        mediatek.extract(tree, {})
+
+
+def test_mediatek_no_table(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="no SNAND_INFO entries"):
+        mediatek.extract(mediatek_tree(tmp_path, "static const int x;\n"), {})

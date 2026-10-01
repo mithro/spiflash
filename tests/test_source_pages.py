@@ -57,6 +57,14 @@ def test_linux_page() -> None:
     assert "  - V min" not in page
 
 
+def test_mediatek_id_methods_are_labels() -> None:
+    # MediaTek's driver tries every entry with the dummy byte and without,
+    # so its id methods are the table's labels, and its page says so.
+    pages = _pages()
+    assert "the driver tries every entry with the dummy byte and without" in pages["mediatek.md"]
+    assert "the driver tries every entry" not in pages["linux.md"]
+
+
 def test_imsprog_page_names_entries_not_lines() -> None:
     db = spiflash.database()
     page = _pages()["imsprog.md"]

@@ -30,6 +30,7 @@ from spiflash_extract import (
     flashrom,
     imsprog,
     linux,
+    mediatek,
     openfpgaloader,
     openocd,
     qemu,
@@ -58,6 +59,7 @@ EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
     "u-boot": uboot.extract,
     "dediprog": dediprog.extract,
     "rockchip": rockchip.extract,
+    "mediatek": mediatek.extract,
     "openocd": openocd.extract,
     "openfpgaloader": openfpgaloader.extract,
     "imsprog": imsprog.extract,
@@ -68,6 +70,7 @@ EXTRACTORS: dict[str, Callable[[Path], list[Record]]] = {
 #: For an extractor that leaves known kinds of entry out: how many, by reason.
 SKIPPED: dict[str, Callable[[Path], Counter[str]]] = {
     "dediprog": dediprog.skipped,
+    "mediatek": mediatek.skipped,
     "imsprog": imsprog.skipped,
 }
 

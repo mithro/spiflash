@@ -69,6 +69,7 @@ def test_every_source_is_present() -> None:
         "u-boot",
         "dediprog",
         "rockchip",
+        "mediatek",
         "flashrom",
         "flashprog",
         "openocd",
@@ -169,6 +170,27 @@ def test_names_rank_by_sources() -> None:
     # Three sources (Dediprog, Linux, QEMU) call Intel's 25F160S33B8 160S33B.
     (s33,) = spiflash.lookup("898911")
     assert s33.names == ("160S33B", "25F160S33B8")
+
+
+def test_names_spelled_apart_vote_together() -> None:
+    # Dediprog lists CS11G0-, CS11G1- and CS11G2-T0A0AA at 6b 01; MediaTek's
+    # CS11G1T0A0AA is the same name without the hyphen, so it votes for
+    # the CS11G1, shown as Dediprog, the higher-priority source, writes it.
+    (cs11g,) = spiflash.lookup("6b01", flash_type="nand")
+    assert cs11g.name == "CS11G1-T0A0AA"
+    assert cs11g.size == 256 << 20
+    assert "CS11G1T0A0AA" in cs11g.names
+    db = Database(
+        [
+            rec(source="dediprog", name="A-1"),
+            rec(source="dediprog", name="B-1"),
+            rec(source="mediatek", name="B_1"),
+        ]
+    )
+    assert db.flashes[0].names == ("B-1", "B_1", "A-1")
+    # Other spellings do not: a slash or a dot is not a separator.
+    db = Database([rec(source="dediprog", name="A-1"), rec(source="mediatek", name="A/1")])
+    assert db.flashes[0].name == "A-1"
 
 
 def test_bank_is_the_most_sources_then_the_higher() -> None:
@@ -280,12 +302,12 @@ def test_by_manufacturer_uses_any_spelling() -> None:
 def test_every_jedec_flash_has_a_name_and_manufacturer() -> None:
     for f in spiflash.flashes():
         assert f.names, f.id_hex
-        # Zephyr's devicetree often names no maker and Rockchip's tables
-        # never do; where no other source's part confirms the id's byte
+        # Zephyr's devicetree often names no maker and Rockchip's and
+        # MediaTek's tables never do; where no other source's part confirms the id's byte
         # (infer_manufacturer), these chips have none.
         assert bool(f.manufacturer) is (f.key not in NO_MANUFACTURER), f.key
         if f.manufacturer_inferred:
-            assert set(f.sources) <= {Source.ROCKCHIP, Source.ZEPHYR}, f.key
+            assert set(f.sources) <= {Source.ROCKCHIP, Source.MEDIATEK, Source.ZEPHYR}, f.key
 
 
 # Rockchip's clones and makers no other source lists, and a Zephyr board's
@@ -318,6 +340,22 @@ def test_manufacturer_inferred_from_id_and_part_name() -> None:
     assert all(r.vendor is None for r in f.records)  # the records stay as read
     (w,) = spiflash.lookup("ef4018")
     assert not w.manufacturer_inferred
+    # MediaTek's ESMT F50L1G41A shares GigaDevice's c8 21, and names no
+    # maker: it does not make an F50 part GigaDevice's, so MediaTek's
+    # F50L2G41LB and F50L512M41A are ESMT's, as Linux's F50 parts are.
+    for chip_id in ("c80a", "c820"):
+        (esmt,) = spiflash.lookup(chip_id, flash_type="nand")
+        assert (esmt.manufacturer, esmt.manufacturer_inferred) == ("ESMT", True), chip_id
+    db = Database(
+        [
+            rec_at("c821", "GD5F1GQ5REXXH", vendor="GigaDevice"),
+            rec_at("c821", "F50L1G41A", source="mediatek"),
+            rec_at("c8017f7f7f", "F50L1G41LB", vendor="ESMT"),
+            rec_at("c80a", "F50L2G41LB", source="mediatek"),
+        ]
+    )
+    (f50,) = db.lookup("c80a", flash_type="nand")
+    assert f50.manufacturer == "ESMT"
 
 
 def rec_at(chip_id: str, name: str, *, vendor: str | None = None, source: str = "linux") -> Record:
@@ -641,6 +679,9 @@ def test_sources_are_in_priority_order() -> None:
     # Dediprog's own table: after the reviewed ones, before the smallest.
     assert Source.UBOOT.priority < Source.DEDIPROG.priority < Source.OPENOCD.priority
     assert Source.DEDIPROG.label == "Dediprog"
+    # MediaTek's production driver: after Rockchip's, before the smallest.
+    assert Source.ROCKCHIP.priority < Source.MEDIATEK.priority < Source.OPENOCD.priority
+    assert Source.MEDIATEK.label == "MediaTek"
     # IMSProg below the curated tables: its format and some values came from
     # closed programmer databases.
     assert Source.OPENFPGALOADER.priority < Source.IMSPROG.priority < Source.QEMU.priority

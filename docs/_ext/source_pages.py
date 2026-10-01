@@ -63,6 +63,10 @@ SUMMARY = {
         "The rkflash driver of Rockchip's U-Boot: the SPI NOR and SPI NAND its boards "
         "boot from, with each SPI NAND part's geometry and ECC."
     ),
+    Source.MEDIATEK: (
+        "The SPI NAND driver of MediaTek's OpenWrt U-Boot: the parts its routers boot "
+        "from, with each one's page, spare area, planes and dies."
+    ),
     Source.OPENOCD: (
         "The on-chip debugger's table of SPI flash for its flash drivers, with "
         "opcodes per part, and its copy of JEDEC's JEP106 list."
@@ -92,6 +96,7 @@ PARSERS = {
     Source.UBOOT: ("tools/spiflash_extract/uboot.py",),
     Source.DEDIPROG: ("tools/spiflash_extract/dediprog.py",),
     Source.ROCKCHIP: ("tools/spiflash_extract/rockchip.py",),
+    Source.MEDIATEK: ("tools/spiflash_extract/mediatek.py",),
     Source.OPENOCD: ("tools/spiflash_extract/openocd.py",),
     Source.OPENFPGALOADER: ("tools/spiflash_extract/openfpgaloader.py",),
     Source.IMSPROG: ("tools/spiflash_extract/imsprog.py",),
@@ -100,6 +105,13 @@ PARSERS = {
         "tools/spiflash_extract/zephyr.py",
         "tools/spiflash_extract/dts.py",
         "tools/spiflash_extract/sfdp.py",
+    ),
+}
+
+#: Where a source's id methods are its table's labels, not how it reads.
+ID_METHOD_CAVEATS = {
+    Source.MEDIATEK: (
+        "as each entry labels it: the driver tries every entry with the dummy byte and without"
     ),
 }
 
@@ -227,6 +239,7 @@ def _taken(source: Source, records: list[Record], chips: list[Flash]) -> list[st
             ", ".join(
                 f"[`{m}`](../opcodes/{ID_OPERATION[m]}.md) {n:,}" for m, n in methods.most_common()
             )
+            + (f" ({ID_METHOD_CAVEATS[source]})" if source in ID_METHOD_CAVEATS else "")
             + (f"; {no_id:,} entries have no id, and are on no chip page" if no_id else ""),
         ],
         [

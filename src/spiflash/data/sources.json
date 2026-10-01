@@ -82,6 +82,19 @@
    "records": 377,
    "url": "https://github.com/torvalds/linux"
   },
+  "mediatek": {
+   "branch": "mtksoc",
+   "browse": "https://github.com/mtk-openwrt/u-boot",
+   "commit": "99042fe2c08ef835b088e906d07495ab74324ed0",
+   "date": "2026-05-27T10:16:24+08:00",
+   "license": "GPL-2.0-only OR BSD-3-Clause",
+   "paths": [
+    "drivers/mtd/mtk-snand/mtk-snand-ids.c",
+    "drivers/mtd/mtk-snand/mtk-snand-def.h"
+   ],
+   "records": 89,
+   "url": "https://github.com/mtk-openwrt/u-boot"
+  },
   "openfpgaloader": {
    "branch": "master",
    "browse": "https://github.com/trabucayre/openFPGALoader",

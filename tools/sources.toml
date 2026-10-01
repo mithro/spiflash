@@ -64,6 +64,16 @@ paths = [
 ]
 license = "GPL-2.0-only"
 
+[mediatek]
+url = "https://github.com/mtk-openwrt/u-boot"
+# mtksoc is the default branch, which MediaTek's OpenWrt builds use; the
+# mtksoc-YYYYMMDD branches are snapshots of it.
+branch = "mtksoc"
+commit = "99042fe2c08ef835b088e906d07495ab74324ed0"
+paths = ["drivers/mtd/mtk-snand/mtk-snand-ids.c", "drivers/mtd/mtk-snand/mtk-snand-def.h"]
+# Both files: "SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause".
+license = "GPL-2.0-only OR BSD-3-Clause"
+
 [openocd]
 url = "https://github.com/openocd-org/openocd"
 branch = "master"

@@ -20,6 +20,8 @@ Facts about chips:
   tables {sfsrc}`zephyr`'s boards copy);
 - its supply voltage range ({sfsrc}`flashrom`, {sfsrc}`flashprog`), and the
   nominal supply {sfsrc}`imsprog` gives, among its `flags`;
+- for SPI NAND, the spare area, planes, dies and I/O modes {sfsrc}`mediatek`
+  gives, among its `flags`;
 - the names of the capability flags each upstream sets, and each upstream's
   test status;
 - from {sfsrc}`qemu`, the SFDP
@@ -40,7 +42,8 @@ description {sfsrc}`dediprog` gives a part, each traceable to its file and
 line through the record's `file` and `line`.
 
 The package is Apache-2.0, as are the files read from {sfsrc}`openfpgaloader` and
-{sfsrc}`zephyr`; the others are GPL (the table above gives each licence).
+{sfsrc}`zephyr`; {sfsrc}`mediatek`'s are GPL-2.0 or BSD-3-Clause, at the
+user's choice; the others are GPL (the table above gives each licence).
 {sfsrc}`imsprog`'s table is GPL-3.0-or-later, and its author says its format was
 based on the databases of closed programmers (EZP2019, EZP2020, EZP2023, Minipro,
 XP866+), so some of its values may have come from those. Whether a
