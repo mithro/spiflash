@@ -35,6 +35,7 @@ from . import derive
 from .enums import FlashType
 from .model import Eraser, Flash, Record
 from .opcodes import OPERATIONS
+from .registers import QE_NONE, QuadEnableRequirement, Register
 from .sfdp import (
     BFPT_ID,
     FOUR_BYTE_ID,
@@ -49,7 +50,7 @@ from .sfdp import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from .registers import QuadEnableRequirement
+    from .registers import NoQuadEnable, RegisterBit
 
 #: The revisions :func:`encode` writes: JESD216 (1.0, nine dwords), and
 #: JESD216A and B (1.5 and 1.6, sixteen).
@@ -112,7 +113,7 @@ ENCODE_LOSSES = {
     "chip_erase_us": "chip erase time (DW11)",
     "suspend_resume": "suspend and resume (DW12-13)",
     "deep_power_down": "deep power-down (DW14)",
-    "quad_enable": "the quad enable requirement (DW15), where the BFPT gives the reserved 7",
+    "quad_enable": "the quad enable requirement (DW15), where it is the reserved 7",
     "qpi_enable": "the QPI enable sequence, in a revision encode cannot fill",
     "qpi_disable": "the QPI disable sequence, in a revision encode cannot fill",
     "mode_0_4_4": "0-4-4 (continuous read) mode (DW15), written as not supported",
@@ -164,6 +165,7 @@ class _Part:
     ops: dict[str, int | None]
     address_bytes: AddressBytes | None
     quad_enable_requirement: QuadEnableRequirement | None = None
+    quad_enable: RegisterBit | NoQuadEnable | None = None
 
 
 def _uniform(erasers: Iterable[Eraser], size: int | None) -> list[tuple[int, int]]:
@@ -196,6 +198,7 @@ def _from_record(r: Record) -> _Part:
         ops,
         derive.address_bytes(r),
         r.quad_enable_requirement,
+        r.quad_enable,
     )
 
 
@@ -219,7 +222,16 @@ def _from_flash(f: Flash) -> _Part:
     )
     said = Counter(a for r in records if (a := derive.address_bytes(r)) is not None)
     address = said.most_common(1)[0][0] if said else None
-    return _Part(f.name, f.size, f.page_size, erasers, ops, address, f.quad_enable_requirement)
+    return _Part(
+        f.name,
+        f.size,
+        f.page_size,
+        erasers,
+        ops,
+        address,
+        f.quad_enable_requirement,
+        f.quad_enable,
+    )
 
 
 def _settings(opcode: int, mode: int, wait: int) -> int:
@@ -288,6 +300,7 @@ def encode(
 
     later = _later_dwords(part, assume=assume)
     if revision >= (1, 5):
+        missing.extend(f"{dwords}: {what}" for dwords, what in later.blocked)
         if assume:
             assumed.extend(f"{dwords}: {what}, {how}" for dwords, what, how in later.unknown)
             bfpt += later.dwords
@@ -381,6 +394,9 @@ class _Later:
     unknown: list[tuple[str, str, str]] = field(default_factory=list)
     #: (dwords, what the database holds and only these dwords can give).
     lost: list[tuple[str, str]] = field(default_factory=list)
+    #: (dwords, what the database holds and these dwords cannot say without
+    #: saying more): written as JESD216's reserved value, and missing.
+    blocked: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _later_dwords(part: _Part, *, assume: bool) -> _Later:
@@ -401,11 +417,7 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
     out.unknown.append(("DW11", "program and chip erase times", "written as the shortest"))
     out.unknown.append(("DW12-13", "suspend and resume", "written as not supported"))
     out.unknown.append(("DW14", "deep power-down", "written as not supported"))
-    qer = part.quad_enable_requirement
-    if qer is None:
-        out.unknown.append(("DW15", "the quad enable requirement", "written as 0, no QE bit"))
-    else:
-        out.lost.append(("DW15", f"the quad enable requirement, {qer}"))
+    qer = _requirement(part, out)
     out.unknown.append(("DW15", "0-4-4 mode", "written as not supported"))
     ops = part.ops
     # DW15[8:4], the 4-4-4 enable sequences: bit 5 is "issue 0x38", bit 6
@@ -441,10 +453,45 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
         0xFFFFFFFF,  # DW12: bit 31, suspend and resume not supported
         0xFFFFFFFF,  # DW13
         0xFFFFFFFF,  # DW14: bit 31, deep power-down not supported
-        0xFF000000 | (qer.code if qer else 0) << 20 | enter << 4 | leave,  # DW15
+        0xFF000000 | qer << 20 | enter << 4 | leave,  # DW15
         modes_in | modes_out | 1 << 7,  # DW16
     ]
     return out
+
+
+#: The DW15 QER code JESD216 reserves: what :func:`encode` writes where it
+#: knows the QE bit but not how it is written, as the decoders read it as no
+#: requirement (:meth:`QuadEnableRequirement.from_code
+#: <spiflash.registers.QuadEnableRequirement.from_code>`).
+QER_RESERVED = 7
+
+
+def _requirement(part: _Part, out: _Later) -> int:
+    """The QER code DW15 is written with, and what is said of it in
+    ``out``: the part's requirement; failing that, ``NONE`` for a part with
+    no QE bit, and ``S1B6`` for one at SR1 bit 6, the only code putting it
+    there; for one elsewhere (SR2 bit 1 has four codes, written
+    differently), the reserved 7, as any code would say more than the
+    database does (``out.blocked``); where nothing is known, 0."""
+    qer, qe = part.quad_enable_requirement, part.quad_enable
+    if qer is not None:
+        out.lost.append(("DW15", f"the quad enable requirement, {qer}"))
+        return qer.code
+    if qe is None:
+        out.unknown.append(("DW15", "the quad enable requirement", "written as 0, no QE bit"))
+        return 0
+    if qe == QE_NONE:
+        out.lost.append(("DW15", "the quad enable requirement: no QE bit"))
+        return QuadEnableRequirement.NONE.code
+    if qe.place == (Register.SR1, 6):
+        out.unknown.append(
+            ("DW15", "how the QE bit (SR1 bit 6) is written", "written as S1B6, a 1-byte WRSR")
+        )
+        return QuadEnableRequirement.S1B6.code
+    out.blocked.append(
+        ("DW15", f"the quad enable requirement: the QE bit is {qe}, but not how it is written")
+    )
+    return QER_RESERVED
 
 
 def _four_byte_dwords(part: _Part, reads: set[str], missing: list[str]) -> list[int] | None:
