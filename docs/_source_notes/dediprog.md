@@ -91,9 +91,17 @@ Some classes of part are not what their attributes say:
 
 The raw command words, the nominal `Voltage`, the `ProgramIOMethod` and the
 `Class` are kept in the record's `flags`, unless an operation or a value
-already names one as where it came from (`via`). The entry has much that the
+already names one as where it came from (`via`). `QEbitAddr` is the quad
+enable bit, a mask over the status registers (SR1 its low byte, then SR2):
+`0x40` is SR1 bit 6. Its template's `0x200` (SR2 bit 1, on 255 of 356
+Macronix parts and 89 of 90 Micron ones, whose bit is elsewhere or none) and
+`0` say nothing of the part, and the MX25U51271G's `0x80` is SR1 bit 7, its
+status register protect bit: none of them is taken. `ProtectBlockMask` is
+the bits its software clears to unprotect the part, not where each role is
+(0x9C on the W25Q128FV, 0xFC on the W25Q128JV, whose bits are the same), so
+it gives only the `lock` claim. The entry has much that the
 database has no field for yet: the maximum clock, the status and
-configuration register commands, the quad enable bit, erase and program
+configuration register commands, erase and program
 timeouts, the 4 KiB sector size where no opcode goes with it, the die size,
 and for SPI NAND the spare area, the ECC layout and the bad block marker.
 

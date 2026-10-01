@@ -38,3 +38,26 @@ claims. The read, fast read (a board's devicetree choice, `m25p,fast-read`),
 page program, chip erase and default sector erase it sets up for every part
 are its driver's defaults, as are their 4-byte forms: they imply no
 capability.
+
+`SPI_NOR_HAS_LOCK` and the flags with it give a part's block-protection
+bits as {upstream}`swp.c <linux:drivers/mtd/spi-nor/swp.c>` uses them: BP0
+to BP2 and SRWD in SR1, BP3 for `SPI_NOR_4BIT_BP` (bit 5, or 6 with
+`SPI_NOR_BP3_SR_BIT6`), TB for `SPI_NOR_HAS_TB` (bit 5, or 6 with
+`SPI_NOR_TB_SR_BIT6`), CMP in SR2 for `SPI_NOR_HAS_CMP`; with
+`SPI_NOR_SWP_IS_VOLATILE` the BP bits are volatile. Where an entry's fixups
+replace that locking (Atmel's global protection, the AT25FS's own scheme,
+the SST26VF's block protection register, unlocked with
+[ULBPR](../opcodes/ULBPR.md)) it gives no bits, and its `lock` stays a
+claim. Micron's `default_init` sets `HAS_LOCK` for every Micron part, a
+driver default that gives none either.
+
+The kernel sets a part's quad enable method in its core for every part (SR2
+bit 1) and in some makers' `default_init` for every part of theirs
+(Macronix's and ISSI's SR1 bit 6, Micron's none), each overridden by the
+part's own SFDP tables: driver defaults, which give no part a quad enable
+bit. A per-part fixup does (the MX25L3255E's SR1 bit 6, the MT35XU's none),
+but the GD25Q256's sets SR1 bit 6 only for a JESD216 1.0 table (the
+GD25Q256C), so that entry has none. A SPI NAND entry's
+`SPINAND_HAS_QE_BIT` is bit 0 of its configuration register (feature 0xb0).
+`USE_FSR`, `USE_CLSR` and `USE_CLPEF` are the flag status register and the
+error-clearing commands its driver sends.

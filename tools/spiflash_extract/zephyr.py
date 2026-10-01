@@ -171,10 +171,11 @@ _IO_MODE = {
 PAGE_SIZE_IS_THE_DRIVERS = frozenset({"adi,max32-spixf-nor", "jedec,nor"})
 
 #: The bindings whose driver ignores ``quad-enable-requirements``
-#: (jedec,jesd216.yaml's JESD216 DW15 code): ``spi_nor.c`` takes the
-#: requirement from the BFPT, the node's or the part's. On such a node it
-#: stays a flag. The QSPI and OSPI controllers' drivers (STM32, nRF, NXP,
-#: ...) and the MSPI one (``jedec,nor``) use it.
+#: (:upstream:`zephyr:dts/bindings/mtd/jedec,jesd216.yaml`'s JESD216 DW15
+#: code): :upstream:`zephyr:drivers/flash/spi_nor.c` takes the requirement
+#: from the BFPT, the node's or the part's. On such a node it stays a flag.
+#: The QSPI and OSPI controllers' drivers (STM32, nRF, NXP, ...) and the
+#: MSPI one (``jedec,nor``) use it.
 QER_IGNORED_BY = frozenset({"jedec,spi-nor"})
 
 #: The SFDP parameter tables a node copies, by property: the table id each is.

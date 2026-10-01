@@ -68,6 +68,7 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`db.py <src/spiflash/db.py>` | loading, lookup, find |
 | {repo}`enums.py <src/spiflash/enums.py>` | the fixed vocabularies, as enums: sources in priority order, flash types, id families, features, kinds of operation, ... |
 | {repo}`opcodes.py <src/spiflash/opcodes.py>` | the named operations |
+| {repo}`registers.py <src/spiflash/registers.py>` | register bits: where the quad enable bit is, the quad enable requirement, the block-protection bits |
 | {repo}`derive.py <src/spiflash/derive.py>` | what a record's stored fields imply, worked out at load (every such rule is here) |
 | {repo}`sfdp.py <src/spiflash/sfdp.py>` | the JESD216 (SFDP) decoder, and what tables say in a record's terms (`Sfdp.facts`) |
 | {repo}`sfdp_tools.py <src/spiflash/sfdp_tools.py>` | SFDP tables from the database (`encode`), to an entry (`to_entry`), compared (`diff`) |

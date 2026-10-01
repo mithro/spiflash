@@ -22,6 +22,17 @@ erase opcode with its block layout, the supply voltage, the test status
 (`W25Q128.V` is the BV, FV and JV), so such a name is a family rather than a
 part.
 
+Its `.reg_bits` say where each status register bit with a role is, by what
+the bit does (`.tb` is a bit that works as TB, whatever the datasheet calls
+it): the record's `protection`, `.bp` as `bp0`, `bp1`, ... in order, each
+register named by the command reading it (`STATUS2` is SR2, read with 0x35;
+`CONFIG`, Macronix's configuration register read with 0x15, is SR3), and
+so its `lock` ([](../derived.md#registers)). The `FEATURE_WRSR*`, `CFGR` and
+`SCUR` bits say how it reads and writes the second and third registers
+([RDSR2](../opcodes/RDSR2.md), [WRSR_16](../opcodes/WRSR_16.md), ...).
+`FEATURE_WRSR_EXT3` is the `FEATURE_WRSR_EXT2` bit and one of its own,
+with no name, so a record gives it by its own name.
+
 A comment on an entry saying it "supports SFDP" gives it the `sfdp`
 capability and the [RDSFDP](../opcodes/RDSFDP.md) operation, whose `via`
 then holds the comment. A comment qualified to one model of a multi-part

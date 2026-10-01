@@ -23,6 +23,7 @@ The modules behind it:
 | {py:mod}`spiflash.model` | the types: {py:class}`~spiflash.model.Record` is one upstream entry, {py:class}`~spiflash.model.Flash` everything known about one chip id |
 | {py:mod}`spiflash.enums` | the fixed vocabularies, as enums: sources, flash types, id families, features, kinds of operation, ... |
 | {py:mod}`spiflash.opcodes` | the named SPI operations |
+| {py:mod}`spiflash.registers` | register bits: where the quad enable bit is, the quad enable requirement, the block-protection bits |
 | {py:mod}`spiflash.derive` | what a record's stored fields imply, worked out at load |
 | {py:mod}`spiflash.sfdp` | the SFDP ([JESD216](https://www.jedec.org/standards-documents/docs/jesd216b)) decoder |
 | {py:mod}`spiflash.sfdp_tools` | SFDP tables from the database ({py:func}`~spiflash.sfdp_tools.encode`), to a database entry ({py:func}`~spiflash.sfdp_tools.to_entry`), and compared ({py:func}`~spiflash.sfdp_tools.diff`) |
@@ -69,7 +70,13 @@ record is made ({py:mod}`spiflash.derive`), never stored:
   {py:attr}`~spiflash.model.Record.feature_claims` plus what its stated
   operations (not its driver's defaults), its SFDP tables' operations,
   its block erasers, its size, and what only SFDP says imply
-  ({py:func}`spiflash.derive.features`);
+  ({py:func}`spiflash.derive.features`), and its quad enable bit
+  (`quad_read`) and block-protection bits (`lock`);
+- {py:attr}`~spiflash.model.Record.quad_enable_requirement` is what the
+  entry states, or failing that its SFDP tables' (BFPT DW15), and
+  {py:attr}`~spiflash.model.Record.quad_enable` the bit the entry states, or
+  failing that the one its requirement puts it at; the requirement gives
+  the register operations writing the bit too;
 - {py:attr}`~spiflash.model.Record.sector_size` is the block of its 0xd8
   eraser (failing that its 0xdc, then its 0x52 eraser; a SPI NAND part's
   block erase), and `None` for a part that needs no erase
@@ -203,3 +210,48 @@ SFDP tools):
 - the command gains `spiflash sfdp --entry`, `spiflash sfdp-encode` and
   `spiflash sfdp-diff` ([](usage.md)), and the site an SFDP kind of data
   issue.
+
+Changes in data format 7 (register bits):
+
+- the records gain `"quad_enable"` (a register bit,
+  `{"register": "sr2", "bit": 1}`, or `"none"`),
+  `"quad_enable_requirement"` (`"S2B1v4"`, ...) and `"protection"` (register
+  bits by role, `{"bp0": {...}, "tb": {...}}`), each `null` where the entry
+  says nothing ({py:mod}`spiflash.registers`); a `"via"` key may name a
+  role (`"protection.tb"`);
+- {py:class}`~spiflash.model.Record` has
+  {py:attr}`~spiflash.model.Record.quad_enable_claim`,
+  {py:attr}`~spiflash.model.Record.quad_enable_requirement_claim` and
+  {py:attr}`~spiflash.model.Record.protection` (stored), and
+  {py:attr}`~spiflash.model.Record.quad_enable` and
+  {py:attr}`~spiflash.model.Record.quad_enable_requirement` (the stated
+  value or the one derived); {py:meth}`~spiflash.model.Record.given` reads a
+  role as `"protection.tb"`;
+- a `lock` or `quad_read` claim a record's register bits imply is no
+  longer stored in its `"features"`; it is in
+  {py:attr}`Record.features <spiflash.model.Record.features>` as before,
+  now with that reason. A quad enable bit gives `quad_read` to parts no
+  source gave it before (quad parts whose Dediprog entry lists no quad
+  read);
+- {py:class}`~spiflash.model.Flash` has
+  {py:attr}`~spiflash.model.Flash.quad_enable`,
+  {py:attr}`~spiflash.model.Flash.quad_enable_requirement`,
+  {py:attr}`~spiflash.model.Flash.protection`,
+  {py:meth}`~spiflash.model.Flash.shared_bits` and
+  {py:meth}`~spiflash.model.Flash.value`, and
+  {py:attr}`~spiflash.model.Flash.conflicts` and
+  {py:meth}`~spiflash.model.Flash.by_ext_id` cover every value of
+  {py:data}`~spiflash.model.COMPARED_VALUES` (`"protection.tb"`, ...);
+  {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>` gains the three,
+  and its `"conflicts"` give a register bit as its JSON;
+- {py:class}`~spiflash.sfdp.SfdpFacts` has `quad_enable_requirement` (and
+  `quad_enable`), and {py:func}`~spiflash.sfdp_tools.to_entry` stores the
+  requirement; {py:func}`~spiflash.sfdp_tools.encode` writes a known one to
+  DW15;
+- new operations: [RDSR2](opcodes/RDSR2.md), [RDSR3](opcodes/RDSR3.md),
+  [WRSR_16](opcodes/WRSR_16.md), [WRSR_24](opcodes/WRSR_24.md),
+  [RDSCUR](opcodes/RDSCUR.md), [WRSCUR](opcodes/WRSCUR.md),
+  [CLPEF](opcodes/CLPEF.md) and [ULBPR](opcodes/ULBPR.md); the command's
+  description gains the QE bit (`QE SR2[1]`), and with `-v` the
+  requirement and the protection bits; the site a Registers section on
+  the chip pages, and a kind of data issue for two roles on one bit.

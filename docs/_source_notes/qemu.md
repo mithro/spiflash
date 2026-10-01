@@ -10,7 +10,9 @@ emulate: `INFO(name, jedec_id, ext_id, sector_size, n_sectors, flags)`,
 under a comment naming the vendor. So its geometry rarely adds anything, and
 as the model decodes every opcode for every part (its `FlashCMD` enum), the
 table says little per part beyond its geometry and its `ER_4K`/`ER_32K`
-flags. The read, fast read, page program and chip erases it decodes for every
+flags. Its model keeps BP0 to BP2 at SR1 bits 2 to 4 for every part, so
+those are no part's own; `HAS_SR_TB` (TB at bit 5) and `HAS_SR_BP3_BIT6`
+are, and are all of a record's `protection`. The read, fast read, page program and chip erases it decodes for every
 part are its defaults, which imply no capability.
 
 It is alone, though, in carrying complete SFDP
@@ -21,8 +23,9 @@ thirteen entries point at the tables in
 byte for byte what those parts answer to the SFDP command, which is data
 rather than code. Everything the dump says is worked out from it when the
 data is loaded, not stored again: the fast reads with the part's own dummy
-clocks, the erase types, the 4-byte-address opcodes, the page size where the
-table has it, and the capabilities they imply; the read 0x03 a part with a
+clocks, the erase types, the 4-byte-address opcodes, the page size and the
+quad enable requirement where the table has them, and the capabilities they
+imply; the read 0x03 a part with a
 BFPT has is those parts' own, but SFDP gives no sign of fast read 0x0b or
 page program 0x02, so those stay the model's defaults
 ([](../derived.md#sfdp-tables)). The entry's own geometry, which the model

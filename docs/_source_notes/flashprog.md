@@ -20,5 +20,11 @@ with its block layout, the supply voltage, the test status, the feature bits
 (`FEATURE_*`), and the legacy ids. Its names, like flashrom's, use `.` as a
 wildcard (`W25Q128.V`).
 
+Its `.reg_bits` are read as {sfsrc}`flashrom`'s are, and have one more role,
+`.qe`: the quad enable bit, the record's `quad_enable`, which no flashrom
+entry gives. Seven are `{STATUS2, 1, RO}` with the comment "Fixed QE=1": a
+bit that is always set, so read only. Its `.dc` (the bits setting the dummy
+clocks) has no field yet.
+
 Its "supports SFDP" comments are read as {sfsrc}`flashrom`'s are: only an
 unqualified one claims SFDP.

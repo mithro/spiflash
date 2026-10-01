@@ -128,6 +128,87 @@ parts are U-Boot's and QEMU's defaults, and none says so for the part. An
 operation JESD216 guarantees on a part whose SFDP tables a source carries
 is that part's own, not a default.
 
+## Registers
+
+Some sources say where a part's status register bits are: its quad enable
+(QE) bit, and its block-protection bits ({py:mod}`spiflash.registers`).
+
+A register is named by the command that reads it
+({py:class}`~spiflash.registers.Register`), not by what a datasheet calls
+it, so one name is one register however the makers name it:
+
+| Register | Read with | Is |
+|---|---|---|
+| SR1 | RDSR, 0x05 (every part has it) | status register 1 |
+| SR2 | [RDSR2](opcodes/RDSR2.md), 0x35 | Winbond's and GigaDevice's status register 2, Spansion's CR1 |
+| SR3 | [RDSR3](opcodes/RDSR3.md), 0x15 | Winbond's status register 3, Macronix's configuration register |
+| function register | 0x48 | ISSI's function register |
+| security register | [RDSCUR](opcodes/RDSCUR.md), 0x2b | Macronix's security register |
+| configuration feature | GET FEATURE (0x0f) at 0xb0 | a SPI NAND part's configuration register |
+
+A bit is read and write, or volatile (lost at power off), one-time
+programmable, or read only ({py:class}`~spiflash.registers.Writability`).
+
+### The quad enable bit
+
+A part's quad enable bit (a record's `quad_enable`) is where it is, or
+*none* where the source says the part needs nothing set for quad I/O
+({py:data}`~spiflash.registers.QE_NONE`); a source that says nothing gives
+nothing. A source's driver default is not a part's: Linux sets SR2 bit 1
+for every part, and Macronix's and ISSI's SR1 bit 6 and Micron's none for
+every part of theirs, all overridden by a part's own SFDP tables; Dediprog's
+template gives SR2 bit 1 to parts whose bit is elsewhere; openFPGALoader's
+`NONER` is "not filled in". None of those gives a bit. A quad enable bit
+implies `quad_read`: a part has one only to enable quad I/O.
+
+JESD216's quad enable requirement (QER, BFPT DWORD 15: a record's
+`quad_enable_requirement`) says where the bit is and how it is written.
+{sfsrc}`zephyr`'s boards give it (`quad-enable-requirements`), and a
+record's SFDP tables do. A record stores a bit or a requirement, never both,
+and the bit is the requirement's
+({py:attr}`QuadEnableRequirement.bit <spiflash.registers.QuadEnableRequirement.bit>`),
+as are the register operations writing it
+({py:data}`~spiflash.derive.REQUIREMENT_OPERATIONS`):
+
+| QER | The QE bit | Its operations |
+|---|---|---|
+| NONE | none | |
+| S2B1v1 | SR2 bit 1 | [WRSR_16](opcodes/WRSR_16.md) (a 1-byte WRSR clears SR2) |
+| S1B6 | SR1 bit 6 | (a 1-byte WRSR) |
+| S2B7 | SR2 bit 7, read with 0x3f | (0x3e and 0x3f, which have no operation here) |
+| S2B1v4 | SR2 bit 1 | [WRSR_16](opcodes/WRSR_16.md) |
+| S2B1v5 | SR2 bit 1 | [WRSR_16](opcodes/WRSR_16.md), [RDSR2](opcodes/RDSR2.md) |
+| S2B1v6 | SR2 bit 1 | [WRSR2](opcodes/WRSR2.md), [RDSR2](opcodes/RDSR2.md) |
+
+No requirement is worked out from a bit and the operations a source gives:
+the W25Q512JV's flashprog entry would make it S2B1v6 or v5, its SFDP says
+v4. A chip's requirement is the one most sources give of those putting the
+bit where the chip's bit is; where none does, it has none, and the sources
+disagree on the bit (a [data issue](issues/value.md)).
+
+### Protection bits
+
+A part's block-protection bits (a record's `protection`) are given by role,
+as {sfsrc}`flashrom` names them, by what the bit does rather than what the
+datasheet calls it: the block-protect bits BP0 to BP4 (by position: a source
+may give BP3 alone), top/bottom (TB), sector/block (SEC), complement (CMP),
+the status register protect and lock bits (SRP, SRL) and write-protect
+selection (WPS) ({py:class}`~spiflash.registers.Protection`). No two roles
+are on one bit, nor is the quad enable bit one of them. A block-protection
+bit (a BP bit, or TB, SEC or CMP, which only change what the BP bits
+protect) implies `lock`. A source that unlocks a part some other way
+({sfsrc}`linux`'s Atmel global protection and SST26 block protection
+register, {sfsrc}`u-boot`'s SST26 parts) or only says which bits to clear
+({sfsrc}`dediprog`'s `ProtectBlockMask`, {sfsrc}`zephyr`'s `has-lock`) gives
+no layout, and its `lock` is a claim.
+
+The sources are compared on each role on its own, and one not giving a role
+does not vote on it, so a source giving only TB agrees with a fuller layout
+with the same TB. Where the most-given bit of each role puts two roles on
+one bit (flashrom's TB is the bit openFPGALoader calls BP3, on the
+GD25Q16C and others), the chip is given the best source's own layout, and
+it is a [data issue](issues/shared-bit.md).
+
 ## Sector size
 
 A part's sector size is the block of its 0xd8 erase layout, or failing
