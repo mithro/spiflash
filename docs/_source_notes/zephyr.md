@@ -62,7 +62,7 @@ some with placeholder ids.
   `enter-4byte-command`, the opcode its driver sends with no write enable
   ({upstream}`flash_renesas_ra_ospi_b.c <zephyr:drivers/flash/flash_renesas_ra_ospi_b.c>`),
   is `en4b` for `<0xb7>`.
-- About a fifth of the nodes carry a copy of the chip's own SFDP Basic
+- About a quarter of the nodes with an id carry a copy of the chip's own SFDP Basic
   Flash Parameter table (`sfdp-bfp`), and a few its 4-byte instruction and
   xSPI profile tables (`sfdp-ff84`, `sfdp-ff05`). The record stores them (its
   `sfdp_tables`) and works out from them its density, fast reads with their
@@ -98,7 +98,7 @@ some with placeholder ids.
   copied from another board). That is why {sfsrc}`zephyr` comes last when
   sources are tied, and why its disagreements are worth reading on
   [its data issues page](../issues/source-zephyr.md).
-- Two nodes carrying a table make no record, and so their tables are not
+- Three nodes carrying a table make no record, and so their tables are not
   kept: qemu_cortex_r5's `flash@0` and `flash@1` (id `20 bb 20`, a 512 Mbit
   Micron part, with a BFPT) have no name that looks like a part number;
   and stm32l4r9i_disco's MX25LM51245 node has no `jedec-id`, its

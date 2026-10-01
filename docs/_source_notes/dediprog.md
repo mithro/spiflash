@@ -2,7 +2,7 @@
 SF600 and SF700. The Linux software for them, {github}`DediProgSW/SF100Linux`,
 ships the chip database of Dediprog's own programming software,
 {upstream}`dediprog:ChipInfoDb.dedicfg`. It is a UTF-16 XML file with one
-`<Chip .../>` per line and some seventy attributes on each. Its values are
+`<Chip .../>` per line, each with 44 to 48 of its 77 attributes. Its values are
 Dediprog's own, not copied from another project here. It is the largest
 table here, with SPI NOR and SPI NAND. It also lists microcontrollers and
 FPGA configuration memory that the programmers write; those have no id and

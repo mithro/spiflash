@@ -92,7 +92,7 @@ then holds the comment. A comment qualified to one model of a multi-part
 entry ("the latter supports SFDP", "F model supports SFDP", "MX25L1006E
 supports SFDP") is kept as a note and claims nothing: the database has no
 per-model claim within an entry yet, so that model's SFDP is a known loss
-(six entries, in {sfsrc}`flashprog` too).
+(seven entries, in {sfsrc}`flashprog` too).
 
 It gives no time per SPI part ([](../derived.md#times)): `.probe_timing` is
 for parallel, LPC and FWH chips ("SPI devices will always have zero delay
