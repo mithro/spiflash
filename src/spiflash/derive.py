@@ -12,7 +12,8 @@ the record stores (:data:`~spiflash.model.CLAIMS`). They are:
 - each of its erasers with an opcode (:data:`ERASE_BY_OPCODE`, a SPI NAND
   one's :data:`NAND_ERASE_BY_OPCODE`) gives that erase operation;
 - its dies and the die erase it states give the die erase layout
-  (:func:`die_erasers`), which is never stored;
+  (:func:`die_erasers`), which is never stored; so do its size and the
+  chip erase it states give the chip erase layout (:func:`chip_erasers`);
 - its SFDP tables (an upstream's dump, or tables it copies) give what they
   say in the record's own terms (:meth:`Sfdp.facts
   <spiflash.sfdp.Sfdp.facts>`): the size, page size and quad enable
@@ -129,6 +130,28 @@ def die_erasers(record: Record) -> tuple[Eraser, ...]:
     return tuple(
         Eraser(OPERATIONS[op].opcode, (EraseBlock(size // dies, dies),)) for op in sorted(stated)
     )
+
+
+#: The chip erases: each erases the whole chip, in one block of its size
+#: (0xc7, 0x60, and Atmel's 0x62).
+CHIP_ERASES = frozenset({"CHIP_ERASE", "CHIP_ERASE_ALT", "CHIP_ERASE_ATMEL"})
+
+
+def chip_erasers(record: Record) -> tuple[Eraser, ...]:
+    """The layout of each chip erase ``record`` states (:data:`CHIP_ERASES`),
+    not as a driver default: one block of its size. The layout is never
+    stored, as the size and the operation say it (one that is not the
+    size's, which no record has, would be stored, and kept). None without
+    a size."""
+    from .model import EraseBlock, Eraser  # noqa: PLC0415 - model imports this module
+
+    size = record.size
+    if size is None:
+        return ()
+    stated = {u.op for u in record.stored("opcodes") if not u.assumed} & CHIP_ERASES
+    given = {e.opcode for e in record.stored("erasers")}
+    opcodes = sorted({OPERATIONS[op].opcode for op in stated} - given)
+    return tuple(Eraser(opcode, (EraseBlock(size, 1),)) for opcode in opcodes)
 
 
 def layout(eraser: Eraser) -> str:
@@ -334,7 +357,18 @@ FEATURE_IMPLIED_BY: dict[Feature, tuple[str, ...]] = {
     Feature.FOUR_BYTE_OPCODES: _FOUR_BYTE_OPS,
     Feature.SFDP: ("RDSFDP",),
     # Not RUID: a unique id read is not the OTP area's.
-    Feature.OTP: ("RSECR", "PSECR", "ESECR", "READ_OTP", "ENSO", "EXSO", "ENTER_OTP_3A"),
+    Feature.OTP: (
+        "RSECR",
+        "PSECR",
+        "ESECR",
+        "READ_OTP",
+        "ENSO",
+        "EXSO",
+        "ENTER_OTP_3A",
+        "IRRD",
+        "IRP",
+        "IRER",
+    ),
 }
 
 #: The operations that mean a part takes 4-byte addresses: every ``_4B``
@@ -387,6 +421,8 @@ class _Given(NamedTuple):
     #: Whether it claims ``4byte_addr``.
     claims_four_byte: bool = False
     otp: Otp | None = None
+    #: Whether it claims ``2byte_addr``.
+    claims_two_byte: bool = False
 
 
 def _given(record: Record) -> _Given:
@@ -405,6 +441,7 @@ def _given(record: Record) -> _Given:
         record.four_byte_modes,
         Feature.FOUR_BYTE_ADDR in record.stored("features"),
         record.otp,
+        Feature.TWO_BYTE_ADDR in record.stored("features"),
     )
 
 
@@ -440,6 +477,8 @@ def _address_bytes(g: _Given) -> AddressBytes | None:
         return None
     if FourByteMethod.ALWAYS_4B in g.four_byte_modes:
         return AddressBytes.FOUR
+    if g.claims_two_byte:
+        return AddressBytes.TWO
     given = g.facts.address_bytes if g.facts else None
     if given is not None and given is not AddressBytes.THREE:
         return given
@@ -452,7 +491,8 @@ def _address_bytes(g: _Given) -> AddressBytes | None:
 
 def address_bytes(record: Record) -> AddressBytes | None:
     """How many address bytes a SPI NOR record's part takes: ``FOUR`` where
-    it is always in 4-byte mode (``always_4b``); what its SFDP tables say
+    it is always in 4-byte mode (``always_4b``); ``TWO`` where it claims
+    ``2byte_addr`` (a small FRAM or EEPROM part); what its SFDP tables say
     where they say 4 (or 3 or 4); else ``THREE_OR_FOUR`` where its size is
     over 16 MiB, it states a 4-byte operation or its tables give one
     (:data:`FOUR_BYTE_ADDRESS_OPS`), it has a way into 4-byte mode
@@ -461,7 +501,7 @@ def address_bytes(record: Record) -> AddressBytes | None:
     ``4byte_addr``; else ``THREE`` where its size or its tables are known.
     ``None`` for SPI NAND, and where nothing says. A record has
     ``4byte_addr`` (:attr:`~spiflash.model.Record.features`, implied or
-    claimed) exactly when this is neither ``THREE`` nor ``None``."""
+    claimed) exactly when this is neither ``TWO``, ``THREE`` nor ``None``."""
     return _address_bytes(_given(record))
 
 
@@ -523,7 +563,7 @@ def features(record: Record) -> frozenset[Feature]:
       tables (:data:`ERASE_FEATURE`), not a whole-chip erase however small
       the chip, nor a driver default (:attr:`Eraser.assumed
       <spiflash.model.Eraser.assumed>`);
-    - ``4byte_addr`` where :func:`address_bytes` is neither ``THREE`` nor
+    - ``4byte_addr`` where :func:`address_bytes` is neither ``TWO``, ``THREE`` nor
       ``None``;
     - what only SFDP says (:data:`SFDP_FEATURES`);
     - ``quad_read`` from a quad enable bit (stated, or from the quad enable

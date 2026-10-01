@@ -42,7 +42,10 @@ Fields (``None`` / empty when the upstream does not say):
     size, openFPGALoader's ``sector_erase``, a SPI NAND block) gives the
     eraser it describes (:func:`spiflash.derive.block_eraser`): the record's
     sector size is derived from its erasers
-    (:func:`spiflash.derive.sector_size`), never stored.
+    (:func:`spiflash.derive.sector_size`), never stored. A chip erase over
+    one block of the size is not a layout either, but its operation
+    (:func:`spiflash.derive.chip_erasers`), and a layout's blocks are
+    always over the size.
 ``features``
     Normalised capability names: :class:`spiflash.enums.Feature` values,
     the ones the entry states (a record's ``feature_claims``) and nothing
@@ -289,12 +292,11 @@ _VIA_KEY = re.compile(r"feature:([a-z0-9_]+)|([a-z_]+)(?:\.([a-z0-9_]+))?(?::([a
 
 def _eraser_members(rec: Record) -> set[str]:
     """The ``erasers:<member>`` names of a record's erasers: ``0x20``, ...;
-    those it stores, and those its own SFDP tables give it
+    those it stores, those its own SFDP tables give it
     (:attr:`spiflash.model.Record.sfdp_erasers`), which an upstream token can
-    state too (QEMU's ``ER_4K``, for an eraser its dump gives)."""
-    erasers = [e["opcode"] for e in rec["erasers"] or ()]
-    if rec.get("sfdp") or rec.get("sfdp_tables"):
-        erasers += [e.opcode for e in Model.from_json(rec).sfdp_erasers]
+    state too (QEMU's ``ER_4K``, for an eraser its dump gives), and the
+    die and chip erase layouts its operations give."""
+    erasers = [e.opcode for e in Model.from_json(rec).erasers]
     return {f"0x{opcode:02x}" for opcode in erasers if opcode is not None}
 
 
@@ -464,6 +466,7 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     rec["features"] = sorted(set(rec["features"]))
     rec["four_byte_modes"] = sorted(set(rec["four_byte_modes"]))
     _check_legacy_ids(rec)
+    _fold_chip_erasers(rec)
     _check_timings(rec)
     check_via(rec)
     _check_kind(rec)
@@ -495,6 +498,35 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     return rec
 
 
+#: The opcodes of the chip erases (:data:`spiflash.derive.CHIP_ERASES`).
+CHIP_ERASE_OPCODES = {OPERATIONS[op].opcode: op for op in derive.CHIP_ERASES}
+
+
+def _fold_chip_erasers(rec: Record) -> None:
+    """Drop each chip erase layout of one block of the record's size: the
+    operation and the size say it (:func:`spiflash.derive.chip_erasers`).
+    The operation is stored where the extractor did not give it, with the
+    layout as its ``via``. Raise for a layout that is not over the size: a
+    uniform erase's count of blocks is the size's, never a second size."""
+    if not rec["erasers"]:
+        return
+    size = rec["size"] if rec["size"] is not None else Model.from_json(rec).size
+    kept = []
+    for e in rec["erasers"]:
+        covered = sum(block * count for block, count in e["blocks"])
+        if size is not None and covered != size and e["opcode"] is not None:
+            msg = f"{rec['source']} {rec['name']}: an eraser over {covered} bytes of {size}"
+            raise ValueError(msg)
+        op = CHIP_ERASE_OPCODES.get(e["opcode"])
+        whole = size is not None and e["blocks"] == [[size, 1]]
+        if op is None or not whole or e.get("assumed") or e.get("function"):
+            kept.append(e)
+            continue
+        if not any(o["op"] == op and not o.get("assumed") for o in rec["opcodes"]):
+            rec["opcodes"] = [*rec["opcodes"], {"op": op, "via": f"eraser: 1 x {size}"}]
+    rec["erasers"] = kept or None
+
+
 def _check_legacy_ids(rec: Record) -> None:
     """Raise for a legacy id that is the record's own id, or one listed
     twice, or read by a JEDEC read-id."""
@@ -524,7 +556,7 @@ def _check_timings(rec: Record) -> None:
         msg = f"{where}: times out of order: {times.disorder()}"
         raise ValueError(msg)
     blocks = {k.opcode for k in times.keys if k.opcode is not None}
-    erasers = {int(m, 16) for m in _eraser_members(rec)}
+    erasers = {int(m, 16) for m in _eraser_members(rec)} if blocks else set()
     if blocks - erasers:
         msg = f"{where}: block erase times for erasers it has not: {sorted(blocks - erasers)}"
         raise ValueError(msg)
@@ -613,7 +645,9 @@ def _drop_derived(rec: Record, held: set[str], via: dict[str, list[str]]) -> set
     only a dropped erase operation's via held moves to ``via``, under its
     eraser (stored, or from its SFDP tables), ``erasers:0x<opcode>``, or
     ``erasers`` for a token that gives several; where the record has no
-    such eraser, the flag stays a flag, and is returned."""
+    such eraser, the flag stays a flag, and is returned, as does one only
+    another dropped operation held (a read its SFDP tables give). One only
+    a dropped id read held raises: the extractor names the command."""
     model = Model.from_json(rec)
     derived = derive.opcodes(model)
     dropped = [o for o in rec["opcodes"] if any(_same_use(o, u) for u in derived)]
@@ -625,9 +659,15 @@ def _drop_derived(rec: Record, held: set[str], via: dict[str, list[str]]) -> set
     for o in dropped:
         for t in held:
             if holds(o["via"], t) and not any(holds(v, t) for v in kept):
-                if OPERATIONS[o["op"]].kind is not OperationKind.ERASE:
+                kind = OPERATIONS[o["op"]].kind
+                if kind is OperationKind.ID:
                     msg = f"{rec['source']} {rec['name']}: {t} would be lost with {o['op']}"
                     raise ValueError(msg)
+                if kind is not OperationKind.ERASE:
+                    # A board's read mode its SFDP tables give the operation
+                    # of (Zephyr's readoc=read4io): the token stays a flag.
+                    flags.add(t)
+                    continue
                 member = f"0x{OPERATIONS[o['op']].opcode:02x}"
                 if member not in members:
                     flags.add(t)

@@ -224,7 +224,8 @@ def _record(
         ext_id=ext,
         id_method="rdid" if id_hex else None,
         size=size,
-        page_size=256,  # INFO()'s, for every part
+        # No page size: INFO()'s .page_size = 256 is every part's, the
+        # model's default, not the part's (a dump gives its own).
         erasers=erasers or None,
         features=features,
         flags=flags,

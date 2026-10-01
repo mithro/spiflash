@@ -151,6 +151,7 @@ class Feature(StrEnum):
     OCTAL_DTR_READ = "octal_dtr_read"
     OCTAL_DTR_PP = "octal_dtr_pp"
     QPI = "qpi"
+    TWO_BYTE_ADDR = "2byte_addr"
     FOUR_BYTE_ADDR = "4byte_addr"
     FOUR_BYTE_OPCODES = "4byte_opcodes"
     OTP = "otp"
@@ -176,6 +177,7 @@ _FEATURE_DESCRIPTIONS = {
     Feature.OCTAL_DTR_READ: "supports octal DTR read",
     Feature.OCTAL_DTR_PP: "supports octal DTR page program",
     Feature.QPI: "supports QPI (4-4-4) mode",
+    Feature.TWO_BYTE_ADDR: "takes 2-byte addresses (small FRAM, MRAM and EEPROM parts)",
     Feature.FOUR_BYTE_ADDR: "supports 4-byte addressing",
     Feature.FOUR_BYTE_OPCODES: "has dedicated 4-byte-address opcodes",
     Feature.OTP: "has one-time-programmable area",
@@ -187,8 +189,10 @@ _FEATURE_DESCRIPTIONS = {
 
 class AddressBytes(StrEnum):
     """How many address bytes a part takes (BFPT DW1[18:17]; for a record,
-    :func:`spiflash.derive.address_bytes`)."""
+    :func:`spiflash.derive.address_bytes`). ``TWO`` is no BFPT code: small
+    FRAM, MRAM and EEPROM parts a source says take two."""
 
+    TWO = "2"
     THREE = "3"
     THREE_OR_FOUR = "3 or 4"
     FOUR = "4"

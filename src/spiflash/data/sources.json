@@ -1,5 +1,5 @@
 {
- "format": 10,
+ "format": 11,
  "sources": {
   "dediprog": {
    "branch": "master",
@@ -162,6 +162,7 @@
    "paths": [
     "drivers/mtd/spi/spi-nor-ids.c",
     "drivers/mtd/spi/sf_internal.h",
+    "drivers/mtd/spi/spi-nor-core.c",
     "include/linux/mtd/spi-nor.h"
    ],
    "records": 334,

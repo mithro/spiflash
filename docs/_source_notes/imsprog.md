@@ -48,9 +48,11 @@ and its link goes to the file itself.
   0x17 and read back with 0x16 (`brwr`); SPI NAND entries set it to values
   the README does not explain, kept as a flag.
 - What a record has no field for is kept in its `flags`, under the names
-  IMSProg's code gives them: `addr4bit` where it is 0, `algorithmCode`, which of its routines
+  IMSProg's code gives them: a SPI NAND part's `addr4bit` (a SPI NOR part's
+  0, no 4-byte addressing, says nothing more), `algorithmCode`, which of its routines
   reads the security registers (and, for SPI NAND, the status registers),
-  `delay`, a factor on the bus speed, in thousandths, and for SPI NAND
+  `delay`, a factor on the bus speed, in thousandths, where it is not the
+  usual 1000, and for SPI NAND
   `ECCsize`. That is how much of each page's spare area its raw mode reads
   and writes, which its GUI sets in 64-byte steps
   (`comboBox_ECC * 64`, mainwindow.cpp:632, offering 64, 128 and "256",
@@ -100,5 +102,5 @@ still the only source for many parts, mostly from Chinese makers
 
 Its `delay` (1000 on nearly every entry) is a bus-speed factor, "bus_speed =
 default_bus_speed * Delay / 1000" (its README), not a time of the part: it
-stays the flag `delay=N`, and its ready wait is its driver's
+stays the flag `delay=N` where it is not 1000, and its ready wait is its driver's
 ([](../derived.md#times)).

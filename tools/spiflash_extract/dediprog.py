@@ -36,6 +36,9 @@ those two erases have no layout: an SPI NOR record has a block eraser only
 for 0x20 (``SectorSizeInByte``) and 0x52 (see :func:`_erasers`), so a sector
 size only from its 0x52 blocks (:func:`spiflash.derive.sector_size`). An SPI
 NAND record's block erase is over its ``BlockSizeInByte`` blocks.
+``PageSizeInByte`` is a template's on SPI NOR as well: 256 on all but seven
+entries, the SST parts written a byte at a time among them, so only a page
+other than the template's is stored (:data:`NOR_PAGE_TEMPLATE`).
 
 Entries of some classes are not what their attributes say. The DataFlash
 (``Class="AT45DB..."``) entries carry a SPI NOR template (0xd8 erase, 256-byte
@@ -190,7 +193,8 @@ RES2_MAKERS = {0x62: "Sanyo"}
 
 _NO_RES = (
     "the M25PX parts answer 0xab only as release from deep power-down, with no "
-    "signature (M25PX80 datasheet, Rev. B, the command table)"
+    "signature (the command tables of their datasheets: M25PX80 Rev. B, M25PX16 "
+    "pp. 18 and 40, M25PX32 p. 24, M25PX64 p. 27)"
 )
 
 #: ``AlternativeID`` (or ``UniqueID``) values that are wrong, by part and
@@ -201,6 +205,10 @@ ALTERNATIVE_WRONG = {
         "XM25QH128A",
         "0x2016",
     ): "the XM25QH128A answers REMS with 20 17 (its datasheet, Rev. H, Table 6)",
+    ("XM25QH128B", "0x2016"): (
+        "the XM25QH128B answers REMS (and RES) with device id 17h (its datasheet, Rev. 0.4, "
+        "Table 8.4)"
+    ),
     ("XM25QU128C", "0x2118"): (
         "the XM25QU128C answers REMS with 20 17 (its datasheet, Rev. 2.1, 7.1.1)"
     ),
@@ -407,12 +415,21 @@ def _identify(chip: dict[str, str]) -> tuple[str, str, str | None, str]:
     raise ValueError(msg)
 
 
+#: The SPI NOR ``PageSizeInByte`` of the template: 256 on all but seven of
+#: the SPI NOR entries, the SST parts Dediprog writes a byte or a word at
+#: a time, which have no page program, among them: no part's page size.
+#: The other value, 512 (the S25FL512S, S25HL and S28HS parts), is the
+#: part's.
+NOR_PAGE_TEMPLATE = 256
+
+
 def _record(line: int, chip: dict[str, str]) -> Record:
     typ, id_hex, ext_id, method = _identify(chip)
     size = int(chip["ChipSizeInKByte"]) * 1024
     page = int(chip["PageSizeInByte"])
     ops = Opcodes()
     command = int(chip["RDIDCommand"], 16)
+    erase_notes: list[str] = []
     # The command the entry names (0xaf alone is no operation spiflash has),
     # but read-id for a JEDEC id under 0x90. A SPI NAND part's read-id is
     # its id method's (spiflash.derive.NAND_ID_OPERATION).
@@ -446,7 +463,7 @@ def _record(line: int, chip: dict[str, str]) -> Record:
                 ops.add("BP" if byte_program else op, f"{word}={words[word]}", value=byte)
         # Not AddrWidth, which is 4 for some 32 KiB parts: the size, and
         # the operations, imply 4-byte addressing.
-        erasers = _erasers(chip, ops, size)
+        erasers = _erasers(chip, ops, size, erase_notes)
         # The status register bits to clear to unprotect the chip: BP0 to
         # BP4 are bits 2 to 6.
         if int(chip.get("ProtectBlockMask", "0"), 16) & 0x7C:
@@ -504,7 +521,7 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         ext_id=ext_id,
         id_method=method,
         size=size,
-        page_size=None if dataflash else page,
+        page_size=None if dataflash or (typ == "nor" and page == NOR_PAGE_TEMPLATE) else page,
         erasers=erasers or None,
         features=features,
         flags=flags,
@@ -515,9 +532,59 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         listed_clock_hz=clock,
         timings=timings,
         opcodes=ops.to_json(),
-        notes=([description] if description else []) + qe_notes + legacy_notes + clock_notes,
+        notes=(
+            ([description] if says_more(description) else [])
+            + qe_notes
+            + legacy_notes
+            + clock_notes
+            + erase_notes
+        ),
         **nand,
     )
+
+
+#: The words of a ``Description`` that say nothing a field does not:
+#: the kind of part, and its size, supply class and clock, which the
+#: record's size, supply and listed clock hold.
+_TEMPLATE_WORDS = frozenset(
+    [
+        "low",
+        "voltage",
+        "volt",
+        "only",
+        "volt-only",
+        "wide",
+        "vcc",
+        "range",
+        "serial",
+        "nor",
+        "nand",
+        "flash",
+        "memory",
+        "with",
+        "spi",
+        "bus",
+        "interface",
+        "cmos",
+        "high",
+        "speed",
+        "spi_flash",
+    ]
+)
+# A size, a voltage or a clock: "128", "Mbit", "64M-BIT", "1.8V", "104MHz", "2.5-volt".
+_TEMPLATE_VALUE = re.compile(
+    r"(?i)(?:[\d.]+(?:-[\d.]+)?)?(?:k|m|g|kilo|mega|giga)?-?(?:bits?|b|bytes?|v|volts?|mhz)?"
+)
+
+
+def says_more(description: str) -> bool:
+    """Whether a ``Description`` says more than the record's fields: not
+    ``"128 Mbit, Low Voltage, Serial Flash Memory With 104MHz SPI Bus
+    Interface"``, whose size, supply class and clock the fields hold, but
+    ``"... Serial Flash Memory with Boot and Parameter Sectors"``."""
+    words = re.split(r"[\s,/()]+", description.strip())
+    rest = [w for w in words if w and w.lower() not in _TEMPLATE_WORDS]
+    return any(not _TEMPLATE_VALUE.fullmatch(w) for w in rest)
 
 
 #: The spellings of the clock attribute: ``Clock`` on nearly every entry,
@@ -663,7 +730,22 @@ def _opcodes(chip: dict[str, str], word: str, text: str) -> Iterator[tuple[int, 
         yield slot, byte, table[byte]
 
 
-def _erasers(chip: dict[str, str], ops: Opcodes, size: int) -> list[dict[str, Any]]:
+_STACKED = (
+    "the {part} is stacked dies, erased a die at a time with DIE ERASE (0xc4), and "
+    "has no chip (bulk) erase: its datasheet lists no 0xc7 ({sheet})"
+)
+
+#: Erase opcodes the part does not have, by entry and opcode, and why: the
+#: record leaves them out, with a note.
+ERASE_WRONG = {
+    ("MT25QL01GBBB", 0xC7): _STACKED.format(part="MT25QL01G", sheet="MT25QL01GBBB, command set"),
+    ("MT25QU01GB", 0xC7): _STACKED.format(part="MT25QU01G", sheet="as the MT25QL01GBBB's"),
+}
+
+
+def _erasers(
+    chip: dict[str, str], ops: Opcodes, size: int, notes: list[str]
+) -> list[dict[str, Any]]:
     """The erase layouts: chip erase; 0x20 over the ``SectorSizeInByte`` sectors; 0x52 over the SST
     parts' 32 KiB blocks, or an AT25F's ``SectorSizeInByte`` where that is
     not the template's 4096. Die erase has none: its layout is the dies'
@@ -675,6 +757,10 @@ def _erasers(chip: dict[str, str], ops: Opcodes, size: int) -> list[dict[str, An
     (the AMIC A25L..P parts)."""
     out: list[dict[str, Any]] = []
     for slot, byte, op in _opcodes(chip, "EraseCmd", chip["EraseCmd"]):
+        wrong = ERASE_WRONG.get((chip["TypeName"], byte))
+        if wrong is not None:
+            notes.append(f"EraseCmd={chip['EraseCmd']}'s 0x{byte:02x} left out: {wrong}")
+            continue
         ops.add(op, f"EraseCmd={chip['EraseCmd']}", value=byte)
         sectors = int(chip.get("SectorSizeInByte", "0"))
         if slot == 0:

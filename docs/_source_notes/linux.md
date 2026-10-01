@@ -74,7 +74,8 @@ MT35XU02G, which has four, the C of MT35XU02GCBA), and spansion.c's 2 Gbit S25H 
 S28H parts (2 dies, the 4 their SFDP tables give corrected, with
 Infineon's 0x61 [DIE_ERASE_61](../opcodes/DIE_ERASE_61.md); the smaller
 parts' come from their SFDP tables alone, which Linux does not carry).
-Winbond's W25Q01JV and W25Q02JV have `size / SZ_64M` dies (2 and 4, by
+`spi_nor_erase()` erases such a part die by die, and never sends its chip
+erase, so those records have no default chip erase. Winbond's W25Q01JV and W25Q02JV have `size / SZ_64M` dies (2 and 4, by
 their density) and no die erase; the kernel selects each with 0xc2
 ([DIE_SELECT](../opcodes/DIE_SELECT.md)) to poll it.
 
@@ -116,7 +117,18 @@ MT29F8G01ADAFD and MT29F8G01ADBFD with bit 6 of feature 0xd0 (the record's
 `die_select_bit`). A part of several LUNs and one target (the W25N02JW,
 the GD5F4GQ6) has dies, but no select: they are row address bits.
 `USE_FSR`, `USE_CLSR` and `USE_CLPEF` are the flag status register and the
-error-clearing commands its driver sends.
+error-clearing commands its driver sends, and `SST_WRITE` SST's
+word-at-a-time write ({upstream}`sst.c <linux:drivers/mtd/spi-nor/sst.c>`'s
+`sst_nor_write`: [AAI_WP](../opcodes/AAI_WP.md), with a
+[BP](../opcodes/BP.md) at either end). A SPI NAND part's
+`SPINAND_USER_OTP_INFO` gives its OTP area, its pages times the page size
+(the MT29F2G01ABAGD's 12 pages are wrong: its datasheet gives ten, and the
+record has those, with a note). Its `.n_banks` (the MX25UW51245G's 4, with
+`SPI_NOR_RWW`) is the banks its read-while-write core reads one of while
+writing another; no field holds it, and it stays a flag. Its
+`.addr_nbytes = 2` (Everspin's MR25H128 and MR25H256 MRAM) is a
+`2byte_addr` claim. Its SPI NAND `SPINAND_ECCINFO`, continuous read, read retry and
+randomizer are the driver's handling, not the part's, and are not kept.
 
 It gives no time per part ([](../derived.md#times)): its 40 s ready wait,
 its chip erase wait of 40 s per 2 MiB and its soft reset sleep

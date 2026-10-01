@@ -9,7 +9,7 @@ U-Boot kept {sfsrc}`linux`'s pre-6.8 table format,
 two-byte extended id; `INFO6` with a three-byte one, and `INFO_NAME` with
 designated fields for the odd parts, FRAM), grouped under
 `CONFIG_SPI_FLASH_<VENDOR>`. It has parts {sfsrc}`linux` dropped or never
-had, and like Linux it gives each part's size, page and sector size and
+had, and like Linux it gives each part's size, sector size and
 capability flags, from which the opcodes its
 {upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` would use follow. Its
 sector size is an erase layout, 0xd8 over the `INFO` sectors (and 0x20 or
@@ -17,11 +17,19 @@ sector size is an erase layout, 0xd8 over the `INFO` sectors (and 0x20 or
 (unless `SPI_NOR_NO_FR`), page program and chip erase it sets up for every
 part, and the quad page program it adds for every `SPI_NOR_QUAD_READ` part,
 are its driver's defaults, as are their 4-byte forms: they imply no
-capability.
+capability. Its page size is not the part's either: `INFO` and `INFO6`
+write `.page_size = 256` for every entry, the driver's default, as
+{sfsrc}`linux`'s `SPI_NOR_DEFAULT_PAGE_SIZE`, so a record has a page size
+only where an `INFO_NAME` entry gives its own. An `INFO_NAME` entry's
+`.addr_width = 2` (the MB85RS256TY FRAM) is a `2byte_addr` claim.
 
 `SPI_NOR_HAS_LOCK` gives the block-protection bits its
 {upstream}`spi-nor.h <u-boot:include/linux/mtd/spi-nor.h>` defines (BP0 to
-BP2 and SRWD), as {sfsrc}`linux`'s flags do. `SPI_NOR_HAS_TB` gives no TB:
+BP2 and SRWD), as {sfsrc}`linux`'s flags do. It has no `SPI_NOR_4BIT_BP`,
+so those three are its driver's whatever the part has (the W25Q01JV and
+the MX25U12835F have a BP3 too): the layout is marked partial
+(`"partial": true`), and a chip only {sfsrc}`u-boot` gives a layout is
+shown as one that may have more BP bits. `SPI_NOR_HAS_TB` gives no TB:
 U-Boot has only `SR_TB`, bit 5, for every part, and no flag for the bit 6
 of the W25Q256 and W25Q512 families, so the bit is its driver's, and the
 flag stays a flag. An

@@ -11,8 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from spiflash.enums import Feature
-from spiflash.model import EraseBlock, Eraser, Record
+import spiflash
+from spiflash.enums import AddressBytes, Feature
+from spiflash.model import EraseBlock, Eraser, Otp, Record
 from spiflash.opcodes import OPERATIONS
 from spiflash_extract import (
     cparse,
@@ -62,6 +63,12 @@ def features(rec: record.Record) -> list[str]:
     """A record's capabilities as it loads: those it claims and those its
     other fields imply."""
     return sorted(Record.from_json(rec).features)
+
+
+def erasers(rec: record.Record) -> list[dict[str, object]]:
+    """A record's erasers as it loads: those it stores, and those derived
+    (the die and chip erase layouts, its SFDP tables')."""
+    return [e.to_json() for e in Record.from_json(rec).erasers]
 
 
 def sector(rec: record.Record) -> int | None:
@@ -326,7 +333,8 @@ def test_linux_nand(linux_tree: Path) -> None:
     }
     assert n["via"] == {}
     assert n["flags"] == []
-    assert n["notes"] == ["3.3V"]  # no "1 bit(s) per cell, 64 B OOB per page"
+    # No "1 bit(s) per cell, 64 B OOB per page", nor its "3.3V" (its name says so).
+    assert n["notes"] == []
     # The double transfer rate variants have no operation; of an
     # operation's several variants, the most dummy clocks (the one with no
     # clock limit: 1S_4S_4S(0, 4, ...), not (0, 2, ..., 104 MHz)).
@@ -664,13 +672,19 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
     ]
     # Its operations, erasers and protection bits imply the rest.
     assert e["features"] == ["otp"]
-    assert e["erasers"][0] == {"opcode": 0x20, "blocks": [[4096, 4096]]}
-    assert e["erasers"][3] == {
-        "opcode": None,
-        "blocks": [[4096, 2], [8192, 1]],
-        "function": "spi_block_erase_emulation",
-    }
-    assert len(e["erasers"]) == 4
+    # The chip erase's layout is its size: the operation is stored, and the
+    # layout derived, as a die erase's is.
+    assert e["erasers"] == [
+        {"opcode": 0x20, "blocks": [[4096, 4096]]},
+        {"opcode": 0xD8, "blocks": [[65536, 256]]},
+        {
+            "opcode": None,
+            "blocks": [[4096, 2], [8192, 1]],
+            "function": "spi_block_erase_emulation",
+        },
+    ]
+    assert erasers(e)[3] == {"opcode": 0xC7, "blocks": [[16 << 20, 1]]}
+    assert stored_ops(e)["CHIP_ERASE"] == "block_erasers (1 x 16777216)"
     assert e["voltage"] == [2700, 3600]
     assert e["tested"] == "TEST_OK_PREW"
     assert ops(e) == {
@@ -680,20 +694,26 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
         "READ_1_1_2": (0x3B, "FEATURE_FAST_READ_DOUT"),
         "BE_4K": (0x20, "eraser: 4096 x 4096"),
         "SE": (0xD8, "eraser: 256 x 65536"),
-        "CHIP_ERASE": (0xC7, "eraser: 1 x 16777216"),
+        "CHIP_ERASE": (0xC7, "block_erasers (1 x 16777216)"),
         "WRSR": (0x01, "FEATURE_WRSR_WREN"),
         "EQPI_38": (0x38, "FEATURE_QPI_38_FF"),
         "RSTQIO_FF": (0xFF, "FEATURE_QPI_38_FF"),
     }
-    assert "EON_ID_NOPREFIX: EON, missing 0x7F prefix" in e["notes"]
+    # The maker id's comment is every part's: not a note.
+    assert not [n for n in e["notes"] if n.startswith("EON_ID_NOPREFIX")]
     assert "supports SFDP" not in e["notes"]  # RDSFDP's via holds it
-    # The id read and the erases are derived, so not stored.
-    assert {o["op"] for o in e["opcodes"]}.isdisjoint({"RDID", "BE_4K", "SE", "CHIP_ERASE"})
+    # The id read and the block erases are derived, so not stored; the chip
+    # erase is stored, and its layout derived.
+    assert {o["op"] for o in e["opcodes"]}.isdisjoint({"RDID", "BE_4K", "SE"})
 
     s = r["S25FL128S_UL Uniform 128 kB Sectors"]
     assert s["id"] == "012018"
     assert s["ext_id"] == "4d0080"  # the id length byte, 4d, the probe skips
     assert s["tested"] == "{ .probe = NA, .read = OK }"
+    # Its 256-byte page is wrong (ENTRY_WRONG): the record has the
+    # datasheet's 512, with a note.
+    assert s["page_size"] == 512
+    assert any(n.startswith("page 512 B, not the entry's 256 B: ") for n in s["notes"])
     assert r["M25P05"]["id_method"] == "res1"
     assert r["M25P05"]["id"] == "05"
     assert r["M95320"]["id"] is None
@@ -782,12 +802,107 @@ def test_flashrom_errors(tmp_path: Path) -> None:
         flashrom.extract(tmp_path, "flashprog")
 
 
+def test_notes_that_restate_a_field_go() -> None:
+    # Dediprog's Description, where it says only the size, supply and clock.
+    for template in (
+        "128 Mbit, Low Voltage, Serial Flash Memory With 104MHz SPI Bus Interface",
+        "1Gbit, Serial NAND Flash Memory With SPI Bus Interface",
+        "3V 16M-BIT FLASH MEMORY",
+        "SPI_FLASH",
+    ):
+        assert not dediprog.says_more(template), template
+    assert dediprog.says_more("16 Mbit Serial Flash Memory with Boot and Parameter Sectors")
+    # Zephyr's comment giving the node's size.
+    assert zephyr.states_size("64 Mbits", 8 << 20)
+    assert zephyr.states_size("134217728 bits = 16 Mbytes", 16 << 20)
+    assert zephyr.states_size("Size (2 MiB) is in bits", 2 << 20)
+    assert not zephyr.states_size("64 Mbits", 16 << 20)  # another size: a note
+
+
+def test_flashrom_comment_operations() -> None:
+    assert flashrom.comment_operations("Fast read (0x0B) supported") == ("READ_1_1_1_FAST",)
+    assert flashrom.comment_operations("also fast read 0x0B") == ("READ_1_1_1_FAST",)
+    # One model's of a multi-part entry is not the entry's.
+    assert flashrom.comment_operations("Fast read (0x0B) supported by SST25VF512A only") == ()
+    assert flashrom.comment_operations("QPI enable 0x38, disable 0xFF") == ("EQPI_38", "RSTQIO_FF")
+    assert flashrom.comment_operations("bit6 is quad enable") == ()
+
+
+def test_flashprog_dummy_cycles() -> None:
+    uses, flags = flashrom.dummy_cycles("{ .qpi_read_params = { 10, 4, 6, 8 } }")
+    assert uses == [
+        {
+            "op": "READ_4_4_4",
+            "via": ".dummy_cycles.qpi_read_params = {10, 4, 6, 8}",
+            "dummy_clocks": 10,
+        }
+    ]
+    assert flags == ["qpi_read_params.01-11=4,6,8"]
+    uses, flags = flashrom.dummy_cycles("{ .qpi_fast_read = 4, .qpi_fast_read_qio = 6, }")
+    assert [(u["op"], u["dummy_clocks"]) for u in uses] == [("READ_4_4_4", 6)]
+    assert flags == ["dummy_cycles.qpi_fast_read=4"]
+
+
+def test_shipped_new_mappings() -> None:
+    # Each upstream fact with a home is in it (S11).
+    recs = {(r.source, r.name): r for r in spiflash.records()}
+    w77 = recs["flashrom", "W77Q12NW"]
+    assert (w77.dies, w77.via["dies"]) == (2, ".die_size = 8192")
+    assert "DIE_SELECT" in {u.op for u in w77.opcodes}
+    sst = [r for r in spiflash.records() if r.source == "linux" and "SST_WRITE" in str(r.opcodes)]
+    assert len(sst) == 9
+    assert all({"AAI_WP", "BP"} <= {u.op for u in r.opcodes} for r in sst)
+    mt = recs["linux", "MT29F2G01ABAGD"]
+    assert mt.otp == Otp(10 * 2048)
+    assert recs["linux", "MR25H128"].address_bytes is AddressBytes.TWO
+    assert recs["u-boot", "MB85RS256TY"].address_bytes is AddressBytes.TWO
+    issi = recs["flashrom", "IS25LP128"]
+    assert {"IRRD", "IRP", "IRER"} <= {u.op for u in issi.opcodes}
+    assert not {"RSECR", "PSECR"} & {u.op for u in issi.opcodes}
+
+
+def test_flashrom_wrong_values_are_corrected() -> None:
+    # "S25FL256S Large Sectors": half the size, and the S25FS's voltage.
+    notes: list[str] = []
+    erasers = [
+        {"opcode": 0xDC, "blocks": [[256 << 10, 64]]},
+        {"opcode": 0x60, "blocks": [[16 << 20, 1]]},
+    ]
+    got = flashrom.corrected("S25FL256S Large Sectors", 16 << 20, 256, [1700, 2000], erasers, notes)
+    assert got == (32 << 20, 512, [2700, 3600])
+    assert erasers == [
+        {"opcode": 0xDC, "blocks": [[256 << 10, 128]]},
+        {"opcode": 0x60, "blocks": [[32 << 20, 1]]},
+    ]
+    assert [n.split(":")[0] for n in notes] == [
+        "size 32 MiB, not the entry's 16 MiB",
+        "page 512 B, not the entry's 256 B",
+        "voltage 2700-3600 mV, not the entry's 1700-2000 mV",
+    ]
+    # The uniform-128 KiB S25FL128S_UL erases 256 KiB blocks.
+    erasers = [{"opcode": 0xD8, "blocks": [[128 << 10, 128]]}]
+    flashrom.corrected("S25FL128S_UL Uniform 128 kB Sectors", 16 << 20, 256, None, erasers, [])
+    assert erasers == [{"opcode": 0xD8, "blocks": [[256 << 10, 64]]}]
+    # An entry not listed is as it is.
+    assert flashrom.corrected("W25Q128.V", 16 << 20, 256, None, [], []) == (16 << 20, 256, None)
+
+
 def test_flashrom_only_big_spansion_has_an_extended_id() -> None:
     # The id length byte, 4d, belongs to PROBE_SPI_BIG_SPANSION's parts only.
     assert flashrom.id_bytes("rdid", 0x01, 0x20180080, "SPI_BIG_SPANSION") == ("012018", "4d0080")
     assert flashrom.id_bytes("rdid", 0xEF, 0x4018, "SPI_RDID") == ("ef4018", None)
     with pytest.raises(ValueError, match="more than two bytes, 0x20180080, from probe 'SPI_RDID'"):
         flashrom.id_bytes("rdid", 0x01, 0x20180080, "SPI_RDID")
+
+
+def test_flashrom_continuation_id_has_a_one_byte_model() -> None:
+    # rdid_get_ids(): 3 bytes starting 0x7f are 7f, the maker, one model
+    # byte (PMC's PM25LD020 is 7f 9d 22); RDID4 reads two (AMIC's), and
+    # flashprog's ID_SPI_RDID as many as the table writes.
+    assert flashrom.id_bytes("rdid", 0x7F9D, 0x22, "SPI_RDID") == ("7f9d22", None)
+    assert flashrom.id_bytes("rdid", 0x7F37, 0x2010, "SPI_RDID4") == ("7f372010", None)
+    assert flashrom.id_bytes("rdid", 0x7F37, 0x2020, "SPI_RDID") == ("7f372020", None)
+    assert flashrom.id_bytes("rdid", 0x7F37, 0x20, "SPI_RDID4") == ("7f370020", None)
 
 
 def flashrom_micron(tmp_path: Path) -> record.Record:
@@ -928,10 +1043,12 @@ def test_openocd(tmp_path: Path) -> None:
         "READ_1_4_4": (0xEB, "qread_cmd"),
         "PP_1_1_1": (0x02, "pprog_cmd"),
         "SE": (0xD8, "eraser: 256 x 65536"),
-        "CHIP_ERASE": (0xC7, "eraser: 1 x 16777216"),
+        "CHIP_ERASE": (0xC7, "chip_erase_cmd"),
     }
     assert ops(r["IS25WP512M"])["READ_1_4_4_4B"] == (0xEC, "qread_cmd")
-    assert w["erasers"] == [
+    # The chip erase's layout is derived from the size.
+    assert w["erasers"] == [{"opcode": 0xD8, "blocks": [[65536, 256]]}]
+    assert erasers(w) == [
         {"opcode": 0xD8, "blocks": [[65536, 256]]},
         {"opcode": 0xC7, "blocks": [[16 << 20, 1]]},
     ]
@@ -1073,7 +1190,8 @@ def test_rockchip_nor() -> None:
     r = by_name(rockchip.extract_nor(ROCKCHIP))
     gd = r["GD25Q40B"]
     assert (gd["id"], gd["id_method"], gd["line"]) == ("c84013", "rdid", 16)
-    assert (gd["size"], gd["page_size"], sector(gd)) == (512 << 10, 256, 64 << 10)
+    # No page size: NOR_PAGE_SIZE is the driver's, for every part.
+    assert (gd["size"], gd["page_size"], sector(gd)) == (512 << 10, None, 64 << 10)
     assert gd["erasers"] == [
         {"opcode": 0x20, "blocks": [[4096, 128]]},
         {"opcode": 0xD8, "blocks": [[65536, 8]]},
@@ -1332,7 +1450,8 @@ def test_imsprog() -> None:
     # which gives BRWR and BRRD, holds the token.
     assert s["four_byte_modes"] == ["brwr"]
     assert s["via"] == {"four_byte_modes:brwr": "addr4bit=0x21"}
-    assert s["flags"] == ["algorithmCode=0x00", "delay=1000"]
+    # delay=1000 is the bus at its usual speed: no flag.
+    assert s["flags"] == ["algorithmCode=0x00"]
     assert s["supply_mv"] == 3300
     # IMSProg never sends 0xc7.
     assert set(ops(s)) == {"RDID", "READ_1_1_1", "PP_1_1_1", "SE", "BRWR", "BRRD"}
@@ -1520,15 +1639,19 @@ def test_record_make_validates() -> None:
     ]
     for key in bad_keys:
         with pytest.raises(ValueError, match="bad via key"):
-            record.make("linux", "f", 1, "n", size=1, erasers=erasers, via={key: "x"})
+            record.make("linux", "f", 1, "n", size=16 << 20, erasers=erasers, via={key: "x"})
     with pytest.raises(ValueError, match="bad via key"):
         record.make("linux", "f", 1, "n", id_method=None, via={"id_method": "x"})
     ok = {"size": "a", "erasers:0x20": "b", "erasers": "c", "id_method": "d"}
-    assert record.make("linux", "f", 1, "n", size=1, erasers=erasers, via=ok)["via"] == ok
+    size = 16 << 20
+    assert record.make("linux", "f", 1, "n", size=size, erasers=erasers, via=ok)["via"] == ok
     # A token is stored once: not under two keys, nor in a note too.
     twice = {"size": "t", "erasers": "t"}
     with pytest.raises(ValueError, match="under erasers and size"):
-        record.make("linux", "f", 1, "n", size=1, erasers=erasers, via=twice)
+        record.make("linux", "f", 1, "n", size=size, erasers=erasers, via=twice)
+    # A layout is over the size.
+    with pytest.raises(ValueError, match="an eraser over 16777216 bytes of 1"):
+        record.make("linux", "f", 1, "n", size=1, erasers=erasers)
     with pytest.raises(ValueError, match="notes repeat via"):
         record.make("linux", "f", 1, "n", size=1, via={"size": "t"}, notes=["t"])
 
@@ -1717,7 +1840,11 @@ def test_zephyr() -> None:
         "quad_read",
         "sfdp",
     ]
-    assert {"nordic,qspi-nor", "readoc=read4io", "writeoc=pp4io"} <= set(m["flags"])
+    # readoc's read is its table's, so derived: the token stays a flag;
+    # writeoc's PP_1_4_4 holds its own, spelt as the flag would be.
+    assert {"nordic,qspi-nor", "readoc=read4io"} <= set(m["flags"])
+    assert stored_ops(m)["PP_1_4_4"] == "writeoc=pp4io"
+    assert "writeoc=pp4io" not in m["flags"]
     # has-dpd: DP and RDPD, which its BFPT's DW14 gives too (so derived),
     # with the exit delay, 40 µs. The node's t-exit-dpd, 35 µs, is more
     # precise: stored, and no disagreement (35 µs is 40 µs on DW14's grid).
@@ -1732,7 +1859,7 @@ def test_zephyr() -> None:
     assert [o["op"] for o in m["opcodes"]] == ["PP_1_4_4"]
     (read,) = (u for u in loaded.opcodes if u.op == "READ_1_4_4")
     assert (read.implied, read.dummy_clocks) == (True, 6)
-    assert ops(m)["PP_1_4_4"] == (0x38, "writeoc = pp4io")
+    assert ops(m)["PP_1_4_4"] == (0x38, "writeoc=pp4io")
     assert m["notes"] == [
         "MX25R64 supports only pp and pp4io",
         "MX25R64 supports all readoc options",
@@ -1751,7 +1878,9 @@ def test_zephyr() -> None:
     # one-maker binding; the MSPI mode.
     x = r["MX25LM51245"]
     assert (x["vendor"], x["size"], x["features"]) == ("mxicy", 64 << 20, ["octal_read"])
-    assert "mspi-io-mode=MSPI_IO_MODE_OCTAL" in x["flags"]
+    # The mode is the claim's via, not a flag too.
+    assert x["via"]["feature:octal_read"] == "mspi-io-mode=MSPI_IO_MODE_OCTAL"
+    assert "mspi-io-mode=MSPI_IO_MODE_OCTAL" not in x["flags"]
     # A descriptive compatible names the part and its maker (here with an id
     # that is not ISSI's, kept as the board has it).
     i = r["IS25LP128"]
@@ -1759,7 +1888,8 @@ def test_zephyr() -> None:
     # bflb: no size; use-sfdp says the part answers SFDP.
     g = r["GD25LQ32D"]
     assert (g["size"], features(g)) == (None, ["erase_4k", "sfdp"])
-    assert "erase-block-size=4096" in g["flags"]
+    assert g["via"]["feature:erase_4k"] == "erase-block-size=4096"
+    assert "erase-block-size=4096" not in g["flags"]
     assert set(ops(g)) == {"RDID", "RDSFDP"}
     # Two boards with the same node are one record, which names the other.
     # Its table is JESD216's first: nine DWORDs, no page size.
@@ -1806,7 +1936,8 @@ def test_zephyr_node_values(tmp_path: Path) -> None:
     assert r["four_byte_modes"] == ["en4b"]
     assert r["via"]["four_byte_modes:en4b"] == "enter-4byte-addr=0x1"
     assert not any(f.startswith("enter-4byte-addr") for f in r["flags"])
-    assert "has-lock=0x1c" in r["flags"]
+    # has-lock is the lock claim's via, not a flag too.
+    assert (r["via"]["feature:lock"], "has-lock=0x1c" in r["flags"]) == ("has-lock=0x1c", False)
     # The wake-up sequence's three times, from one token; no flag.
     assert r["timings"] == {
         "dpd_exit": {"maximum": 30000},
@@ -1989,13 +2120,13 @@ def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
                         ee ff ff ff ff ff 00 ff ff ff 00 ff 0c 20 0f 52
                         10 d8 00 ff 23 72 f5 00 82 ed 04 cc 44 83 68 44
                         30 b0 30 b0 f7 c4 d5 5c 00 be 29 ff f0 d0 ff ff];"""
-    r, m = zephyr_board(
+    r, m, c = zephyr_board(
         tmp_path,
         f"""mx25r6435f@0 {{
             compatible = "jedec,spi-nor";
             jedec-id = [c2 28 17];
             {table}
-            size = <DT_SIZE_M(16)>;
+            size = <DT_SIZE_M(64)>;
             page-size = <4096>;
         }};
         mx25r6435f@1 {{
@@ -2003,25 +2134,31 @@ def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
             jedec-id = [c2 28 17];
             {table}
             page-size = <4096>;
+        }};
+        mx25r1635f@2 {{
+            compatible = "jedec,spi-nor";
+            jedec-id = [c2 28 15];
+            {table}
+            size = <DT_SIZE_M(16)>;
         }};""",
     )
     # What the node states and the table does not is stored, and is the
-    # record's value; the two are disagreements, not notes.
-    assert (r["size"], r["page_size"]) == (2 << 20, 4096)
+    # record's value; the page is a disagreement, not a note. The size the
+    # table repeats is not stored.
+    assert (r["size"], r["page_size"]) == (None, 4096)
     assert r["notes"] == []
     loaded = Record.from_json(r)
-    assert (loaded.size, loaded.page_size) == (2 << 20, 4096)
-    assert loaded.sfdp_disagreements() == (
-        ("size", 2 << 20, 8 << 20),
-        ("page_size", 4096, 256),
-    )
-    # The table's erase types are laid over the record's own size.
-    assert [e.to_json() for e in loaded.erasers] == [
-        {"opcode": 0x20, "blocks": [[4096, 512]]},
-        {"opcode": 0x52, "blocks": [[32768, 64]]},
-        {"opcode": 0xD8, "blocks": [[65536, 32]]},
+    assert (loaded.size, loaded.page_size) == (8 << 20, 4096)
+    assert loaded.sfdp_disagreements() == (("page_size", 4096, 256),)
+    # A table of another density than the node's is another part's: not
+    # taken, with a note.
+    assert (c["size"], c["sfdp_tables"]) == (2 << 20, {})
+    assert c["notes"] == [
+        (
+            "sfdp-bfp not read: another part's tables (their density, 8388608 bytes, is "
+            "not the node's 2097152)"
+        )
     ]
-    assert loaded.sector_size == 65536
     # The driver's page-size is a flag, and the part's page is the table's.
     assert (m["page_size"], "page-size=4096" in m["flags"]) == (None, True)
     assert Record.from_json(m).page_size == 256
@@ -2077,10 +2214,10 @@ def test_zephyr_quad_enable_requirement(tmp_path: Path) -> None:
     assert c["via"]["quad_enable_requirement"] == "quad-enable-requirements=S1B6"
     assert "quad-enable-requirements=S1B6" not in c["flags"]
     assert Record.from_json(c).quad_enable_requirement == "S1B6"
-    assert d["quad_enable_requirement"] == "S2B1v5"
-    assert Record.from_json(d).sfdp_disagreements()[:1] == (
-        ("quad_enable_requirement", "S2B1v5", "S1B6"),
-    )
+    # One that differs is another part's table: not taken, with a note, and
+    # the node's requirement is the record's.
+    assert (d["quad_enable_requirement"], d["sfdp_tables"]) == ("S2B1v5", {})
+    assert d["notes"][0].startswith("sfdp-bfp not read: another part's tables (their quad")
 
 
 def test_zephyr_skips(tmp_path: Path) -> None:
@@ -2207,11 +2344,12 @@ def test_qemu(tmp_path: Path) -> None:
     a = r["AT25FS010"]
     assert a["vendor"] == "Atmel"  # the heading, without its "-- some are ..." remark
     assert a["line"] == 119
+    # No page size: INFO()'s 256 is the model's, for every part.
     assert (a["id"], a["ext_id"], a["size"], a["page_size"], sector(a)) == (
         "1f6601",
         None,
         128 << 10,
-        256,
+        None,
         32 << 10,
     )
     assert a["erasers"] == [
@@ -2256,7 +2394,8 @@ def test_qemu(tmp_path: Path) -> None:
     assert m["vendor"] == "Macronix"
     assert (m["id"], m["ext_id"]) == ("c22019", "c22019")
     assert (m["size"], m["erasers"]) == (None, None)
-    assert m["page_size"] == 256  # INFO's: the JESD216 (1.0) table has none
+    # INFO's 256 is the model's default; the JESD216 (1.0) table has none.
+    assert m["page_size"] is None
     assert Record.from_json(m).size == 32 << 20
     assert m["flags"] == []
     assert m["via"] == {
@@ -2543,9 +2682,10 @@ def test_dediprog(tmp_path: Path) -> None:
     w = r["W25Q128FV"]
     assert (w["line"], w["vendor"], w["id"], w["id_method"]) == (37, "Winbond", "ef4018", "rdid")
     # 0xd8 has no layout, and gives no sector size: BlockSizeInByte is a
-    # template's 64 KiB.
-    assert (w["size"], w["page_size"], sector(w)) == (16 << 20, 256, None)
-    assert w["erasers"] == [{"opcode": 0xC7, "blocks": [[16 << 20, 1]]}]
+    # template's 64 KiB. Its 256-byte PageSizeInByte is the template's too.
+    assert (w["size"], w["page_size"], sector(w)) == (16 << 20, None, None)
+    # The chip erase's layout is derived from the size.
+    assert (w["erasers"], erasers(w)) == (None, [{"opcode": 0xC7, "blocks": [[16 << 20, 1]]}])
     # Only the single-line read and program of the packed words.
     assert set(ops(w)) == {"RDID", "READ_1_1_1_FAST", "PP_1_1_1", "SE", "CHIP_ERASE"}
     assert ops(w)["READ_1_1_1_FAST"] == (0x0B, "ReadCmd=0x006B3B0B")
@@ -2563,7 +2703,9 @@ def test_dediprog(tmp_path: Path) -> None:
     # ChipEraseTime is seconds, its bound not said; Clock one clock.
     assert w["timings"] == {"chip_erase": {"unspecified": 200 * 10**9}}
     assert w["listed_clock_hz"] == 75_000_000
-    assert w["notes"][0].startswith("128 Mbit")
+    # Its Description ("128 Mbit, Low Voltage, ...") says what its fields hold:
+    # not a note.
+    assert not [n for n in w["notes"] if n.startswith("128 Mbit")]
     # Legacy ids: REMS, AT25F, and RES read with its dummy bytes (0xff), or
     # answering the manufacturer too (with its continuation code).
     assert (r["25LF040A"]["id"], r["25LF040A"]["id_method"]) == ("bf44", "rems")
@@ -2594,7 +2736,7 @@ def test_dediprog(tmp_path: Path) -> None:
     assert "RDID" in ops(r["MT25TL256B ( for one die)"])
     # A 64 KiB block on a 32 KiB part is no layout, and no sector size.
     cd = r["IS25CD025"]
-    assert (cd["erasers"], sector(cd)) == (
+    assert (erasers(cd), sector(cd)) == (
         [{"opcode": 0xC7, "blocks": [[32 << 10, 1]]}],
         None,
     )
@@ -2650,7 +2792,7 @@ def test_dediprog_classes(tmp_path: Path) -> None:
     assert {"opcode": 0x52, "blocks": [[32 << 10, 4]]} in at25f["erasers"]
     assert sector(at25f) == 32 << 10
     at25f2048 = r["AT25F2048"]
-    assert (at25f2048["erasers"], sector(at25f2048)) == (
+    assert (erasers(at25f2048), sector(at25f2048)) == (
         [{"opcode": 0x62, "blocks": [[256 << 10, 1]]}],
         None,
     )

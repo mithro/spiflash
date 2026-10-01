@@ -493,3 +493,52 @@ Changes in data format 10 (the timing model, and the listed clock):
 - the command's description gains a `timing:` line, and with `-v` every
   time and the clock Dediprog lists; the site a Timing section on the chip
   pages, and a TIMING kind of data issue.
+
+Changes in data format 11 (the final verification pass):
+
+- a chip erase's layout, one block of the part's size, is derived from the
+  chip erase operation and the size
+  ({py:func}`spiflash.derive.chip_erasers`, over
+  {py:data}`~spiflash.derive.CHIP_ERASES`), as a die erase's is from the
+  dies, and never stored: a record's `"erasers"` loses it, and its
+  `"opcodes"` keep the operation, with the upstream token as its `via`
+  ({sfsrc}`flashrom`'s `block_erasers (1 x ...)`, {sfsrc}`dediprog`'s
+  `EraseCmd`, {sfsrc}`openocd`'s `chip_erase_cmd`);
+  {py:attr}`Record.erasers <spiflash.model.Record.erasers>` gives it as
+  before. Every stored layout is over the record's size;
+- {py:data}`spiflash.vendors.SUCCESSORS` and {py:func}`spiflash.vendors.company`
+  are new: the company a maker's flash parts went to (Atmel, Adesto, Dialog,
+  Renesas; ST and Intel, Numonyx, Micron; Spansion, Cypress, Infineon; SST,
+  Microchip; ...). A MANUFACTURER data issue is now one where the sources
+  name different companies, not one company's successive names: 194 issues
+  become 85;
+- {py:class}`~spiflash.registers.Protection` gains `partial`, JSON
+  `"partial": true` in a record's `"protection"`: the block-protect bits
+  given may not be all the part's ({sfsrc}`u-boot`'s BP0 to BP2, its
+  driver's for every part). {py:attr}`Flash.protection
+  <spiflash.model.Flash.protection>` is partial where every record giving a
+  BP bit is; {py:data}`~spiflash.registers.ROLES` is the fields but it;
+- {py:class}`~spiflash.enums.AddressBytes` gains `TWO` and
+  {py:class}`~spiflash.enums.Feature` `2byte_addr`, the claim that gives it
+  ({sfsrc}`linux`'s `.addr_nbytes = 2`, {sfsrc}`u-boot`'s `.addr_width = 2`,
+  {sfsrc}`flashrom`'s `FEATURE_ADDR_2BYTE`); {py:func}`~spiflash.sfdp_tools.encode`
+  refuses such a part, which a BFPT cannot describe;
+- new operations: [IRRD](opcodes/IRRD.md), [IRP](opcodes/IRP.md) and
+  [IRER](opcodes/IRER.md), ISSI's information row (its OTP area);
+- a consensus tie ({py:class}`~spiflash.model.Flash`'s values) is never
+  broken by the order of the records: after the sources and the records, the
+  value of the records naming the chip's own part wins, then the smaller;
+- {py:attr}`Flash.part_records <spiflash.model.Flash.part_records>` is new:
+  the records but those of another size naming no part of the chip's size,
+  another part listed under the id, which {py:attr}`~spiflash.model.Flash.opcodes`,
+  {py:attr}`~spiflash.model.Flash.features`,
+  {py:attr}`~spiflash.model.Flash.four_byte_modes` and
+  {py:attr}`~spiflash.model.Flash.address_bytes` leave out;
+- {py:meth}`Flash.supports() <spiflash.model.Flash.supports>` does not count
+  an operation only a driver default gives (QEMU's chip erase, which its
+  model decodes for every part); {py:attr}`~spiflash.model.Flash.opcodes`
+  still lists it;
+- `SfdpDump.tables`, {py:attr}`SfdpDump.sfdp <spiflash.model.SfdpDump.sfdp>`
+  by its old name, is gone; no SFDP data issue is left: a Zephyr node's
+  tables whose density or quad enable requirement are not the node's are
+  another part's, and are not taken.

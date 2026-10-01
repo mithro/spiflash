@@ -78,7 +78,11 @@ A25L..P). An SPI NOR record has an erase layout only for 0x20
 `SectorSizeInByte` on the AT25F parts where it is not the template's 4 KiB
 (0x52 erases 64 KiB on the AT25F2048); so a sector size only from its 0x52
 blocks. An SPI NAND record's block erase is over its erase block,
-`BlockSizeInByte`, as {sfsrc}`linux` gives it.
+`BlockSizeInByte`, as {sfsrc}`linux` gives it. An SPI NOR entry's
+`PageSizeInByte` is the template's 256 on all but seven entries, the SST
+parts Dediprog writes a byte or a word at a time among them, so only the
+other value, 512 (the S25FL512S, the S25HL and S28HS parts), is stored as a
+page size.
 
 Some classes of part are not what their attributes say:
 
@@ -142,9 +146,10 @@ A SPI NAND entry's `SpareSizeInByte` holds two spare sizes, one in each
 half: the high half, the whole spare area of a page, is the record's
 `oob_size`; the low half (the spare left free beside the part's own ECC) is
 not taken (the XT26Q01D's high half, 64 bytes, is wrong: its datasheet
-gives 128). Its `ReadCmd` and `ProgramCmd` words (`0x006B000B`,
-`0x00320002` on nearly every SPI NAND entry) are a template, and are not
-taken. Its `SupportLUT` is the bad block lookup table's swap and read
+gives 128). Its `ReadCmd`, `ProgramCmd` and `EraseCmd` words
+(`0x006B000B`, `0x00320002` on nearly every SPI NAND entry) are a
+template, and SPI NOR's opcodes besides: they are not taken as operations,
+and stay flags. Its `SupportLUT` is the bad block lookup table's swap and read
 ([NAND_BBM_SWAP](../opcodes/NAND_BBM_SWAP.md),
 [NAND_READ_BBM_LUT](../opcodes/NAND_READ_BBM_LUT.md)), and its read-id is
 SPI NAND's, from the id method.
@@ -177,7 +182,11 @@ against 108, MX25U25645G 104 against 166, MX25U6432F 85 against 133), above
 it once (W25Q80BL 75 MHz, against 50 MHz in its datasheet, Rev. G1), and
 once no clock (the IS25WP256D's `166Mbit`). Its `Description`'s "With
 NN MHz SPI Bus" is a template too, so is not taken either; where it names
-other clocks than `Clock`, a note on the record says so. Left out, each with a note: two clocks, a read's and a
+other clocks than `Clock`, a note on the record says so. The `Description`
+is a note only where it says more than the size, supply class and clock
+("... with Boot and Parameter Sectors", "DataFlash"): "128 Mbit, Low
+Voltage, Serial Flash Memory With 104MHz SPI Bus Interface", on 782
+entries, says only what the fields hold. Left out, each with a note: two clocks, a read's and a
 fast read's (`33/100MHz` and the like, 55 entries: not one fact), a value
 in no unit or the wrong one (`166`, `166Mbit`, `A13112`), and `416MHz` (the
 A25LQ64's and the W25Q64FW's 104 MHz quad read, as 416 Mbit/s).
@@ -186,13 +195,17 @@ The entry has much that the database has no
 field for yet: the status and configuration register
 commands, the 4 KiB sector size where no opcode
 goes with it, the classes' die counts (`N25Qxxx_Large_2Die`, which are its
-programming algorithms'), and for SPI NAND the ECC layout
-(`DefaultErrorBits`, `DefaultDataUnitSize`), the read dummy length and the
-bad block marker.
+programming algorithms'), and for SPI NAND the read dummy length and the
+bad block marker. Its SPI NAND `DefaultErrorBits` and `DefaultDataUnitSize`
+would be the record's `ecc`, but they are a template's (8 bits per 528
+bytes on 202 of the 210 entries, whatever the part needs; one gives 544
+bits), so are not taken.
 
 Its entries are not reviewed in the open, and some are wrong: an entry's
 read and program words swapped, a block size larger than the chip, several
-entries for one id with different sizes. A source listing a part several
+entries for one id with different sizes, a chip erase (0xc7) on the stacked
+MT25QL01GBBB and MT25QU01GB, which erase a die at a time and have none (left
+out, with a note). A source listing a part several
 times still has one vote when the sources disagree.
 [Its data issues page](../issues/source-dediprog.md) lists where it
 disagrees with the others.

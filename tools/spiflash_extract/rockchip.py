@@ -234,7 +234,7 @@ def _nor_record(values: list[int], symbols: dict[str, str | int]) -> dict[str, A
     return {
         "id": f"{chip_id:06x}",
         "size": size,
-        "page_size": cparse.evaluate("NOR_PAGE_SIZE", symbols),
+        # No page size: NOR_PAGE_SIZE is the driver's, for every part.
         "erasers": [
             {"opcode": sec_erase, "blocks": [[4096, size // 4096]]},
             {"opcode": blk_erase, "blocks": [[block * SECTOR, size // (block * SECTOR)]]},

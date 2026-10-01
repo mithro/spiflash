@@ -86,6 +86,7 @@ def _record(
     id_hex = ext = None
     sector = page = size = None
     flag_expr = "0"
+    address_width = 0
     for macro, ext_bytes in (("INFO6", 3), ("INFO", 2)):
         args = cparse.macro_call(body, macro)
         if args is None:
@@ -96,7 +97,9 @@ def _record(
         sector = cparse.evaluate(args[3], symbols)
         size = sector * cparse.evaluate(args[4], symbols)
         flag_expr = args[5] if len(args) > 5 else "0"
-        page = 256
+        # INFO's .page_size = 256 is every entry's: the driver's default,
+        # as Linux's SPI_NOR_DEFAULT_PAGE_SIZE, not the part's.
+        page = None
         id_hex = f"{jedec:06x}" if jedec else None
         ext = f"{ext_val:0{2 * ext_bytes}x}" if ext_val else None
         break
@@ -116,10 +119,17 @@ def _record(
         sector = cparse.evaluate(fields.get("sector_size", "0"), symbols) or None
         n_sectors = cparse.evaluate(fields.get("n_sectors", "0"), symbols)
         size = sector * n_sectors if sector and n_sectors else None
-        page = cparse.evaluate(fields.get("page_size", "256"), symbols)
+        # Only a .page_size the entry gives is its own.
+        page = cparse.evaluate(fields["page_size"], symbols) if "page_size" in fields else None
         flag_expr = fields.get("flags", "0")
+        address_width = cparse.evaluate(fields.get("addr_width", "0"), symbols)
     flags = cparse.flag_names(flag_expr)
     claims = [(_FEATURES[f], f) for f in flags if f in _FEATURES]
+    if address_width == 2:  # the Fujitsu MB85RS256TY FRAM's .addr_width
+        claims.append(("2byte_addr", ".addr_width = 2"))
+    elif address_width:
+        msg = f".addr_width = {address_width}: only 2 is known"
+        raise ValueError(msg)
     features = {feat for feat, _ in claims}
     if "4byte_opcodes" in features:
         features.add("4byte_addr")
@@ -131,6 +141,11 @@ def _record(
         # part's (the W25Q256/512 family's is bit 6). The flag stays.
         tb_free = [f for f in flags if f != "SPI_NOR_HAS_TB"]
         layout, layout_via = protection(tb_free, symbols)
+        if layout is not None:
+            # spi-nor.h has SR_BP0 to SR_BP2 and no SPI_NOR_4BIT_BP: the
+            # driver's three, whatever the part has (the W25Q01JV and the
+            # MX25U12835F have BP3 too), so the layout is partial.
+            layout["partial"] = True
     erasers = []
     if sector and size and "no_erase" not in features:
         for flag, opcode in (("SECT_4K", 0x20), ("SECT_4K_PMC", 0xD7)):

@@ -299,6 +299,18 @@ stored: {sfsrc}`flashrom`'s `spi_block_erase_c4` layout, {sfsrc}`dediprog`'s
 has it. Some parts have dies and no die erase (Winbond's W25Q01JV and
 W25Q02JV).
 
+A chip erase is the same: its layout is one block of the part's size, so
+it is the stated chip erase ([CHIP_ERASE](opcodes/CHIP_ERASE.md),
+[CHIP_ERASE_ALT](opcodes/CHIP_ERASE_ALT.md) or
+[CHIP_ERASE_ATMEL](opcodes/CHIP_ERASE_ATMEL.md)) over the size
+({py:func}`~spiflash.derive.chip_erasers`), never stored: {sfsrc}`flashrom`'s
+`spi_block_erase_c7` over `{size, 1}`, {sfsrc}`dediprog`'s `EraseCmd` and
+{sfsrc}`openocd`'s `chip_erase_cmd` are each the operation. A driver's
+default chip erase ({sfsrc}`linux`'s, {sfsrc}`qemu`'s) has no layout. A
+uniform block erase keeps its count of blocks, which is the size over the
+block: the layout is one form for the uniform and the non-uniform erases
+(flashrom's boot blocks), and the count is never other than the size's.
+
 A part of several dies may select one, by a command or a register bit, never
 both: Winbond's [DIE_SELECT](opcodes/DIE_SELECT.md) and
 [NAND_DIE_SELECT](opcodes/NAND_DIE_SELECT.md) (0xc2 and the die), or

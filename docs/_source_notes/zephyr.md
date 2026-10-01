@@ -10,7 +10,9 @@ some with placeholder ids.
 - A node gives the id, the size (in bits in the JESD216-based bindings), and,
   where the board sets them, the page size, the read and program modes it
   uses (`readoc`, `writeoc`, the MSPI I/O mode) and what the chip needs
-  (`enter-4byte-addr`, `has-lock`, ...), kept in the record's `flags`.
+  (`enter-4byte-addr`, `has-lock`, ...): each is the `via` of the operation
+  or capability it gives (`feature:lock` for `has-lock`, spelt as a flag
+  would be, `has-lock=0xbc`), or else kept in the record's `flags`.
 - The part's times are the record's `timings` ([](../derived.md#times)),
   each bounded as its binding's words say
   ({upstream}`jedec,spi-nor-common.yaml <zephyr:dts/bindings/mtd/jedec,spi-nor-common.yaml>`,
@@ -33,10 +35,14 @@ some with placeholder ids.
   reset is a power cycle"), so they are the rail's, not the part's RESET#
   times, and a note says so
   ({py:data}`~spiflash_extract.zephyr.BOARD_MARGINS`). Some `t-exit-dpd`s
-  are a board's margin too: the GD25Q16C boards' 100 µs, where its
-  datasheet's tRES1 is 20 µs. A `t-exit-dpd` is often more precise than the BFPT's DW14, which
-  rounds it up (the MX25R6435F's 35 µs is 40 µs there): it is kept, and is
-  no disagreement; nrf7002dk's 5 µs is ([data issues](../issues/sfdp.md)).
+  are not the part's either, and are not taken, with a note
+  ({py:data}`~spiflash_extract.zephyr.NOT_THE_PARTS`): the GD25Q16C boards'
+  100 µs, a margin over its datasheet's tRES1 of 20 µs; nrf7002dk's 5 µs,
+  shorter than the MX25R6435F's tRDP; rm1xx_dvk's 20 ns for its AT25DF041B,
+  a unit slip. (The MX25L3233F's 100 µs is its datasheet's tRES1.) A
+  `t-exit-dpd` is often more precise than the BFPT's DW14, which rounds it
+  up (the MX25R6435F's 35 µs is 40 µs there): it is kept, and is no
+  disagreement.
   `spi-max-frequency` and the other clock and controller properties are the
   board's settings, not the part's, and are not taken.
 - `has-dpd` gives [DP](../opcodes/DP.md) and [RDPD](../opcodes/RDPD.md)
@@ -72,9 +78,14 @@ some with placeholder ids.
   [data issue](../issues/sfdp.md): the `spi_nor` driver refuses a size its
   table contradicts. The tables are what the board's porter copied, not
   always the part's: frdm_mcxe247's W25Q64 carries the MX25R6435F's BFPT
-  byte for byte (`spiflash sfdp-diff ef4017 c22817` finds no difference;
-  its node says the quad enable is S2B1v1, the table SR1 bit 6), and
-  wio_tracker_l1's P25Q16H carries another part's, a 16 MiB one with DTR.
+  byte for byte (its node says the quad enable is S2B1v1, the table SR1 bit
+  6), and wio_tracker_l1's P25Q16H, 2 MiB, carries another part's, a 16 MiB
+  one with DTR. Tables whose density is not the node's size, or whose quad
+  enable requirement is not the node's, are another part's: they are not
+  taken, and a note says so.
+  The W25Q64 nodes' S2B1v1 is wrong too: the W25Q64JV's 1-byte WRSR leaves
+  its Status Register-2 alone, which is S2B1v4, and the record has that,
+  with a note (`QER_WRONG`).
 - `page-size` is the part's page for `jedec,spi-nor`, but two drivers take
   it as their own setting, though every binding inherits
   {upstream}`jedec,jesd216.yaml <zephyr:dts/bindings/mtd/jedec,jesd216.yaml>`'s description, "Number of bytes in a page from
@@ -93,6 +104,12 @@ some with placeholder ids.
   manufacturer.
 - Boards often share a chip: nodes that give the same values are one record,
   at the first file, with a note listing the others.
+- ctcc_nrf9161's MX25R6435F node gives the MX25U12835F's `jedec-id`, c2 25 38:
+  its name, size and wake-up sequence are the MX25R6435F's, so the record
+  has that part's c2 28 17, with a note (`ID_WRONG`).
+- The node's comments are the record's notes, but one that only gives the
+  node's size ("64 Mbits", "134217728 bits = 16 Mbytes"), which the record
+  holds.
 - The values are written, and copied between boards, by each board's porter,
   and some are wrong (a size given in bytes where bits are meant, an id
   copied from another board). That is why {sfsrc}`zephyr` comes last when

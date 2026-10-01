@@ -200,11 +200,15 @@ def extract(root: Path, wrong: Mapping[tuple[str, str, int | None], str] = WRONG
 
 def _flags(e: bytes) -> list[str]:
     """The fields a record has no place for, named as IMSProg's chip struct
-    names them."""
+    names them; not those saying nothing: a ``delay`` of 1000 (the bus at
+    its usual speed, nearly every entry's), and a SPI NOR ``addr4bit`` of 0
+    (no 4-byte addressing, which the size and the ways in say)."""
+    delay = int.from_bytes(e[0x3C:0x3E], "little")
+    nor = e[0x3A] == NOR
     return [
         f"algorithmCode=0x{e[0x3B]:02x}",
-        f"delay={int.from_bytes(e[0x3C:0x3E], 'little')}",
-        f"addr4bit=0x{e[0x3E]:02x}",
+        *([f"delay={delay}"] if delay != 1000 else []),
+        *([f"addr4bit=0x{e[0x3E]:02x}"] if not (nor and e[0x3E] == 0) else []),
     ]
 
 

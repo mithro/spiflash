@@ -29,7 +29,8 @@ The fields are read as the driver uses them. For an SPI NOR entry,
 - the id is the three bytes of [read-id](../opcodes/RDID.md);
 - the size is `1 << density` sectors of 512 bytes, and `block_size` is in the
   same sectors;
-- the page is the driver's 256 bytes (`NOR_PAGE_SIZE`) for every part;
+- the page is the driver's 256 bytes (`NOR_PAGE_SIZE`) for every part, a
+  default rather than the part's, so a record has none;
 - the driver erases with `sector_erase_cmd` 4 KiB at a time in the first and
   last 256 KiB of the chip, and with `block_erase_cmd` a block at a time in
   between (`snor_write()`);

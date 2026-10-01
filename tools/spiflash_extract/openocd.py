@@ -40,6 +40,39 @@ def part_name(vendor: str, name: str) -> str:
     return name
 
 
+_STACKED = (
+    "the {part} is stacked dies, erased a die at a time with DIE ERASE (0xc4), and "
+    "has no chip (bulk) erase: its datasheet lists no 0xc7 ({sheet})"
+)
+
+#: Entries whose ``chip_erase_cmd`` the part does not have, by OpenOCD's
+#: name, and why: the record leaves it out, with a note.
+CHIP_ERASE_WRONG = {
+    "micron mt25ql01": _STACKED.format(part="MT25QL01G", sheet="MT25QL01GBBB, command set"),
+    "micron mt25qu01": _STACKED.format(part="MT25QU01G", sheet="as the MT25QL01GBBB's"),
+    "micron mt25ql02": _STACKED.format(
+        part="MT25QL02G",
+        sheet='MT25QL02GCBB, command set; its Rev. B history: "DIE ERASE instead BULK ERASE"',
+    ),
+    "micron mt25qu02": _STACKED.format(part="MT25QU02G", sheet="as the MT25QL02GCBB's"),
+}
+
+
+#: Entries whose ``device_id`` is no answer to read-id (0x9f), by name: the
+#: id the part answers its own id read with, and why. The record has that
+#: id, read as the part reads it, with a note.
+_AT25F = (
+    "the AT25F parts have no 0x9f (their datasheets: AT25F512A, AT25F512/1024); their "
+    "RDID, 0x15, answers 1f {code} ({who})"
+)
+ID_WRONG = {
+    "atmel 25f512": ("1f65", _AT25F.format(code="65", who="the AT25F512A's datasheet")),
+    "atmel 25f1024": ("1f60", _AT25F.format(code="60", who="as flashrom gives it")),
+    "atmel 25f2048": ("1f63", _AT25F.format(code="63", who="as flashrom gives it")),
+    "atmel 25f4096": ("1f64", _AT25F.format(code="64", who="as flashrom gives it")),
+}
+
+
 def device_id_hex(device_id: int) -> str:
     """The RDID bytes, as the chip sends them, of an OpenOCD ``device_id``."""
     cont = (device_id >> 24) & 0xFF
@@ -75,6 +108,11 @@ def extract(root: Path) -> list[Record]:
             erase, chip_erase, dev, page, sector, size = nums[3:]
             features: set[str] = set()
             _field(ops, notes, "erase_cmd", erase, ERASE_BY_OPCODE)
+            if full in CHIP_ERASE_WRONG:
+                notes.append(
+                    f"chip_erase_cmd 0x{chip_erase:02x} left out: {CHIP_ERASE_WRONG[full]}"
+                )
+                chip_erase = 0
             _field(ops, notes, "chip_erase_cmd", chip_erase, ERASE_BY_OPCODE)
             erasers = [{"opcode": erase, "blocks": [[sector, size // sector]]}] if sector else []
             if chip_erase:
@@ -85,6 +123,13 @@ def extract(root: Path) -> list[Record]:
             page = 0
             erasers = []
             notes.append("FRAM")
+        id_hex, id_method = device_id_hex(dev), "rdid"
+        if full in ID_WRONG:
+            # Not an answer to 0x9f: the part's own id read's.
+            id_hex, why = ID_WRONG[full]
+            id_method = "at25f"
+            ops.discard("RDID")
+            notes.append(f"device_id 0x{dev:08x} is no answer to 0x9f: {why}")
         opcodes = ops.to_json()
         records.append(
             make(
@@ -93,7 +138,8 @@ def extract(root: Path) -> list[Record]:
                 cparse.line_of(raw, m.start()),
                 name,
                 vendor=vendor,
-                id=device_id_hex(dev),
+                id=id_hex,
+                id_method=id_method,
                 size=size,
                 page_size=page or None,
                 erasers=erasers or None,

@@ -96,7 +96,9 @@ class SourceInfo:
 #: power-down and reset times; those their SFDP tables give derived) and
 #: ``listed_clock_hz`` (the clock Dediprog lists); Zephyr's ``has-dpd`` is the new
 #: ``DP`` and ``RDPD`` operations, its DPD flags gone.
-FORMAT = 10
+#: 11: a chip erase layout (one block of the size) is derived from the
+#: chip erase operation, as a die erase layout is, and never stored.
+FORMAT = 11
 
 
 def _read(name: str) -> dict[str, Any]:

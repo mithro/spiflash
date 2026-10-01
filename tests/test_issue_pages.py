@@ -6,7 +6,7 @@ import spiflash
 from issue_checks import EXPLAINED, IssueKind, find
 from issue_pages import VALUE_TITLES, chip_issues, generate_all
 from page_markup import EM_SPACE, EN_DASH
-from spiflash import Database, Datasheet
+from spiflash import Database, Datasheet, vendors
 from spiflash.enums import Source
 from spiflash.model import COMPARED, part_key
 from spiflash.registers import Register, RegisterBit
@@ -201,10 +201,16 @@ def test_legacy_ids_and_wildcards_are_not_name_issues() -> None:
 
 
 def test_manufacturers() -> None:
-    db = Database([rec(vendor="Spansion", id="012018"), rec(vendor="Cypress", id="012018")])
+    db = Database([rec(vendor="Winbond", id="012018"), rec(vendor="Spansion", id="012018")])
     (issue,) = find(db)
     assert issue.kind is IssueKind.MANUFACTURER
-    assert {a.value for a in issue.answers} == {"Spansion", "Cypress"}
+    assert {a.value for a in issue.answers} == {"Winbond", "Spansion"}
+    # One company's successive names are not two manufacturers.
+    db = Database([rec(vendor="Spansion", id="012018"), rec(vendor="Cypress", id="012018")])
+    assert find(db) == []
+    assert vendors.company("Atmel") == vendors.company("Renesas") == "Renesas"
+    assert vendors.company("ST") == vendors.company("Intel") == "Micron"
+    assert vendors.company("Winbond") == "Winbond"
 
 
 def datasheet(parts: list[str], confirmed: list[str]) -> Datasheet:
@@ -238,8 +244,9 @@ def test_shipped_data() -> None:
     found = find()
     # No two sources give one chip's bounds out of order: only Dediprog's
     # chip erase time (unspecified, so not ordered) and Zephyr's maxima and
-    # minima meet the tables' times.
-    assert {i.kind for i in found} == set(IssueKind) - {IssueKind.TIMING}
+    # minima meet the tables' times. No record disagrees with its own SFDP
+    # tables: Zephyr's that do are another part's, and not taken.
+    assert {i.kind for i in found} == set(IssueKind) - {IssueKind.TIMING, IssueKind.SFDP}
     by_kind = {k: [i for i in found if i.kind is k] for k in IssueKind}
     # U-Boot's MT25QL01G id has its bytes swapped; the datasheet gives 20 ba 21.
     (mt,) = [i for i in by_kind[IssueKind.NAME_IDS] if i.subject == "MT25QL01G"]
@@ -345,15 +352,15 @@ def test_one_source_grouped_by_value() -> None:
     assert all(h.split(" (")[0].removeprefix("## ") in VALUE_TITLES.values() for h in headings)
     counts = sum(int(h.split("(")[1].rstrip(")")) for h in headings)
     assert counts == len([i for i in find(db) if i.kind is IssueKind.SAME_SOURCE])
-    assert "(same-source-page-size)=" in page
+    assert "(same-source-size)=" in page
     # The summary links each value's section.
-    assert "<same-source.html#same-source-page-size>`" in pages["index.md"]
+    assert "<same-source.html#same-source-size>`" in pages["index.md"]
 
 
 def test_parts_an_extended_id_tells_apart_are_not_compared() -> None:
     found = {(i.subject, i.attribute) for i in find() if i.kind is IssueKind.VALUE}
-    # flashrom's S25FL128S_UL (1.7-2.0 V) against its and flashprog's 3 V
-    # S25FL128S: one part, a real disagreement.
+    # flashrom's 1.8 V S25FS128S at 4d 00 81 against the 3 V S25FL127S and
+    # S25FL128P, whose entries have no extended id and so cover every part.
     assert ("012018", "voltage") in found
     # The S25FS512S (1.8 V) and the S25FL512S (3 V): two parts.
     assert ("010220", "voltage") not in found

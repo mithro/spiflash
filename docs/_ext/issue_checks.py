@@ -24,6 +24,7 @@ from spiflash.model import (
     register_bits,
     same_supply_part,
 )
+from spiflash.vendors import company
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -111,7 +112,12 @@ _ISSUE_TITLES = {
     ),
     IssueKind.MANUFACTURER: (
         "Sources disagree on the manufacturer",
-        "Sources name different manufacturers for one chip id.",
+        (
+            "Sources name different manufacturers for one chip id: different "
+            "companies, not one company's successive names (Atmel, Adesto and "
+            "Renesas; ST, Numonyx and Micron; Spansion, Cypress and Infineon; SST "
+            "and Microchip; ...)."
+        ),
     ),
     IssueKind.DATASHEET: (
         "Ids the datasheets don't give",
@@ -153,17 +159,13 @@ _MX25V = (
 #: disagree where that is not plain from their answers.
 EXPLAINED = {
     ("c22817", "timings.dpd_exit.maximum"): (
-        "The MX25R6435F datasheet (Rev. 1.6) gives tRDP 35 µs in ultra low power mode and "
-        "45 µs in high performance mode, and its BFPT 40 µs: nrf7002dk's t-exit-dpd of 5 µs "
-        "is wrong."
+        "ctcc_nrf9161's dpd-wakeup-sequence gives tRDP 30 µs; the MX25R6435F datasheet "
+        "(Rev. 1.6) gives 35 µs in ultra low power mode and 45 µs in high performance "
+        "mode, and its BFPT 40 µs: the board's is short."
     ),
     ("c22817", "timings.erase_resume_to_suspend.typical"): (
         "Two versions of the MX25R6435F's BFPT, which Zephyr's boards copy, differ in DW12's "
         "erase resume-to-suspend interval alone."
-    ),
-    ("ef4017", "timings.dpd_exit.maximum"): (
-        "frdm_mcxe247's W25Q64 carries the MX25R6435F's BFPT, whose DW14 gives 40 µs; the "
-        "W25Q64JV's tRES1 is 3 µs."
     ),
     ("20ba21", "dies"): _TWO_PARTS.format(part="MT25QL01GBBB"),
     ("20bb21", "dies"): _TWO_PARTS.format(part="MT25QU01GBBB"),
@@ -189,10 +191,10 @@ EXPLAINED = {
         "2.0 V range is wrong, and Dediprog's 3.3 V right."
     ),
     ("010219", "supply_mv"): (
-        "The S25FL256S is a 2.7 V to 3.6 V part, as flashrom's S25FL256S......0 entry "
-        'says; its "S25FL256S Large Sectors" and "Small Sectors" entries give 1.7 V to '
-        "2.0 V, the S25FS256S's, so Dediprog's 3.3 V for the S25FL256S is outside a "
-        "wrong range."
+        "Dediprog's 1.8 V is for the S25FS256S, a 1.7 V to 2.0 V part, which no source "
+        'here gives a range: no source is wrong. (flashrom\'s "S25FL256S Large Sectors" '
+        'and "Small Sectors" entries give the S25FL256S, a 2.7 V to 3.6 V part, the '
+        "S25FS256S's 1.7 V to 2.0 V: their records carry the datasheet's range.)"
     ),
     ("1f2400", "supply_mv"): _AT45,
     ("1f2500", "supply_mv"): _AT45,
@@ -224,13 +226,36 @@ EXPLAINED = {
         "Linux's 768 B (three regions) does not."
     ),
     ("c84018", "otp.size"): (
-        "Parts sharing the id: the GD25Q128B, C and E. The GD25Q128B's 768 B is flashrom's "
-        '"1024B total, 256B reserved"; whether 256 B are reserved is uncertain (its '
-        "datasheet is said to disagree with itself; not checked here)."
+        "Parts sharing the id: the GD25Q128B has three 256-byte security registers, "
+        '768 B (its datasheet: "three 256-byte Security Registers", though its feature '
+        'list says "4*256-Byte"), flashrom\'s "1024B total, 256B reserved"; the '
+        "GD25Q127C, GD25B127D, GD25Q128E and GD25B128H three 1024-byte ones, 3072 B "
+        '(their datasheets), which flashprog\'s "1536B total" for them got wrong (its '
+        "records carry the datasheets'). The GD25Q128C's 1536 B is both sources', not "
+        "checked."
     ),
     ("c86318", "otp.size"): (
-        "flashrom gives the GD25LF128E 1024 B less 256 B reserved, flashprog three 1 KiB "
-        "regions; the datasheet was not to hand to say which is right."
+        "flashrom gives the GD25LF128E 1024 B less 256 B reserved, the comment of its "
+        "GD25Q128B entry; flashprog three 1 KiB regions, as the GD25LF80E has (its "
+        "datasheet, Rev. 1.2). No GD25LF128E datasheet was found (the part is "
+        "discontinued), so which is right is not checked."
+    ),
+    ("c22018", "otp.size"): (
+        "Parts sharing the id: the MX25L12805D's secured OTP is 64 B, the MX25L12835F's "
+        '512 B (its datasheet, v1.7: "4K-bit Secured OTP"), the MX25L12833F\'s 1 KiB '
+        "(flashrom's, not checked): no source is wrong, and the chip's one answer is the "
+        "most sources'."
+    ),
+    ("c22018", "size"): (
+        "Dediprog lists its MX25L25835E, 32 MiB, under this id, the 16 MiB MX25L12835F's "
+        "(Macronix's 256 Mbit parts answer c2 20 19; not checked for this one): another "
+        "part's record, so its operations and capabilities are not this chip's "
+        "(Flash.part_records)."
+    ),
+    ("1c7016", "otp.size"): (
+        "Parts sharing the id: the EN25QH32B has three 512-byte security sectors, 1536 B "
+        "(its datasheet, Rev. 1.7), the EN25QH32 512 B (both sources', not checked): no "
+        "source is wrong."
     ),
 }
 
@@ -475,9 +500,12 @@ def _name_ids(flashes: Iterable[Flash]) -> Iterator[Issue]:
 
 
 def _manufacturers(flashes: Iterable[Flash]) -> Iterator[Issue]:
+    """One issue per chip whose sources name more than one company: one
+    company's successive names (Atmel, Adesto, Renesas:
+    :data:`spiflash.vendors.SUCCESSORS`) are not a disagreement."""
     for f in flashes:
         answers = _answers((r.manufacturer, r) for r in f.records)
-        if len(answers) > 1:
+        if len({company(a.value) for a in answers}) > 1:
             yield Issue(IssueKind.MANUFACTURER, f.key, (f,), answers)
 
 

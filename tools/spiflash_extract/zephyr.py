@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from spiflash.derive import ERASE_FEATURE
 from spiflash.enums import Bound, TimedEvent
-from spiflash.sfdp import BFPT_ID, FOUR_BYTE_ID, PROFILE1_ID
+from spiflash.sfdp import BFPT_ID, FOUR_BYTE_ID, PROFILE1_ID, from_tables
 from spiflash.timings import TimingKey
 
 from . import cparse, dts
@@ -260,6 +260,57 @@ BOARD_MARGINS = {
     ),
 }
 
+_GD25Q16C_MARGIN = (
+    "100 µs is the board's margin: the GD25Q16C's tRES1 is 20 µs (its datasheet, Rev. 3.2)"
+)
+
+#: Times a board gives that are not its part's, by file and property, and
+#: why: a board's margin over the datasheet's maximum, or a value no part
+#: has. The record leaves them out, with a note.
+NOT_THE_PARTS = {
+    ("boards/beagle/beagleconnect_freedom/beagleconnect_freedom-common.dtsi", "t-exit-dpd"): (
+        _GD25Q16C_MARGIN
+    ),
+    ("boards/adafruit/feather_stm32f405/adafruit_feather_stm32f405.dts", "t-exit-dpd"): (
+        _GD25Q16C_MARGIN
+    ),
+    ("boards/nordic/nrf7002dk/nrf5340_cpuapp_common.dtsi", "t-exit-dpd"): (
+        "5 µs is shorter than the MX25R6435F's tRDP, 35 µs (45 µs in high performance mode; "
+        "its datasheet, Rev. 1.6), and its own BFPT's 40 µs"
+    ),
+    ("boards/ezurio/rm1xx_dvk/rm1xx_dvk.dts", "t-exit-dpd"): (
+        "20 ns is no deep power-down exit time (the AT25DF041A's tRDPD is 3 µs, its "
+        "datasheet; the AT25DF041B's was not to hand): a unit slip"
+    ),
+}
+
+#: ``jedec-id``\ s a node gives wrongly, by file and the id it gives: the
+#: part's id, and why. The record has the part's, with a note.
+ID_WRONG = {
+    ("boards/ct/ctcc/ctcc_nrf9161_common.dtsi", "c22538"): (
+        "c22817",
+        (
+            "c2 25 38 is the 128 Mbit 1.8 V MX25U12835F's; the node's MX25R6435F (its "
+            "name, its 64 Mbit size and its dpd-wakeup-sequence are the MX25R's) answers "
+            "c2 28 17 (its datasheet, Rev. 1.6)"
+        ),
+    ),
+}
+
+#: Quad enable requirements a node gives wrongly, by chip id and the code
+#: it gives: the code the part's datasheet gives, and why. The record
+#: stores the datasheet's, with a note.
+QER_WRONG = {
+    ("ef4017", "S2B1v1"): (
+        "S2B1v4",
+        (
+            "a 1-byte WRSR (01h) leaves the W25Q64JV's Status Register-2 as it is "
+            '("the Status Register-2 will not be affected", its datasheet, Rev. N, 8.2.5), '
+            "which is S2B1v4; S2B1v1's 1-byte WRSR clears it"
+        ),
+    ),
+}
+
 #: ``dpd-wakeup-sequence``: three times in nanoseconds, "(1) tDPDD (Delay
 #: Time for Release from Deep Power-Down Mode) (2) tCDRP (CSn Toggling Time
 #: before Release from Deep Power-Down Mode) (3) tRDP (Recovery Time for
@@ -449,6 +500,12 @@ class _Node:
         elif binding.chip_vendor:
             vendor = binding_name.split(",")[0]
         jedec_id = dts.bytestring(self.props["jedec-id"] or "")
+        id_notes = []
+        wrong_id = ID_WRONG.get((self.rel, jedec_id.hex()))
+        if wrong_id is not None:
+            fixed, why = wrong_id
+            id_notes.append(f"jedec-id {jedec_id.hex()} is not the part's: {why}")
+            jedec_id = bytes.fromhex(fixed)
 
         self.ops.add("RDID", "jedec-id")
         size = next(
@@ -459,7 +516,8 @@ class _Node:
         driver_page = None
         if binding_name in PAGE_SIZE_IS_THE_DRIVERS and "page-size" in self.props:
             driver_page, page_size = page_size, None
-        self.notes = _comments(self.text, self.node)
+        self.notes = [n for n in _comments(self.text, self.node) if not states_size(n, size)]
+        self.notes += id_notes
         # The tables' facts are derived at load (spiflash.sfdp); make()
         # drops a size or page size they repeat. Zephyr's spi_nor driver
         # refuses a size the BFPT contradicts, and other drivers use the
@@ -479,9 +537,20 @@ class _Node:
         self.capabilities(binding)
         times, time_via = self.times()
         via |= time_via
-        qer = self.string("quad-enable-requirements")
+        given_qer = self.string("quad-enable-requirements")
+        copied = self.copied(tables, size, given_qer)
+        if copied is not None:
+            props = ", ".join(p for p in SFDP_TABLES if self.props.get(p))
+            self.notes.append(f"{props} not read: another part's tables ({copied})")
+            tables = {}
+            via.pop("sfdp_tables", None)
+        qer = given_qer
         if qer is not None and binding_name not in QER_IGNORED_BY:
             via["quad_enable_requirement"] = f"quad-enable-requirements={qer}"
+            right = QER_WRONG.get((jedec_id[:3].hex(), qer))
+            if right is not None:
+                self.notes.append(f"quad enable requirement {right[0]}, not {qer}: {right[1]}")
+                qer = right[0]
         else:
             qer = None
         return make(
@@ -505,6 +574,27 @@ class _Node:
             sfdp_tables=tables,
             notes=self.notes,
         )
+
+    @staticmethod
+    def copied(tables: dict[str, str], size: int | None, qer: str | None) -> str | None:
+        """Why a node's SFDP tables are another part's, copied from another
+        board's node, or ``None``: their density is not the node's size
+        (xiao_ble's 2 MiB P25Q16H with a 16 MiB part's BFPT), or their quad
+        enable requirement (DW15) is not the one the node gives
+        (frdm_mcxe247's W25Q64JV, S2B1v1, with the MX25R6435F's BFPT,
+        S1B6)."""
+        if not tables:
+            return None
+        facts = from_tables({int(k, 16): bytes.fromhex(v) for k, v in tables.items()}).facts()
+        why = []
+        if size is not None and facts.size is not None and facts.size != size:
+            why.append(f"their density, {facts.size} bytes, is not the node's {size}")
+        if qer is not None and facts.quad_enable_requirement not in (None, qer):
+            why.append(
+                f"their quad enable requirement, {facts.quad_enable_requirement}, is not "
+                f"the node's {qer}"
+            )
+        return "; ".join(why) or None
 
     def name(self, descriptive: list[str]) -> str | None:
         """The part name, from the first place that gives one (see the
@@ -537,25 +627,44 @@ class _Node:
                 self.fail(f"unknown {prop} {value!r}")
             op, feature = table[value]
             if feature:
-                self.features.add(feature)
+                self.claim(feature, prop)
             if op:
-                self.ops.add(op, f"{prop} = {value}")
+                self.ops.add(op, self.token(prop))
         if "use-fast-read" in self.props:
-            self.features.add("fast_read")
-            self.ops.add("READ_1_1_1_FAST", "use-fast-read")
+            self.claim("fast_read", "use-fast-read")
+            self.ops.add("READ_1_1_1_FAST", self.token("use-fast-read"))
         mode = self.string("mspi-io-mode")
-        for value in (mode, self.string("read-io-mode")):
+        for prop in ("mspi-io-mode", "read-io-mode"):
+            value = self.string(prop)
             if value in _IO_MODE:
-                self.features.add(_IO_MODE[value])
+                self.claim(_IO_MODE[value], prop)
         if (mode or "").startswith("MSPI_IO_MODE_OCTAL") and (
             self.string("mspi-data-rate") == "MSPI_DATA_RATE_DUAL"
         ):
-            self.features.update({"octal_dtr_read", "octal_dtr_pp"})
+            self.claim("octal_dtr_read", "mspi-data-rate")
+            self.claim("octal_dtr_pp", "mspi-data-rate")
+
+    def token(self, prop: str) -> str:
+        """A property as :meth:`flags` writes it: ``name``, or ``name=value``."""
+        value = self.props[prop]
+        return prop if value is None else f"{prop}={_flag_value(value)}"
+
+    def claim(self, feature: str, prop: str) -> None:
+        """Claim ``feature``, with the property giving it as its ``via``
+        (``feature:<feature>``). A token is under one ``via`` key, so a
+        property giving several claims is the first one's via only."""
+        self.features.add(feature)
+        token = self.token(prop)
+        held = {t for v in self.claim_via.values() for t in v.split("; ")}
+        if token in held:
+            return
+        key = f"feature:{feature}"
+        self.claim_via[key] = "; ".join(filter(None, (self.claim_via.get(key), token)))
 
     def capabilities(self, binding: Binding) -> None:
         """What the other properties say the part has."""
         if "has-lock" in self.props:
-            self.features.add("lock")
+            self.claim("lock", "has-lock")
         if "use-flag-status-register" in self.props:
             self.ops.add("RDFSR", "use-flag-status-register")
         # The binding (jedec,spi-nor-common.yaml) says the part needs ULBPR,
@@ -563,13 +672,15 @@ class _Node:
         if "requires-ulbpr" in self.props:
             self.ops.add("ULBPR", "requires-ulbpr")
         if "use-4b-addr-opcodes" in self.props:
-            self.features.update({"4byte_addr", "4byte_opcodes"})
-        if {"address-size-32", "use-4byte-addressing"} & set(self.props):
-            self.features.add("4byte_addr")
+            self.claim("4byte_opcodes", "use-4b-addr-opcodes")
+            self.claim("4byte_addr", "use-4b-addr-opcodes")
+        for prop in ("address-size-32", "use-4byte-addressing"):
+            if prop in self.props:
+                self.claim("4byte_addr", prop)
         self.four_byte_modes()
         erase = self.cell("erase-block-size")
         if binding.type == "nor" and erase in ERASE_FEATURE:
-            self.features.add(ERASE_FEATURE[erase].value)
+            self.claim(ERASE_FEATURE[erase].value, "erase-block-size")
 
     def times(self) -> tuple[dict[str, dict[str, int]], dict[str, str]]:
         """The part's times (:data:`TIMES`, :data:`WAKEUP`), as a record's
@@ -584,6 +695,9 @@ class _Node:
             margin = next((why for d, why in BOARD_MARGINS.items() if self.rel.startswith(d)), None)
             if n and prop.startswith("t-reset-") and margin:
                 self.notes.append(f"{prop}={n} not read: {margin}")
+                continue
+            if n and (self.rel, prop) in NOT_THE_PARTS:
+                self.notes.append(f"{prop}={n} not read: {NOT_THE_PARTS[self.rel, prop]}")
                 continue
             if n and prop.endswith("-dpd-delay") and "use-udpd" in self.props:
                 # The AT45's times are then Ultra-Deep Power-Down's.
@@ -666,6 +780,24 @@ def _flag_value(value: str) -> str:
     except (ValueError, cparse.EvalError):
         return " ".join(value.split())
     return f"0x{n:x}" if value.strip("<> ").startswith("0x") else str(n)
+
+
+# A comment giving the node's size: "64 Mbits", "128 Mbit", "128 Mbits (16 MB)",
+# "134217728 bits = 16 Mbytes", "Size (2 MiB) is in bits".
+_SIZE_COMMENT = re.compile(
+    r"(?i)(?:size \()?(?P<n>\d+) ?(?P<unit>[kmg]?)i?(?P<what>bits?|b|bytes?)\)?"
+    r"(?: = \d+ ?[kmg]?bytes| \(\d+ ?[kmg]?b\)| is in bits)?"
+)
+
+
+def states_size(comment: str, size: int | None) -> bool:
+    """Whether a comment only gives the node's size, which the record
+    holds: not a note."""
+    m = _SIZE_COMMENT.fullmatch(comment.strip())
+    if m is None or size is None:
+        return False
+    n = int(m["n"]) << {"": 0, "k": 10, "m": 20, "g": 30}[m["unit"].lower()]
+    return size == (n // 8 if m["what"].lower().startswith("bit") else n)
 
 
 def _comments(text: str, node: dts.Node) -> list[str]:

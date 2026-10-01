@@ -22,7 +22,7 @@ from spiflash.model import TIMING_COMPONENTS, EraseBlock, Record
 from spiflash.opcodes import OPERATIONS
 from spiflash.registers import Register, RegisterBit
 from spiflash.timings import BOUNDS, TimingKey, Timings, component_name, parse_component
-from spiflash_extract import record
+from spiflash_extract import record, zephyr
 from spiflash_extract.flashrom import otp as flashrom_otp
 
 
@@ -311,18 +311,18 @@ def test_a_disagreement_is_the_stored_value() -> None:
                 assert d["timings"][str(key)][str(bound)] == stored, _where(d)
             elif field != "erasers":
                 assert d[field] == stored, _where(d)
-    # One board copies another part's table (16 MiB, with DTR, for a 2 MiB
-    # P25Q16H). Two boards' page-size is their driver's setting, kept as a
-    # flag (spiflash_extract.zephyr.PAGE_SIZE_IS_THE_DRIVERS). frdm_mcxe247's
-    # W25Q64 carries the MX25R6435F's table (QE at SR1 bit 6), and its own
-    # quad-enable-requirements, Winbond's S2B1v1. nrf7002dk's MX25R6435F
-    # gives t-exit-dpd 5 µs; its BFPT's DW14 40 µs (the datasheet's tRDP is
-    # 35 µs, or 45 µs in high-performance mode).
-    assert sorted(found) == [
-        ("MX25R6435F", "timings.dpd_exit.maximum"),
-        ("P25Q16H", "size"),
-        ("W25Q64", "quad_enable_requirement"),
-    ]
+    # None is left: the tables another part's (16 MiB, with DTR, for a 2 MiB
+    # P25Q16H; the MX25R6435F's, QE at SR1 bit 6, for frdm_mcxe247's W25Q64,
+    # S2B1v1) are not taken, nor nrf7002dk's t-exit-dpd of 5 µs for its
+    # MX25R6435F (the datasheet's tRDP is 35 µs, its BFPT's DW14 40 µs).
+    # Two boards' page-size is their driver's setting, kept as a flag
+    # (spiflash_extract.zephyr.PAGE_SIZE_IS_THE_DRIVERS).
+    assert found == []
+    notes = [n for d in RECORDS if d["source"] == "zephyr" for n in d["notes"]]
+    assert len([n for n in notes if "another part's tables" in n]) == 2
+    # Each time a board gives that is not its part's is left out, with a note.
+    for why in zephyr.NOT_THE_PARTS.values():
+        assert any(n.endswith(why) for n in notes), why
 
 
 def test_no_sfdp_residue() -> None:
@@ -378,6 +378,9 @@ def test_no_requirement_operation_stored() -> None:
 #: flashprog's are all its .reg_bits' .qe, so need no via.
 QUAD_ENABLE_FROM = {
     ("flashprog", None),
+    # "bit6 is quad enable", on the status register line.
+    ("flashrom", "comment: bit"),
+    ("flashprog", "comment: bit"),
     ("dediprog", "QEbitAddr="),
     ("rockchip", "QE_bits="),
     ("rockchip", "has_qe_bits="),
@@ -477,6 +480,34 @@ def test_no_die_erase_layout_is_stored() -> None:
     assert found
 
 
+def test_no_chip_erase_layout_is_stored() -> None:
+    chip_erases = {OPERATIONS[op].opcode for op in derive.CHIP_ERASES}
+
+    def stored(r: dict[str, Any]) -> bool:
+        return any(e["opcode"] in chip_erases for e in r["erasers"] or ())
+
+    assert not [_where(r) for r in RECORDS if stored(r)]
+    # Every record with a size and a chip erase it states has the layout,
+    # derived; a driver default has none.
+    found = 0
+    for d in RECORDS:
+        r = Record.from_json(d)
+        stated = {u.op for u in r.opcode_claims if not u.assumed} & derive.CHIP_ERASES
+        layouts = {(e.opcode, e.blocks) for e in r.erasers if e.opcode in chip_erases}
+        if r.size is not None:
+            want = {(OPERATIONS[op].opcode, (EraseBlock(r.size, 1),)) for op in stated}
+            assert layouts == want, _where(d)
+            found += bool(want)
+    assert found
+
+
+def test_every_layout_is_over_the_size() -> None:
+    for d in RECORDS:
+        r = Record.from_json(d)
+        for e in r.eraser_claims:
+            assert r.size is None or sum(b.size * b.count for b in e.blocks) == r.size, _where(d)
+
+
 def test_a_die_is_selected_one_way() -> None:
     def both(r: dict[str, Any]) -> bool:
         ops = {o["op"] for o in r["opcodes"]}
@@ -499,6 +530,7 @@ def test_a_die_is_selected_one_way() -> None:
 DIES_FROM = {
     ("flashrom", "spi_block_erase_c4"),
     ("flashprog", "spi_block_erase_c4"),
+    ("flashrom", ".die_size = "),
     ("dediprog", "DieSizeInKByte="),
     ("qemu", "die_cnt="),
     ("linux", None),
@@ -530,11 +562,12 @@ def test_only_the_known_sources_give_dies() -> None:
 
 
 def test_dummy_clocks_only_where_a_source_states_them() -> None:
-    # Linux's SPI NAND op variants (dummy bytes) and MediaTek's SNAND_OPs
-    # (dummy clocks) state them; no other source's entry does, and an SFDP
-    # read's are derived from its tables.
+    # Linux's SPI NAND op variants (dummy bytes), MediaTek's SNAND_OPs
+    # (dummy clocks) and flashprog's .dummy_cycles (its QPI quad I/O read's)
+    # state them; no other source's entry does, and an SFDP read's are
+    # derived from its tables.
     given = {(d["source"], d["type"]) for d in RECORDS for o in d["opcodes"] if "dummy_clocks" in o}
-    assert given == {("linux", "nand"), ("mediatek", "nand")}
+    assert given == {("linux", "nand"), ("mediatek", "nand"), ("flashprog", "nor")}
     reads = {
         OPERATIONS[o["op"]].kind
         for d in RECORDS
