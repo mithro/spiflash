@@ -1546,15 +1546,19 @@ def test_record_make_validates() -> None:
     ]
     for key in bad_keys:
         with pytest.raises(ValueError, match="bad via key"):
-            record.make("linux", "f", 1, "n", size=1, erasers=erasers, via={key: "x"})
+            record.make("linux", "f", 1, "n", size=16 << 20, erasers=erasers, via={key: "x"})
     with pytest.raises(ValueError, match="bad via key"):
         record.make("linux", "f", 1, "n", id_method=None, via={"id_method": "x"})
     ok = {"size": "a", "erasers:0x20": "b", "erasers": "c", "id_method": "d"}
-    assert record.make("linux", "f", 1, "n", size=1, erasers=erasers, via=ok)["via"] == ok
+    size = 16 << 20
+    assert record.make("linux", "f", 1, "n", size=size, erasers=erasers, via=ok)["via"] == ok
     # A token is stored once: not under two keys, nor in a note too.
     twice = {"size": "t", "erasers": "t"}
     with pytest.raises(ValueError, match="under erasers and size"):
-        record.make("linux", "f", 1, "n", size=1, erasers=erasers, via=twice)
+        record.make("linux", "f", 1, "n", size=size, erasers=erasers, via=twice)
+    # A layout is over the size.
+    with pytest.raises(ValueError, match="an eraser over 16777216 bytes of 1"):
+        record.make("linux", "f", 1, "n", size=1, erasers=erasers)
     with pytest.raises(ValueError, match="notes repeat via"):
         record.make("linux", "f", 1, "n", size=1, via={"size": "t"}, notes=["t"])
 

@@ -514,7 +514,7 @@ def _fold_chip_erasers(rec: Record) -> None:
     kept = []
     for e in rec["erasers"]:
         covered = sum(block * count for block, count in e["blocks"])
-        if size is not None and covered != size:
+        if size is not None and covered != size and e["opcode"] is not None:
             msg = f"{rec['source']} {rec['name']}: an eraser over {covered} bytes of {size}"
             raise ValueError(msg)
         op = CHIP_ERASE_OPCODES.get(e["opcode"])
