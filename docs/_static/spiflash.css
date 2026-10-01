@@ -89,8 +89,9 @@ h1 + p .sf-id { font-size: 1em; }
 a.sf-src-link { text-decoration: none; }
 a.sf-src-link:hover .sf-src { filter: brightness(1.2); text-decoration: underline; }
 .sf-src-mine { box-shadow: 0 0 0 2px var(--color-background-primary, #fff), 0 0 0 4px var(--sf-ring); color: #fff; outline: 2px solid #111827; outline-offset: 1px; }
-/* The one light label: dark text, on its own page too. */
-.sf-src.sf-src-rockchip { color: #1c1917; }
+/* The light labels: dark text, on their own pages too (white on QEMU's orange
+   was 2.8:1). */
+.sf-src.sf-src-rockchip, .sf-src.sf-src-qemu { color: #1c1917; }
 
 /* Summary cards on a chip page. */
 .sf-cards { margin: 1rem 0 1.5rem; }
@@ -312,6 +313,10 @@ table.sf-chip-issues td:first-child { white-space: normal; min-width: 9em; }
 .sf-num-volt .sf-n-unit { width: 1.4em; text-align: left; }
 .sf-n-count { min-width: 5ch; text-align: right; }
 .sf-n-sep { padding: 0 0.1em; }
+/* A summary card's big number (a chip page's Supply) is one number, not a
+   column: no column widths, which left gaps and pushed the unit out of a
+   phone-width card. */
+.sf-card .sf-num > span, .sf-stat .sf-num > span { min-width: 0; width: auto; }
 /* A shortened list's ellipsis: the rest is in its tooltip. */
 abbr[title] { cursor: help; text-decoration: underline dotted; }
 .sf-toggle { margin: 0 1em; white-space: nowrap; cursor: pointer; }

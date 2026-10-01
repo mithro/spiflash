@@ -467,7 +467,7 @@ def kind_markdown(r: _Render, kind: IssueKind, issues: list[Issue]) -> str:
             "By source: "
             + ", ".join(source_link(s, found) for s in Source)
             + ". All the kinds: [Data issues](index.md).\n",
-            "Type in the box to filter.\n",
+            "Type in the box to filter.\n" if found else "",
             r.section(kind, found, 2, targets=True),
         ]
     )

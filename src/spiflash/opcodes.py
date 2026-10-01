@@ -1196,6 +1196,11 @@ _ALL = [
 #: Every operation spiflash knows, by name.
 OPERATIONS: dict[str, Operation] = {op.name: op for op in _ALL}
 
+#: The operations that select one die of a multi-die part, by a command
+#: and the die's number (SPI NOR's Winbond 0xc2, SPI NAND's): what a chip's
+#: dies are selected by, where it has one.
+DIE_SELECT_OPERATIONS = ("DIE_SELECT", "NAND_DIE_SELECT")
+
 
 def get(name: str) -> Operation:
     """The operation called ``name``; ``KeyError`` for an unknown one."""

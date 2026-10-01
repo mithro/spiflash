@@ -153,8 +153,12 @@ def spaced(hex_id: str) -> str:
     return " ".join(hex_id[i : i + 2] for i in range(0, len(hex_id), 2))
 
 
+#: The vendor page of the chips no source names a maker for.
+UNKNOWN_VENDOR = "Unknown"
+
+
 def vendor_of(f: Flash) -> str:
-    return f.manufacturer or "Unknown"
+    return f.manufacturer or UNKNOWN_VENDOR
 
 
 def title_of(f: Flash) -> str:

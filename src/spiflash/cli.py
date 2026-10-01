@@ -34,6 +34,7 @@ from .model import (
     parse_id,
     strip_continuation,
 )
+from .opcodes import DIE_SELECT_OPERATIONS
 from .registers import NoQuadEnable, RegisterBit, Writability
 from .sfdp import SIGNATURE, Sfdp
 from .sfdp import parse as parse_sfdp
@@ -176,7 +177,7 @@ def _event_words(key: TimingKey) -> str:
 def dies(f: Flash) -> str:
     """The dies, and how one is selected where a source says: ``dies 2
     (select 0xc2)``, ``dies 2 (select die select feature bit 6)``."""
-    select = [o for name, o in f.opcodes.items() if name in ("DIE_SELECT", "NAND_DIE_SELECT")]
+    select = [o for name, o in f.opcodes.items() if name in DIE_SELECT_OPERATIONS]
     how = ""
     if select:
         how = f" (select 0x{select[0].opcode:02x})"
