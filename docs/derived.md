@@ -321,6 +321,11 @@ lists them ({py:class}`~spiflash.enums.FourByteMethod`):
 | `nv_cr` | a 16-bit non-volatile configuration register | none |
 | `always_4b` | always in 4-byte mode | none |
 
+`ear_bit7` and `brwr` overlap: on {sfsrc}`flashrom`'s Spansion S25FL256S
+and S25FL512S entries, which have both and no `_EAR_C5C8`, setting bit 7 of
+the "extended address register" is setting the bank register's bit 7 with
+0x17, which is what JESD216's `brwr` already says.
+
 A source's ways in are stored; their operations are derived
 ({py:data}`~spiflash.derive.FOUR_BYTE_MODE_OPERATIONS`), and a record's SFDP
 tables give its ways in too (BFPT DW16, where the part has a 4-byte mode).
@@ -373,7 +378,9 @@ reserves security register 0), and the commands they name
 [ENSO](opcodes/ENSO.md), [EXSO](opcodes/EXSO.md),
 [ENTER_OTP_3A](opcodes/ENTER_OTP_3A.md); a "read ID 0x4B" is
 [RUID](opcodes/RUID.md), the unique id). A comment qualified to one model of
-an entry ("(B version only)", "later 3x 512B") stays a note. An area, or an
+an entry ("(B version only)", "later 3x 512B") stays a note. Some comments are
+wrong, and the record notes what is taken instead ([flashrom's notes](sources/flashrom.md):
+ISSI's 0x48 and 0x42 are its function register, not its OTP area). An area, or an
 OTP operation (not RUID), gives `otp`. The sources are compared on the size
 and the regions each on its own.
 
@@ -386,12 +393,15 @@ JEDEC read-id may also list the legacy ids its part answers
 (`legacy_ids`): {sfsrc}`dediprog`'s `AlternativeID`, one byte a RES
 signature (the M25P16's 0x14, as flashrom's M25P05 to M25P40-OLD res1
 entries give), two a REMS answer (the W25Q40's 0xef12, as its datasheet
-gives). They make no chip of their own, as one RES byte is many makers'
+gives), and its `UniqueID` where it is a two-byte REMS answer (Eon's
+EN25P20 0x1c11). They make no chip of their own, as one RES byte is many makers'
 parts: `spiflash id --method res1 15` gives the RES chips, then the JEDEC
-chips whose records list the id, each marked. Left out: a copy of the
+chips whose records list the id, each marked; `spiflash id 15` says which
+`--method` would find something. Left out: a copy of the
 record's own id, Intel's and ESMT's values given for parts of every density
-(templates), Sanyo's one-byte values (its RES answers two bytes), and a
-three-byte value.
+(templates), Sanyo's one-byte values (its RES answers two bytes), a
+three-byte value, and those their datasheets contradict (noted on the
+record).
 
 ## Test status
 

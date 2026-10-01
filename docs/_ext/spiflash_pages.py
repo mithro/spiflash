@@ -628,7 +628,7 @@ def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
         if bfpt.quad_enable_description is not None:
             rows.append(["Quad enable", esc(bfpt.quad_enable_description)])
         if bfpt.four_byte_enter:
-            ways = ", ".join(sorted(map(str, bfpt.four_byte_enter)))
+            ways = ", ".join(m.label for m in sorted(bfpt.four_byte_enter))
             if not s.four_byte_mode:
                 ways += " (not read: the part has no 4-byte mode)"
             rows.append(["Enter 4-byte mode", esc(ways)])

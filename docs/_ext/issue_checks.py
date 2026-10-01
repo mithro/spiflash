@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from spiflash import database
 from spiflash.enums import IdFamily, Source
-from spiflash.model import COMPARED_VALUES, register_bits, same_part
+from spiflash.model import COMPARED_VALUES, register_bits, same_supply_part
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -122,6 +122,17 @@ _LUNS = (
     "plane in each of two LUNs."
 )
 
+_AT45 = (
+    'flashrom\'s comment on the entry: "2.5-3.6V & 2.7-3.6V models available"; it '
+    "gives the 2.7 V model's range, and Dediprog's 2.5 V is the other model's: no "
+    "source is wrong."
+)
+_MX25V = (
+    "flashrom's entry covers the {l} and the {v}, and gives the {l}'s 2.7 V to 3.6 V; "
+    'its comment gives "2.35-3.6V for {v}", which Dediprog\'s 2.5 V for the MX25V is '
+    "in: no source is wrong."
+)
+
 #: What is known of an issue, by its chip and value: why the sources
 #: disagree where that is not plain from their answers.
 EXPLAINED = {
@@ -151,8 +162,17 @@ EXPLAINED = {
     ("010219", "supply_mv"): (
         "The S25FL256S is a 2.7 V to 3.6 V part, as flashrom's S25FL256S......0 entry "
         'says; its "S25FL256S Large Sectors" and "Small Sectors" entries give 1.7 V to '
-        "2.0 V, the S25FS256S's, so Dediprog's 3.3 V is outside "
-        "a wrong range."
+        "2.0 V, the S25FS256S's, so Dediprog's 3.3 V for the S25FL256S is outside a "
+        "wrong range."
+    ),
+    ("1f2400", "supply_mv"): _AT45,
+    ("1f2500", "supply_mv"): _AT45,
+    ("1f2600", "supply_mv"): _AT45,
+    ("c22010", "supply_mv"): _MX25V.format(l="MX25L512(E)", v="MX25V512(C)"),
+    ("c22014", "supply_mv"): _MX25V.format(l="MX25L8005", v="MX25V8005"),
+    ("c22015", "supply_mv"): (
+        "The MX25V16066 datasheet (v1.5) gives 2.3 V to 3.6 V: flashrom's 2.7 V to 3.6 V "
+        "for its MX25V16066 entry is wrong, and Dediprog's 2.5 V right."
     ),
     ("1f4502", "supply_mv"): (
         "flashrom's comment on the AT25DF081 says its datasheet gives 1.65 V to 1.95 V: "
@@ -170,9 +190,18 @@ EXPLAINED = {
         "flashprog's 64 B is wrong for it."
     ),
     ("ef6016", "otp.size"): (
-        "The W25Q32DW has four 256-byte security registers, of which Winbond reserves "
-        "register 0 (its datasheet, Rev. E): flashrom's 1024 B counts it, Linux's "
-        "768 B (three regions) does not."
+        'The W25Q32DW has four 256-byte security registers, register 0 "Reserved by '
+        "Winbond for future use\" (its datasheet, Rev. E): flashrom's 1024 B counts it, "
+        "Linux's 768 B (three regions) does not."
+    ),
+    ("c84018", "otp.size"): (
+        "Parts sharing the id: the GD25Q128B, C and E. The GD25Q128B's 768 B is flashrom's "
+        '"1024B total, 256B reserved"; whether 256 B are reserved is uncertain (its '
+        "datasheet is said to disagree with itself; not checked here)."
+    ),
+    ("c86318", "otp.size"): (
+        "flashrom gives the GD25LF128E 1024 B less 256 B reserved, flashprog three 1 KiB "
+        "regions; the datasheet was not to hand to say which is right."
     ),
 }
 
@@ -297,17 +326,12 @@ def _supply(flashes: Iterable[Flash]) -> Iterator[Issue]:
         outside = f.supply_outside()
         if not outside:
             continue
-        concerned = {id(r) for rs in outside.values() for r in rs}
-        ranges = [
-            (r.voltage, r)
-            for v in f.variants
-            if any(id(r) in concerned for r in v)
-            for r in v
-            if r.voltage is not None
-        ]
+        ranges = [(r.voltage, r) for r in f.records if r.voltage is not None]
         settings = [(mv, r) for mv, rs in outside.items() for r in rs]
         answers = (*_answers(ranges), *_answers(settings))
-        note = EXPLAINED.get((f.key, "supply_mv")) or _other_parts(ranges, settings)
+        computed = _other_parts(ranges, settings)
+        explained = EXPLAINED.get((f.key, "supply_mv"))
+        note = " ".join(n for n in (computed, explained) if n) or None
         yield Issue(IssueKind.SUPPLY, f.key, (f,), answers, attribute="supply_mv", note=note)
 
 
@@ -319,7 +343,7 @@ def _other_parts(
     P25Q32H's 2.3 to 3.6 V, at one id): saying so."""
     ranged = {n for _, r in ranges for n in r.part_names}
     set_for = {n for _, r in settings for n in r.part_names}
-    if any(same_part(a, b) for a in ranged for b in set_for):
+    if any(same_supply_part(a, b) for a in ranged for b in set_for):
         return None
     return (
         f"Parts sharing the id: the ranges are given for {', '.join(sorted(ranged))}, "

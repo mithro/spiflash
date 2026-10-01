@@ -108,9 +108,18 @@ entries, and a legacy-id entry's own tail), an empty `0x`, two templates
 noted on their records (Intel's S33 parts of 16, 32 and 64 Mbit all give
 0x15; ESMT's F25L parts of every density their maker's byte, 0x8c), Sanyo's
 one-byte values (its RES answers two bytes, as flashrom's res2 entries
-read it), and ZB25VQ80B's three-byte 0x8E6014. Some kept ones look copied
-(XMC's XM25QH128A and B give 0x2016, as the 64 Mbit XM25QH64 parts do;
-Zetta's ZD25Q40 Winbond's 0xef12): Dediprog's, not checked.
+read it), ZB25VQ80B's three-byte 0x8E6014, and the wrong ones
+({py:data}`spiflash_extract.dediprog.ALTERNATIVE_WRONG`, each noted):
+XM25QH128A's and XM25QU128C's REMS ids (their datasheets give 20 17, not
+0x2016 and 0x2118), ZD25Q40's 0xef12 (Winbond's maker byte, not Zetta's),
+and the M25PX parts' one-byte values (0xab only releases them from deep
+power-down, with no signature: M25PX80 datasheet). The XM25QH128B's 0x2016,
+the 64 Mbit parts' REMS id, looks copied too: not checked.
+
+`UniqueID` is mostly the JEDEC id again (a copy, or with its 0x7f
+continuation codes). Its two-byte forms are REMS answers, Eon's (EN25P20's
+0x1c11, its datasheet's 90h answer; EN25T80, EN25B40, EN25S16), and are
+legacy ids too; a three-byte one that is another JEDEC id stays a flag.
 
 The raw command words, the `ProgramIOMethod` and the
 `Class` are kept in the record's `flags`, unless an operation or a value

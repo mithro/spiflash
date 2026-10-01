@@ -66,7 +66,25 @@ names are its operations ([RSECR](../opcodes/RSECR.md),
 Atmel's security register (0x77, 0x9b, 0x9a) and PMC's 0xb1 program have no
 operation here, and stay in the comment. A comment qualified to one model
 or revision of the entry ("(B version only)", "later 3x 512B", "06E 64B
-total") stays a note.
+total") stays a note; a command qualified so ("(A version only:) read ID
+0x4B") is left out, and the rest taken.
+
+Some comments are wrong, and the record says so in a note:
+- ISSI's IS25LP and IS25WP entries give "read 0x48; write 0x42", but on
+  ISSI's parts those read and write the function register (as
+  {sfsrc}`openfpgaloader` reads its TB bit); their OTP area is the
+  information row, read, programmed and erased with 0x68, 0x62 and 0x64
+  (the IS25LP128 datasheet, and flashrom's own IS25LP256 comment). The area's
+  size is taken; [RSECR](../opcodes/RSECR.md) and [PSECR](../opcodes/PSECR.md)
+  are not.
+- The S25FL132K's "768B total, 256B reserved" would leave 512 bytes, but
+  its datasheet (S25FL1-K, 8.3) gives four 256-byte registers, register 0
+  holding the SFDP tables: 768 are the user's.
+- The W25Q40.V's "756B total" is 768 (four 256-byte registers, register 0
+  reserved).
+
+(`OTP_COMMANDS_WRONG` and `OTP_SIZE_WRONG` in
+{repo}`tools/spiflash_extract/flashrom.py`.)
 
 A comment on an entry saying it "supports SFDP" gives it the `sfdp`
 capability and the [RDSFDP](../opcodes/RDSFDP.md) operation, whose `via`
