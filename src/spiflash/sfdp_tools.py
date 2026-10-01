@@ -132,9 +132,15 @@ ENCODE_LOSSES = {
     "byte_program": "byte program times (DW11), likewise",
     "chip_erase_ns": "chip erase time (DW11), likewise",
     "suspend_resume": "suspend and resume (DW12-13), where the suspend times are not known",
-    "suspend": "the suspend latencies and intervals (DW12), likewise",
+    "suspend": (
+        "the suspend latencies and intervals (DW12), likewise; a latency off the BFPT's "
+        "grid is rounded up to the next one it can write"
+    ),
     "deep_power_down": "deep power-down (DW14), where it is not released with 0xab",
-    "dpd_exit_delay": "the deep power-down exit delay (DW14), likewise",
+    "dpd_exit_delay": (
+        "the deep power-down exit delay (DW14), likewise; one off the BFPT's grid is "
+        "rounded up to the next one it can write"
+    ),
     "quad_enable": "the quad enable requirement (DW15), where it is the reserved 7",
     "qpi_enable": "the QPI enable sequence, in a revision encode cannot fill",
     "qpi_disable": "the QPI disable sequence, in a revision encode cannot fill",
@@ -634,12 +640,19 @@ def _dw12_13(part: _Part, out: _Later) -> tuple[int, int] | None:
         (TimedEvent.ERASE_RESUME_TO_SUSPEND, Bound.TYPICAL, derive.RESUME_UNITS_NS, 16, 20, 0),
         (TimedEvent.ERASE_SUSPEND, Bound.MAXIMUM, derive.LATENCY_UNITS_NS, 32, 24, 29),
     )
-    given = [part.time(event, bound) for event, bound, *_ in fields]
-    if all(t is None for t in given):
+    if all(part.time(event, bound) is None for event, bound, *_ in fields):
         out.unknown.append(("DW12-13", "suspend and resume", "written as not supported"))
         return None
     dword = 0b0100 | 0b0100 << 4 | 1 << 8  # bit 8 reserved
-    for (event, _, units, counts, count_lo, unit_lo), ns in zip(fields, given, strict=True):
+    roundings = []
+    for event, bound, units, counts, count_lo, unit_lo in fields:
+        # A latency is a maximum, so the next one up is still true; an
+        # interval is typical, so only exactly.
+        ns = part.time(event, bound)
+        if bound is Bound.MAXIMUM:
+            ns, rounding = _rounded_up(part, event)
+            if rounding is not None:
+                roundings.append((f"the {event} latency", rounding))
         bits = _place(units, counts, ns, count_lo, unit_lo)
         if bits < 0:
             # The part can suspend, so "not supported" would be wrong.
@@ -648,6 +661,7 @@ def _dw12_13(part: _Part, out: _Later) -> tuple[int, int] | None:
             )
             return None
         dword |= bits
+    out.unknown.extend(("DW12", what, how) for what, how in roundings)
     out.lost.append(("DW12", "the suspend latencies and resume-to-suspend intervals"))
     out.unknown.append(
         ("DW12", "the operations prohibited while suspended", "written as the most restrictive")
@@ -659,28 +673,60 @@ def _dw12_13(part: _Part, out: _Later) -> tuple[int, int] | None:
     return dword, resume | suspend << 8 | resume << 16 | suspend << 24
 
 
+def _rounded_up(part: _Part, event: TimedEvent) -> tuple[int | None, str | None]:
+    """``event``'s maximum as a BFPT writes it: exactly where it can, else
+    the next time up it can write (35 µs is 40 µs), which is still a true
+    maximum; and, where it was rounded, how, to list as assumed. ``None``
+    where it is not known, or above the most the BFPT can write."""
+    ns = part.time(event, Bound.MAXIMUM)
+    written = None if ns is None else derive.on_sfdp_grid(event, Bound.MAXIMUM, ns)
+    if ns is None or written is None or written == ns:
+        return written, None
+    return written, (
+        f"written as {human_duration(written)}, the next maximum a BFPT can write above "
+        f"the {human_duration(ns)} known"
+    )
+
+
 def _dw14(part: _Part, out: _Later) -> int | None:
     """DW14, where the part has deep power-down (``DP``, 0xb9) released by
-    a command (``RDPD``, 0xab) and its exit delay is known, one a BFPT can
-    write exactly; and what is said of it in ``out``. ``None`` (written as
-    not supported) otherwise. Its status polling, DW14[7:2], is written as
-    legacy 0x05 polling, which every SPI NOR part has, and the flag status
-    register's (0x70) where the part has ``RDFSR``: listed assumed."""
+    a command (``RDPD``, 0xab) and its exit delay is known, rounded up to
+    the next delay a BFPT can write where it cannot write it exactly; and
+    what is said of it in ``out``. Where the database knows nothing of deep
+    power-down, ``None``: written as not supported. Where it knows the part
+    has it but not the release or the delay, ``None`` too, and DW14 is
+    unwritable, as "not supported" would be wrong. Its status polling,
+    DW14[7:2], is written as legacy 0x05 polling, which every SPI NOR part
+    has, and the flag status register's (0x70) where the part has
+    ``RDFSR``: listed assumed."""
     ops = part.ops
-    delay = part.time(TimedEvent.DPD_EXIT, Bound.MAXIMUM)
-    bits = _place(derive.LATENCY_UNITS_NS, 32, delay, 8, 13)
-    if "DP" not in ops:
+    dpd_times = (TimedEvent.DPD_ENTER, TimedEvent.DPD_EXIT)
+    if "DP" not in ops and not any(key.event in dpd_times for key, _ in part.timings):
         out.unknown.append(("DW14", "deep power-down", "written as not supported"))
         return None
-    if "RDPD" not in ops or bits < 0:
-        out.unknown.append(
-            ("DW14", "how deep power-down is left, and how long it takes", "written as none")
+    delay, rounding = _rounded_up(part, TimedEvent.DPD_EXIT)
+    if "DP" not in ops or "RDPD" not in ops or delay is None:
+        lacking = [
+            what
+            for what, gone in (
+                ("how it is entered (DP)", "DP" not in ops),
+                ("how it is left (RDPD)", "RDPD" not in ops),
+                ("how long leaving takes", delay is None),
+            )
+            if gone
+        ]
+        out.unwritable.append(
+            ("DW14", "deep power-down, which the part has, but not " + " or ".join(lacking))
         )
         return None
-    assert delay is not None
-    out.lost.append(
-        ("DW14", f"deep power-down, released with 0xab, ready within {human_duration(delay)}")
-    )
+    bits = _place(derive.LATENCY_UNITS_NS, 32, delay, 8, 13)
+    if rounding is None:
+        out.lost.append(
+            ("DW14", f"deep power-down, released with 0xab, ready within {human_duration(delay)}")
+        )
+    else:
+        out.lost.append(("DW14", "deep power-down, released with 0xab"))
+        out.unknown.append(("DW14", "the deep power-down exit delay", rounding))
     flag_status = "RDFSR" in ops
     out.unknown.append(
         (

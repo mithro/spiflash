@@ -323,9 +323,12 @@ def test_encode_round_trips_each_field() -> None:
             s = out.sfdp
             assert s.warnings == () or all("4BAIT claims" in w for w in s.warnings), f.key
             assert s.size == f.size, f.key
-            if assume:
-                assert out.revision == (1, 6)
+            if assume and out.revision == (1, 6):
                 assert s.page_size == encodable_page(f), f.key
+            elif assume:
+                # Lowered, even with assume, only for what no value can
+                # say without contradicting the database: listed.
+                assert out.missing, f.key
             else:
                 assert out.revision == (1, 0)
                 assert s.page_size is None
@@ -348,7 +351,7 @@ def test_entry_to_sfdp_to_entry_gives_back_what_encode_wrote() -> None:
         out = encode(f, assume=True)
         back = Record.from_json(to_entry(out.sfdp) | IDENTITY)
         assert back.size == f.size
-        assert back.page_size == encodable_page(f)
+        assert back.page_size == (encodable_page(f) if out.revision == (1, 6) else None)
         # Its erasers are the sources', a 4-byte one where they give the op.
         given = {(e.opcode, e.blocks[0].size) for r in f.records for e in r.erasers}
         four_byte = {e.opcode: e for e in back.erasers if e.opcode in (0x21, 0x5C, 0xDC)}
@@ -633,9 +636,12 @@ def test_encode_leaves_out_a_time_it_cannot_write() -> None:
 def test_encode_writes_deep_power_down_only_with_its_release() -> None:
     dp = [{"op": "DP", "via": "v"}]
     times = {"dpd_exit": {"maximum": 30_000}}
+    # No RDPD: the part has deep power-down, so "not supported" would be
+    # wrong; DW14 is unwritable, and the revision lowered even with assume.
     out = encode(rec(opcodes=dp, timings=times), assume=True)
-    assert out.sfdp.bfpt is not None
-    assert out.sfdp.bfpt.enter_deep_power_down is None  # no RDPD: not written
+    assert out.revision == (1, 0)
+    said = "DW14: deep power-down, which the part has, but not how it is left (RDPD)"
+    assert said in out.missing
     rdpd = [*dp, {"op": "RDPD", "via": "v"}]
     out = encode(rec(opcodes=rdpd, timings=times), assume=True)
     bfpt = out.sfdp.bfpt
@@ -644,10 +650,27 @@ def test_encode_writes_deep_power_down_only_with_its_release() -> None:
     assert bfpt.exit_deep_power_down_delay_ns == 30_000
     assert (bfpt.enter_deep_power_down, bfpt.exit_deep_power_down) == (0xB9, 0xAB)
     assert "DW14: how to poll for busy, written as 0x05 (legacy)" in out.assumed
-    # 33.3 µs is on no grid: left out.
+    # 33.3 µs is on no grid: a maximum, so written as the next one up,
+    # 40 µs (5 x 8 µs), which still holds, and said so.
     odd = encode(rec(opcodes=rdpd, timings={"dpd_exit": {"maximum": 33_300}}), assume=True)
     assert odd.sfdp.bfpt is not None
-    assert odd.sfdp.bfpt.enter_deep_power_down is None
+    assert odd.sfdp.bfpt.enter_deep_power_down == 0xB9
+    assert odd.sfdp.bfpt.exit_deep_power_down_delay_ns == 40_000
+    assert (
+        "DW14: the deep power-down exit delay, written as 40 µs, the next "
+        "maximum a BFPT can write above the 33.3 µs known" in odd.assumed
+    )
+    # No exit delay known: unwritable.
+    out = encode(rec(opcodes=rdpd), assume=True)
+    assert out.revision == (1, 0)
+    assert "DW14: deep power-down, which the part has, but not how long leaving takes" in (
+        out.missing
+    )
+    # Nothing known of deep power-down: written as not supported, and said so.
+    out = encode(rec(), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.enter_deep_power_down is None
+    assert "DW14: deep power-down, written as not supported" in out.assumed
 
 
 def test_finest_units() -> None:
@@ -670,8 +693,15 @@ def test_encode_never_says_a_part_that_suspends_cannot() -> None:
     assert bfpt.suspend_resume is True
     assert (bfpt.erase_suspend_ns, bfpt.program_resume_to_suspend_ns) == (25_000, 128_000)
     assert "DW13: the suspend and resume opcodes, written as 0x75 and 0x7a" in out.assumed
-    # A suspend time no DW12 can write: no DW12 at all, even with assume.
+    # A latency is a maximum: 25.5 µs is written as the next one up, 26 µs.
     odd = {**suspend, "erase_suspend": {"maximum": 25_500}}
+    out = encode(rec(timings=odd), assume=True)
+    assert out.sfdp.bfpt is not None
+    assert out.sfdp.bfpt.erase_suspend_ns == 26_000
+    assert any(a.startswith("DW12: the erase_suspend latency, written as 26 µs") for a in out.assumed)
+    # An interval is typical, so only exactly: no DW12 at all, even with
+    # assume, where one is not on the grid.
+    odd = {**suspend, "erase_resume_to_suspend": {"typical": 450_000}}
     out = encode(rec(timings=odd), assume=True)
     assert out.revision == (1, 0)
     assert any(m.startswith("DW12-13: suspend and resume") for m in out.missing)
