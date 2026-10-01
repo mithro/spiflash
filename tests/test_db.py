@@ -490,6 +490,7 @@ def test_parts_that_differ_by_ext_id() -> None:
     }
     assert differ == {
         ("010219", "sector_size"),  # 4d 00 xx: 256 KiB sectors; 4d 01 xx: 64 KiB
+        ("010220", "page_size"),  # the S25FS512S's 256 B at 4d 00 81
         ("010220", "sector_size"),  # U-Boot's S25FL512S_64K at 4d 01
         ("010220", "voltage"),  # the 1.8 V S25FS512S
         ("012018", "sector_size"),

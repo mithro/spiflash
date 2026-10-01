@@ -36,6 +36,9 @@ those two erases have no layout: an SPI NOR record has a block eraser only
 for 0x20 (``SectorSizeInByte``) and 0x52 (see :func:`_erasers`), so a sector
 size only from its 0x52 blocks (:func:`spiflash.derive.sector_size`). An SPI
 NAND record's block erase is over its ``BlockSizeInByte`` blocks.
+``PageSizeInByte`` is a template's on SPI NOR as well: 256 on all but seven
+entries, the SST parts written a byte at a time among them, so only a page
+other than the template's is stored (:data:`NOR_PAGE_TEMPLATE`).
 
 Entries of some classes are not what their attributes say. The DataFlash
 (``Class="AT45DB..."``) entries carry a SPI NOR template (0xd8 erase, 256-byte
@@ -407,6 +410,13 @@ def _identify(chip: dict[str, str]) -> tuple[str, str, str | None, str]:
     raise ValueError(msg)
 
 
+#: The SPI NOR ``PageSizeInByte`` of the template: 256 on all but seven of
+#: the SPI NOR entries, the SST parts Dediprog writes a byte or a word at
+#: a time among them (whose flashrom pages are 1 or 32 bytes), so no
+#: part's page size; the other value, 512, is the part's.
+NOR_PAGE_TEMPLATE = 256
+
+
 def _record(line: int, chip: dict[str, str]) -> Record:
     typ, id_hex, ext_id, method = _identify(chip)
     size = int(chip["ChipSizeInKByte"]) * 1024
@@ -504,7 +514,7 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         ext_id=ext_id,
         id_method=method,
         size=size,
-        page_size=None if dataflash else page,
+        page_size=None if dataflash or (typ == "nor" and page == NOR_PAGE_TEMPLATE) else page,
         erasers=erasers or None,
         features=features,
         flags=flags,

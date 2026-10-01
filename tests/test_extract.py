@@ -2556,8 +2556,8 @@ def test_dediprog(tmp_path: Path) -> None:
     w = r["W25Q128FV"]
     assert (w["line"], w["vendor"], w["id"], w["id_method"]) == (37, "Winbond", "ef4018", "rdid")
     # 0xd8 has no layout, and gives no sector size: BlockSizeInByte is a
-    # template's 64 KiB.
-    assert (w["size"], w["page_size"], sector(w)) == (16 << 20, 256, None)
+    # template's 64 KiB. Its 256-byte PageSizeInByte is the template's too.
+    assert (w["size"], w["page_size"], sector(w)) == (16 << 20, None, None)
     assert w["erasers"] == [{"opcode": 0xC7, "blocks": [[16 << 20, 1]]}]
     # Only the single-line read and program of the packed words.
     assert set(ops(w)) == {"RDID", "READ_1_1_1_FAST", "PP_1_1_1", "SE", "CHIP_ERASE"}

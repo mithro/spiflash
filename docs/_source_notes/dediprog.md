@@ -78,7 +78,11 @@ A25L..P). An SPI NOR record has an erase layout only for 0x20
 `SectorSizeInByte` on the AT25F parts where it is not the template's 4 KiB
 (0x52 erases 64 KiB on the AT25F2048); so a sector size only from its 0x52
 blocks. An SPI NAND record's block erase is over its erase block,
-`BlockSizeInByte`, as {sfsrc}`linux` gives it.
+`BlockSizeInByte`, as {sfsrc}`linux` gives it. An SPI NOR entry's
+`PageSizeInByte` is the template's 256 on all but seven entries, the SST
+parts Dediprog writes a byte or a word at a time among them, so only the
+other value, 512 (the S25FL512S, the S25HL and S28HS parts), is stored as a
+page size.
 
 Some classes of part are not what their attributes say:
 
