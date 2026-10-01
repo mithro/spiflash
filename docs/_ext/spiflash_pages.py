@@ -73,6 +73,7 @@ from spiflash.derive import ERASE_BY_OPCODE
 from spiflash.enums import Feature, FlashType, OperationKind, Source
 from spiflash.model import strip_continuation
 from spiflash.opcodes import OPERATIONS
+from spiflash.sfdp_tools import diff as sfdp_diff
 from spiflash.units import human_size, human_time
 
 if TYPE_CHECKING:
@@ -339,32 +340,67 @@ def _sfdp(f: Flash) -> list[str]:
         (
             f"The part's SFDP ([JESD216]({JESD216})) tables, as the sources carry them: "
             "what one part answered, decoded by {py:mod}`spiflash.sfdp`; `spiflash sfdp` "
-            "prints every field. SFDP says nothing about the vendor, voltage or protection, "
-            "and {sfsrc}`linux` keeps fixups for tables that are wrong, so read it as the "
-            "part's own claim.\n"
+            "prints every field. The sources carrying them derive their geometry, erase "
+            "layouts, operations and capabilities from them ([](../derived.md)). SFDP says "
+            "nothing about the vendor, voltage or protection, and {sfsrc}`linux` keeps "
+            "fixups for tables that are wrong, so read it as the part's own claim. Whole "
+            "dumps come first, then tables a source copies without the rest.\n"
         ),
     ]
+    if len(f.sfdp_dumps) > 1:
+        out.append(
+            "The sources carry more than one set of tables for this id: "
+            f"`spiflash sfdp-diff {f.key} {f.key}#2` compares the first two, field by "
+            f"field and dword by dword ([](../usage.md)). {_sfdp_differences(f)}\n"
+        )
     for d in f.sfdp_dumps:
         out.append(list_table(["Parameter", "Value"], _sfdp_rows(d), "sf-table"))
         out.append("")
     return out
 
 
+def _sfdp_differences(f: Flash) -> str:
+    """What the chip's first two SFDP dumps differ in, in a sentence: the
+    decoded fields, else the dwords (two boards' copies of the MX25R6435F's
+    BFPT differ in DW12 alone)."""
+    d = sfdp_diff(f.sfdp_dumps[0].sfdp, f.sfdp_dumps[1].sfdp)
+    if not d:
+        return "The first two say the same."
+    parts = [f"{x.path}" for x in d.fields if not x.expected]
+    parts += [f"{t.name} (only in one)" for t in d.tables if t.a is None or t.b is None]
+    if not parts:
+        parts = [f"{x.name} DW{x.index}" for x in d.dwords]
+    return f"The first two differ in {esc(', '.join(parts))}."
+
+
 def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
     """One dump's table: whose it is, then what it says. Parts sharing an id
     can carry different dumps, so each names its parts."""
-    s = d.tables
-    tables = ", ".join(f"{esc(h.name)} {h.revision}" for h in s.headers)
-    rows = [
-        ["Dump of", f"{source_badge(d.source)} {esc(', '.join(d.parts))}"],
-        ["Revision", f"{esc(s.revision_name)}, with {tables}"],
-    ]
+    s = d.sfdp
+    if s.partial:
+        names = " and ".join(esc(h.name) for h in s.headers)
+        props = d.records[0].via.get("sfdp_tables", "")
+        copied = f" ({esc(props)})" if props else ""
+        rows = [
+            [
+                "Tables of",
+                f"{source_badge(d.source)} {esc(', '.join(d.parts))}, in "
+                + ", ".join(f"`{r.url}`" for r in d.records),
+            ],
+            ["Revision", f"{names} only, copied without the SFDP header{copied}"],
+        ]
+    else:
+        tables = ", ".join(f"{esc(h.name)} {h.revision}" for h in s.headers)
+        rows = [
+            ["Dump of", f"{source_badge(d.source)} {esc(', '.join(d.parts))}"],
+            ["Revision", f"{esc(s.revision_name)}, with {tables}"],
+        ]
     geometry = [size_text(s.size)]
     if s.page_size is not None:
         geometry.append(f"{size_text(s.page_size)} pages")
     if s.address_bytes is not None:
-        geometry.append(f"{s.address_bytes}-byte addresses")
-    rows.append(["Geometry", esc(", ".join(geometry))])
+        geometry.append(esc(f"{s.address_bytes}-byte addresses"))
+    rows.append(["Geometry", ", ".join(geometry)])  # size_text is markup
     if s.erase_types:
         erases = []
         for e in s.erase_types:
@@ -390,9 +426,10 @@ def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
         if bfpt.quad_enable_description is not None:
             rows.append(["Quad enable", esc(bfpt.quad_enable_description)])
         if bfpt.four_byte_enter:
-            rows.append(
-                ["Enter 4-byte mode", esc(", ".join(sorted(map(str, bfpt.four_byte_enter))))]
-            )
+            ways = ", ".join(sorted(map(str, bfpt.four_byte_enter)))
+            if not s.four_byte_mode:
+                ways += " (not read: the part has no 4-byte mode)"
+            rows.append(["Enter 4-byte mode", esc(ways)])
         if bfpt.soft_reset:
             rows.append(["Soft reset", esc("; ".join(bfpt.soft_reset))])
     if s.warnings:
@@ -473,6 +510,12 @@ def _erase_layouts(f: Flash) -> list[str]:
                 operation = f"[`{opname}`](../opcodes/{opname}.md)" if opname else EM_DASH
             if e.assumed:
                 operation += " *(driver default)*"
+            if e not in r.eraser_claims:
+                operation += " *(SFDP)*"
+            # The upstream token stating it, where one does (QEMU's ER_4K).
+            token = r.via.get(f"erasers:0x{op:02x}") if op is not None else None
+            if token:
+                operation += f", from `{token.replace('`', '')}`"  # a code span: no escapes
             rows.append(
                 [
                     source_badge(r.source),
@@ -489,6 +532,18 @@ def _erase_layouts(f: Flash) -> list[str]:
         list_table(["Source", "As", "Opcode", "Operation", "Blocks"], rows, "sf-table"),
         "",
     ]
+
+
+def _sfdp_mark(r: Record, attr: str) -> str:
+    """`` (SFDP)`` after a value the record has from its SFDP tables rather
+    than stating it: its size or page size, or the sector size of an eraser
+    the tables give."""
+    if r.sfdp_facts is None or getattr(r, attr) is None:
+        return ""
+    if attr == "sector_size":
+        stated = replace(r, sfdp=None, sfdp_tables={})
+        return "" if stated.sector_size == r.sector_size else " *(SFDP)*"
+    return "" if r.stored(attr) is not None else " *(SFDP)*"
 
 
 def _record_id(r: Record) -> bytes:
@@ -508,9 +563,9 @@ def _sources(db: Database, f: Flash) -> list[str]:
                 esc(r.name),
                 *([f"{{sfid}}`{spaced(_record_id(r).hex())}`"] if folded else []),
                 f"{{sfid}}`{spaced(r.ext_id.hex())}`" if r.ext_id else EM_DASH,
-                size_text(r.size),
-                size_text(r.page_size),
-                size_text(r.sector_size),
+                size_text(r.size) + _sfdp_mark(r, "size"),
+                size_text(r.page_size) + _sfdp_mark(r, "page_size"),
+                size_text(r.sector_size) + _sfdp_mark(r, "sector_size"),
                 volt(r.voltage[0] if r.voltage else None),
                 volt(r.voltage[1] if r.voltage else None),
                 esc(r.tested or EM_DASH),
@@ -774,8 +829,15 @@ def derived_table(db: Database) -> str:
             why.append(
                 "a size over 16 MiB, or "
                 + ops(derive.FOUR_BYTE_ADDRESS_OPS[-4:])
-                + ", or any `_4B` operation ({py:func}`~spiflash.derive.address_bytes`)"
+                + ", or any `_4B` operation, or SFDP tables saying the part takes "
+                "4-byte addresses or has a way into 4-byte mode "
+                "({py:func}`~spiflash.derive.address_bytes`)"
             )
+        why.extend(
+            f"SFDP tables: {what}"
+            for what, feats in derive.SFDP_FEATURES.items()
+            if Feature(feat) in feats
+        )
         rows.append(
             [
                 badge(*FEATURE_TEXT[feat]),

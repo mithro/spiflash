@@ -1,5 +1,5 @@
 {
- "format": 5,
+ "format": 6,
  "sources": {
   "dediprog": {
    "branch": "master",
@@ -178,7 +178,7 @@
     "boards/**/*.overlay",
     "dts/**/*.dtsi"
    ],
-   "records": 99,
+   "records": 100,
    "url": "https://github.com/zephyrproject-rtos/zephyr"
   }
  }

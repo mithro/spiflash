@@ -294,6 +294,88 @@ def test_sfdp_summary() -> None:
     assert cli.sfdp_summary(parse(W25Q512JV)) == "JESD216B (BFPT 1.6, 4BAIT 1.0)"
 
 
+def test_sfdp_of_copied_tables(capsys: pytest.CaptureFixture[str]) -> None:
+    # Zephyr's boards copy the MX25R6435F's BFPT alone, in two versions.
+    code, out = run(capsys, "sfdp", "c22817")
+    assert code == 0
+    assert out.count("SFDP parameter table without the SFDP header: BFPT") == 2
+    assert "(not read: the part has no 4-byte mode)" in out
+    assert "    from zephyr: MX25R6435F at boards/ezurio/bl5340_dvk/" in out
+    _, summary = run(capsys, "id", "c22817")
+    # The two sets are told apart by the boards copying them.
+    lines = [line for line in summary.splitlines() if line.startswith("    sfdp:")]
+    assert len(lines) == 2
+    assert lines[0].startswith(
+        "    sfdp: BFPT of 16 dwords, without the SFDP header  [zephyr: MX25R6435F at boards/"
+    )
+    assert lines[0] != lines[1]
+
+
+def test_sfdp_entry(capsys: pytest.CaptureFixture[str]) -> None:
+    code, out = run(capsys, "sfdp", "--entry", W25Q512JV.hex())
+    assert code == 0
+    (entry,) = json.loads(out)
+    assert (entry["source"], entry["size"], entry["page_size"]) == (None, 64 << 20, 256)
+    ops = {o["op"]: o.get("dummy_clocks") for o in entry["opcodes"]}
+    assert ops["READ_1_4_4"] == 6
+    assert "BE_4K" not in ops  # its eraser gives it
+    assert entry["features"] == []  # its 4-byte operations imply 4byte_opcodes
+
+
+def test_sfdp_encode(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    code, out = run(capsys, "sfdp-encode", "ef4020")
+    assert code == 0
+    data = bytes.fromhex(out.strip())
+    assert parse(data).size == 64 << 20
+    # What it assumed and left out goes to stderr (run() keeps stdout only).
+    assert cli.main(["sfdp-encode", "ef4020"]) == 0
+    out, err = capsys.readouterr()
+    assert "ef4020 W25Q512JV: SFDP 1.0, 68 bytes" in err
+    assert "missing: DW11: the page size, 256 bytes, known but left out" in err
+    assert "assumed: DW1 bits 3-4" in err
+    dump = tmp_path / "sfdp.bin"
+    assert cli.main(["sfdp-encode", "ef4020", "--assume", "-o", str(dump)]) == 0
+    assert parse(dump.read_bytes()).revision_name == "JESD216B"
+    code, js = run(capsys, "sfdp-encode", "--json", "--revision", "1.5", "--assume", "ef4020")
+    doc = json.loads(js)
+    assert (doc["chip"], doc["revision"], doc["missing"]) == ("ef4020", "1.5", [])
+    assert any(a.startswith("DW15: the quad enable requirement") for a in doc["assumed"])
+    # A query naming several chips, or none, or a revision it cannot write.
+    assert cli.main(["sfdp-encode", "W25Q512JV"]) == 2
+    assert "names 2 SPI NOR chips, not one: ef4020 (W25Q512JV), ef7020" in (capsys.readouterr().err)
+    assert cli.main(["sfdp-encode", "nothing-like-it"]) == 2
+    assert "no chip nothing-like-it: give a JEDEC id or a part name" in capsys.readouterr().err
+    assert cli.main(["sfdp-encode", "efaa21"]) == 2  # the W25N01GV
+    assert "efaa21 is SPI NAND (efaa21 (W25N01GV" in capsys.readouterr().err
+    assert cli.main(["sfdp-encode", "W25Q512*"]) == 2
+    assert "W25Q512* is a glob, which names no one chip here" in capsys.readouterr().err
+    assert cli.main(["sfdp-encode", "--revision", "1.8", "ef4020"]) == 2
+    assert "not 1.8" in capsys.readouterr().err
+    assert cli.main(["sfdp-encode", "--revision", "two", "ef4020"]) == 2
+
+
+def test_sfdp_diff(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    # Two dumps of one id: exit 1, as diff does when they differ.
+    code, out = run(capsys, "sfdp-diff", "c22019", "c22019#2")
+    assert code == 1
+    assert out.startswith("A: c22019#1 (qemu: MX25L25635E)\nB: c22019#2 (qemu: MX25L25635F)\n")
+    assert "reads.4-4-4: none in A, 0xeb, 2 mode + 4 wait clocks in B" in out
+    # The same dump, as a chip and as a file: exit 0.
+    dump = tmp_path / "sfdp"
+    dump.write_bytes(MX25L25635E)
+    code, out = run(capsys, "sfdp-diff", "MX25L25635E", str(dump))
+    assert (code, out.splitlines()[-1]) == (0, "no differences")
+    # A dump against what the database says of its chip.
+    code, out = run(capsys, "sfdp-diff", "--json", "ef4020", "encoded:ef4020")
+    assert code == 1
+    doc = json.loads(out)
+    assert doc["b"] == "encoded ef4020"
+    split = [f for f in doc["fields"] if f["path"] == "reads.1-4-4"]
+    assert split[0]["expected"] == "the same 6 dummy clocks, split differently"
+    assert cli.main(["sfdp-diff", "c22019#3", "c22019"]) == 2
+    assert "c22019 has 2 SFDP dumps, not a dump #3" in capsys.readouterr().err
+
+
 def test_id_says_where_parts_differ_by_ext_id(capsys: pytest.CaptureFixture[str]) -> None:
     _, out = run(capsys, "id", "--type", "nand", "c841")
     assert "    parts differ on size by ext id: 256 MiB (7f), 128 MiB (c8)\n" in out

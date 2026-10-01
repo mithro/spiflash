@@ -83,7 +83,7 @@ def test_remote_head_missing_branch(upstream: fetch.Upstream) -> None:
 
 
 def test_data_files_share_the_format() -> None:
-    assert update_db.FORMAT == db.FORMAT == 5
+    assert update_db.FORMAT == db.FORMAT == 6
     for name in ("records.json", "manufacturers.json", "sources.json", "datasheets.json"):
         assert json.loads((update_db.DATA / name).read_text())["format"] == db.FORMAT, name
 
@@ -97,3 +97,12 @@ def test_make_refuses_to_lose_an_operation(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(record.derive, "opcodes", lambda _: next(calls, ()))
     with pytest.raises(AssertionError, match=r"lost \['SE'\]"):
         record.make("linux", "f", 1, "n", opcodes=[{"op": "SE", "via": "x"}])
+
+
+def test_db_snapshot_refuses_a_src_without_the_package(tmp_path: Path) -> None:
+    # Else it would quietly snapshot the installed package instead.
+    import db_snapshot  # noqa: PLC0415 - a tool, imported where it is tested
+
+    with pytest.raises(SystemExit):
+        db_snapshot.main(["--src", str(tmp_path / "nope"), str(tmp_path / "out.json")])
+    assert not (tmp_path / "out.json").exists()

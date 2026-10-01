@@ -56,7 +56,8 @@ def test_the_docs_have_examples() -> None:
 def test_example_output(
     capsys: pytest.CaptureFixture[str], args: list[str], shown: list[str]
 ) -> None:
-    assert cli.main(args) == 0
+    # sfdp-diff exits 1 when the two differ, as diff does.
+    assert cli.main(args) == (1 if args[0] == "sfdp-diff" else 0)
     printed = [line.rstrip() for line in capsys.readouterr().out.splitlines()]
     # A last line of "..." stands for the rest.
     if shown[-1].strip() == "...":

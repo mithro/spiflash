@@ -105,7 +105,7 @@ PARSERS = {
     Source.ZEPHYR: (
         "tools/spiflash_extract/zephyr.py",
         "tools/spiflash_extract/dts.py",
-        "tools/spiflash_extract/sfdp.py",
+        "src/spiflash/sfdp.py",
     ),
 }
 

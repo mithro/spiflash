@@ -25,6 +25,7 @@ The modules behind it:
 | {py:mod}`spiflash.opcodes` | the named SPI operations |
 | {py:mod}`spiflash.derive` | what a record's stored fields imply, worked out at load |
 | {py:mod}`spiflash.sfdp` | the SFDP ([JESD216](https://www.jedec.org/standards-documents/docs/jesd216b)) decoder |
+| {py:mod}`spiflash.sfdp_tools` | SFDP tables from the database ({py:func}`~spiflash.sfdp_tools.encode`), to a database entry ({py:func}`~spiflash.sfdp_tools.to_entry`), and compared ({py:func}`~spiflash.sfdp_tools.diff`) |
 | {py:mod}`spiflash.vendors` | the vendor spellings |
 | {py:mod}`spiflash.units` | sizes and times as people read them |
 | {py:mod}`spiflash.cli` | the `spiflash` command |
@@ -50,15 +51,25 @@ A {py:class}`~spiflash.model.Record` holds what its upstream entry states,
 and each fact once. What follows from those fields is worked out when the
 record is made ({py:mod}`spiflash.derive`), never stored:
 
+- {py:attr}`~spiflash.model.Record.size` and
+  {py:attr}`~spiflash.model.Record.page_size` are what the entry states
+  ({py:attr}`~spiflash.model.Record.size_claim`,
+  {py:attr}`~spiflash.model.Record.page_size_claim`), or where it states
+  none, what its SFDP tables say ({py:meth}`Sfdp.facts
+  <spiflash.sfdp.Sfdp.facts>`); {py:attr}`~spiflash.model.Record.erasers`
+  is its {py:attr}`~spiflash.model.Record.eraser_claims` and its tables'
+  erasers;
 - {py:attr}`~spiflash.model.Record.opcodes` is the entry's
   {py:attr}`~spiflash.model.Record.opcode_claims` plus the id read its
-  `id_method` gives (unless the entry names its own id command) and the
-  erase each of its erasers sends (SPI NOR only),
-  each marked {py:attr}`~spiflash.opcodes.OpcodeUse.implied`;
+  `id_method` gives (unless the entry names its own id command), the
+  erase each of its stored erasers sends, and the operations its SFDP
+  tables give, with their dummy clocks (SPI NOR only), each marked
+  {py:attr}`~spiflash.opcodes.OpcodeUse.implied`;
 - {py:attr}`~spiflash.model.Record.features` is its
-  {py:attr}`~spiflash.model.Record.feature_claims` plus what its stored
-  operations (not its driver's defaults), block erasers, size and SFDP
-  tables imply ({py:func}`spiflash.derive.features`);
+  {py:attr}`~spiflash.model.Record.feature_claims` plus what its stated
+  operations (not its driver's defaults), its SFDP tables' operations,
+  its block erasers, its size, and what only SFDP says imply
+  ({py:func}`spiflash.derive.features`);
 - {py:attr}`~spiflash.model.Record.sector_size` is the block of its 0xd8
   eraser (failing that its 0xdc, then its 0x52 eraser; a SPI NAND part's
   block erase), and `None` for a part that needs no erase
@@ -70,7 +81,7 @@ record is made ({py:mod}`spiflash.derive`), never stored:
 [](derived.md) lists the rules.
 
 A field that is both stored and derived keeps the stored part in a
-`*_claims` attribute ({py:data}`~spiflash.model.CLAIMS`);
+`*_claims` attribute (`*_claim` for a single value: {py:data}`~spiflash.model.CLAIMS`);
 {py:meth}`Record.stored("features") <spiflash.model.Record.stored>` reads it
 by the field's name, and {py:meth}`~spiflash.model.Record.to_json` writes
 exactly the stored fields, as the data holds them.
@@ -134,3 +145,61 @@ Changes in data format 5:
   part's);
 - {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>` (the command's
   `--json`) gains `"feature_sources"` and each operation's `"assumed_by"`.
+
+Changes in data format 6 (what a record's SFDP tables say is derived, and the
+SFDP tools):
+
+- `Record(...)` takes `size_claim=`, `page_size_claim=` and
+  `eraser_claims=`, not `size=`, `page_size=` and `erasers=`, which are now
+  the stated value or, where the entry states none, its SFDP tables' (read
+  them as before; {py:meth}`Record.stored("size")
+  <spiflash.model.Record.stored>` reads the stated one, and
+  {py:meth}`~spiflash.model.Record.given` the whole value, so
+  {py:meth}`Flash.values("size") <spiflash.model.Flash.values>` and
+  {py:attr}`~spiflash.model.Flash.conflicts` are unchanged);
+- the method `Record.sfdp_tables()` is the property
+  {py:attr}`Record.parsed_sfdp <spiflash.model.Record.parsed_sfdp>`
+  (no parentheses): {py:attr}`~spiflash.model.Record.sfdp_tables` is now
+  the new field holding the tables a source copies (`{0xff00: bytes}`);
+  {py:attr}`~spiflash.model.Record.sfdp_facts` and
+  {py:meth}`~spiflash.model.Record.sfdp_disagreements` are new;
+- {py:class}`~spiflash.model.SfdpDump`'s `tables` is `sfdp` (`tables` still
+  reads it), and {py:attr}`Flash.sfdp_dumps
+  <spiflash.model.Flash.sfdp_dumps>` lists copied tables after the whole
+  dumps; such an {py:class}`~spiflash.sfdp.Sfdp` is
+  {py:attr}`~spiflash.sfdp.Sfdp.partial`, with `major`, `minor` and
+  `access_protocol` `None` (so {py:attr}`ParameterHeader.major
+  <spiflash.sfdp.ParameterHeader.major>` and {py:attr}`Bfpt.major
+  <spiflash.sfdp.Bfpt.major>` may be too);
+- {py:meth}`Sfdp.features() <spiflash.sfdp.Sfdp.features>` is
+  {py:func}`spiflash.derive.features`'s rules applied to the tables alone, so
+  a 4-byte operation in the 4BAIT implies `4byte_opcodes` and its fast read
+  (0x0c) `fast_read`, as they do from any source; {py:meth}`Sfdp.operations()
+  <spiflash.sfdp.Sfdp.operations>` names the 3-byte 4-4-4 read `READ_4_4_4`
+  (a new operation), yields the 4 KiB erase of BFPT DW1 where no erase type
+  has it, and reads BFPT DW16's 4-byte modes only for a part that has one
+  ({py:attr}`~spiflash.sfdp.Sfdp.four_byte_mode`);
+- {py:meth}`Sfdp.to_json() <spiflash.sfdp.Sfdp.to_json>` (in
+  {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>`'s `"sfdp"` and
+  `spiflash sfdp --json`) gains `"partial"`; for a partial one, `"revision"`
+  and `"access_protocol"` are `null`, `"revision_name"` is `"unknown
+  revision"`, and each table's `"revision"` and `"pointer"` are `null`
+  (its header was made up):
+
+  ```text
+  {"partial": true, "revision": null, "revision_name": "unknown revision",
+   "access_protocol": null,
+   "tables": [{"id": 65280, "name": "BFPT", "revision": null, "length": 16,
+               "pointer": null, "dwords": [...]}], ...}
+  ```
+
+- {py:class}`~spiflash.opcodes.OpcodeUse` has a fifth field,
+  `dummy_clocks`;
+- the records gain `"sfdp_tables"` (`{}` without), and the {sfsrc}`qemu` and
+  {sfsrc}`zephyr` records lose the operations, capabilities, sizes, page
+  sizes, erasers and notes their tables give; their decoded `"sfdp-ff05"`
+  and `"sfdp-ff84"` flags are tables now. A use in `"opcodes"` may give
+  `"dummy_clocks"`;
+- the command gains `spiflash sfdp --entry`, `spiflash sfdp-encode` and
+  `spiflash sfdp-diff` ([](usage.md)), and the site an SFDP kind of data
+  issue.

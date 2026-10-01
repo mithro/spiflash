@@ -156,6 +156,17 @@ _ALL = [
         timing=(TimingSource.PART,),
     ),
     Operation(
+        "READ_4_4_4",
+        0xEB,
+        OperationKind.READ,
+        "QPI fast read",
+        "4-4-4",
+        3,
+        None,
+        READ,
+        timing=(TimingSource.PART,),
+    ),
+    Operation(
         "READ_8D_8D_8D",
         0x0B,
         OperationKind.READ,
@@ -743,12 +754,20 @@ class OpcodeUse:
     data's ``"assumed": true``), shown as a default, and implies no
     capability (:func:`spiflash.derive.features`). Read 0x03 on a part
     with SFDP tables is that part's own fact, not assumed; SFDP says nothing
-    of fast read 0x0b or page program 0x02."""
+    of fast read 0x0b or page program 0x02.
+
+    ``dummy_clocks`` is the clocks between the address and the data that
+    the part needs for this operation, where its source says
+    (:meth:`Sfdp.facts <spiflash.sfdp.Sfdp.facts>` gives each read's from
+    its SFDP tables); ``None`` where it does not, and
+    :attr:`Operation.dummy_clocks` is the usual number. The data stores it as
+    a use's ``"dummy_clocks"``, where a source gives it."""
 
     op: str
     via: str
     implied: bool = False
     assumed: bool = False
+    dummy_clocks: int | None = None
 
     @property
     def opcode(self) -> int:

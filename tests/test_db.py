@@ -944,7 +944,9 @@ def test_record_derives_id_and_erase_operations() -> None:
     ]
     assert r.opcode_claims == (OpcodeUse("READ_1_1_1", "read"),)
     # Derived from the stored fields, so a replaced field re-derives them.
-    r2 = replace(r, erasers=(Eraser(0xD8, (EraseBlock(65536, 256),)),), id_method=IdMethod.REMS)
+    r2 = replace(
+        r, eraser_claims=(Eraser(0xD8, (EraseBlock(65536, 256),)),), id_method=IdMethod.REMS
+    )
     assert [u.op for u in r2.opcodes] == ["REMS", "READ_1_1_1", "SE"]
     # A stated operation comes before the same one implied.
     r3 = rec(erasers=erasers[:1], opcodes=[{"op": "BE_4K", "via": "stated"}])
@@ -1018,10 +1020,11 @@ def test_link_to_the_upstream_line() -> None:
 def test_record_sfdp_dump() -> None:
     plain = rec()
     assert plain.sfdp is None
-    assert plain.sfdp_tables() is None
+    assert plain.parsed_sfdp is None
+    assert plain.sfdp_tables == {}
     with_dump = rec(source="openocd", sfdp=W25Q512JV.hex())
     assert with_dump.sfdp == W25Q512JV
-    tables = with_dump.sfdp_tables()
+    tables = with_dump.parsed_sfdp
     assert tables is not None
     assert tables.size == 64 << 20
     other = rec(source="openfpgaloader", name="w25q128jv", sfdp=MX25L25635E.hex())
@@ -1032,7 +1035,7 @@ def test_record_sfdp_dump() -> None:
     assert f.sfdp.revision_name == "JESD216B"  # OpenOCD outranks openFPGALoader
     assert f.sfdp_source == "openocd"
     # Parts sharing an id can carry different dumps: each is kept, with its parts.
-    assert [(d.source, d.parts, d.tables.revision_name) for d in f.sfdp_dumps] == [
+    assert [(d.source, d.parts, d.sfdp.revision_name) for d in f.sfdp_dumps] == [
         ("openocd", ("W25Q128", "W25Q128FV"), "JESD216B"),
         ("openfpgaloader", ("W25Q128JV",), "JESD216"),
     ]
@@ -1052,10 +1055,11 @@ def test_record_sfdp_dump() -> None:
 
 def test_every_shipped_sfdp_dump_decodes() -> None:
     for r in spiflash.records():
-        if r.sfdp is None:
+        if r.sfdp is None and not r.sfdp_tables:
             continue
-        tables = r.sfdp_tables()
+        tables = r.parsed_sfdp
         assert tables is not None, r.name
+        assert tables.partial is (r.sfdp is None), r.name
         assert tables.bfpt is not None, r.name
         assert tables.features() <= r.features, r.name
         assert "sfdp" in r.features

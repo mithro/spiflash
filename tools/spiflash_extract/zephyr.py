@@ -17,8 +17,12 @@ devicetree, for the driver to check and drive at start-up::
 
 Every node with a ``jedec-id`` is a part: its id, its size (in bits for the
 JESD216-based bindings, in bytes for SPI NAND), its page size, and what its
-other properties say it can do. A ``sfdp-bfp`` is the chip's own SFDP table,
-read from a real part (:mod:`spiflash_extract.sfdp`). ``readoc`` and
+other properties say it can do. A ``sfdp-bfp`` is the chip's own SFDP Basic
+Flash Parameter table, read from a real part, and ``sfdp-ff05`` and
+``sfdp-ff84`` its xSPI profile 1.0 and 4-byte address instruction tables:
+the record stores them (``sfdp_tables``) and derives what they say at load
+(:func:`spiflash.sfdp.from_tables`), so a size or page size the node also
+gives is stored only where it differs from the table's. ``readoc`` and
 ``writeoc`` (and the MSPI ``*-io-mode``) are the read and program modes the
 board uses, so the part has at least those.
 
@@ -42,11 +46,12 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
-from spiflash.derive import ERASE_BY_OPCODE, ERASE_FEATURE
+from spiflash.derive import ERASE_FEATURE
+from spiflash.sfdp import BFPT_ID, FOUR_BYTE_ID, PROFILE1_ID
 
-from . import cparse, dts, sfdp
+from . import cparse, dts
 from .ops import Opcodes
 from .record import Record, make
 
@@ -150,15 +155,23 @@ _IO_MODE = {
     "MSPI_IO_MODE_OCTAL_1_1_8": "octal_read",
     "MSPI_IO_MODE_OCTAL_1_8_8": "octal_read",
 }
-# The reads a BFP table lists: the operation, and the feature.
-_SFDP_READ = {
-    "1-1-2": ("READ_1_1_2", "dual_read"),
-    "1-2-2": ("READ_1_2_2", "dual_read"),
-    "1-1-4": ("READ_1_1_4", "quad_read"),
-    "1-4-4": ("READ_1_4_4", "quad_read"),
-    "2-2-2": (None, None),
-    "4-4-4": (None, "qpi"),
-}
+#: The bindings whose driver takes ``page-size`` as its own setting rather
+#: than the part's page, so it is kept as a flag (``page-size=128``) and the
+#: part's page is its BFPT's. The binding YAMLs say nothing of this: each
+#: inherits jedec,jesd216.yaml's "Number of bytes in a page from JESD216 BFP
+#: DW11". The drivers differ:
+#:
+#: - ``adi,max32-spixf-nor`` (:upstream:`zephyr:drivers/flash/flash_max32_spixf_nor.c`) uses it
+#:   only as the flash layout page, ``.layout.pages_size =
+#:   DT_INST_PROP(0, page_size)``, and programs by the BFPT's page;
+#: - ``jedec,nor`` (:upstream:`zephyr:drivers/flash/flash_mspi_nor.c`) programs in chunks of it,
+#:   which must fit the controller: ``FLASH_PAGE_SIZE_INST(inst) <=
+#:   PACKET_DATA_LIMIT(inst)``; frdm_mcxe247's node says why it gives 128:
+#:   "Single QSPI IP write must fit the 128-byte Tx FIFO."
+PAGE_SIZE_IS_THE_DRIVERS = frozenset({"adi,max32-spixf-nor", "jedec,nor"})
+
+#: The SFDP parameter tables a node copies, by property: the table id each is.
+SFDP_TABLES = {"sfdp-bfp": BFPT_ID, "sfdp-ff05": PROFILE1_ID, "sfdp-ff84": FOUR_BYTE_ID}
 
 #: Properties kept in a record's ``flags`` as ``name`` or ``name=value``:
 #: what the chip is or needs, not how the board wires or clocks it.
@@ -185,8 +198,6 @@ FLAGS = (
     "mspi-data-rate",
     "protocol-mode",
     "mxicy,mx25r-power-mode",
-    "sfdp-ff05",
-    "sfdp-ff84",
     "sector-size",
     "block-size",
     "plane-bytes",
@@ -310,25 +321,23 @@ class _Node:
             None,
         )
         page_size = 512 if "ppsize-512" in self.props else self.cell("page-size")
+        driver_page = None
+        if binding_name in PAGE_SIZE_IS_THE_DRIVERS and "page-size" in self.props:
+            driver_page, page_size = page_size, None
         self.notes = _comments(self.text, self.node)
-        erasers = None
-        bfp_value = self.props.get("sfdp-bfp")
-        if bfp_value:
-            bfp = sfdp.decode(dts.bytestring(bfp_value))
-            erasers = self.sfdp(bfp)
-            if size is None:
-                size = bfp.size
-            elif size != bfp.size:
-                self.notes.append(f"sfdp-bfp gives {bfp.size} bytes, size {size}")
-            if page_size is None:
-                page_size = bfp.page_size
-            elif bfp.page_size and page_size != bfp.page_size:
-                self.notes.append(
-                    f"sfdp-bfp gives a {bfp.page_size}-byte page, page-size {page_size}"
-                )
-        if bfp_value or "use-sfdp" in self.props:
-            self.features.add("sfdp")
-            self.ops.add("RDSFDP", "sfdp-bfp" if bfp_value else "use-sfdp")
+        # The tables' facts are derived at load (spiflash.sfdp); make()
+        # drops a size or page size they repeat. Zephyr's spi_nor driver
+        # refuses a size the BFPT contradicts, and other drivers use the
+        # page-size property as their write chunk, so a value that differs
+        # is the node's own.
+        tables = {
+            f"{table_id:04x}": dts.bytestring(self.props[prop] or "").hex()
+            for prop, table_id in SFDP_TABLES.items()
+            if self.props.get(prop)
+        }
+        via = {"sfdp_tables": "; ".join(p for p in SFDP_TABLES if self.props.get(p))}
+        if not tables and "use-sfdp" in self.props:
+            self.ops.add("RDSFDP", "use-sfdp")
         self.modes()
         self.capabilities(binding)
         return make(
@@ -342,10 +351,11 @@ class _Node:
             ext_id=jedec_id[3:].hex() or None,
             size=size,
             page_size=page_size,
-            erasers=erasers,
             features=self.features,
-            flags=self.flags(bfp=bfp_value is not None),
+            flags=self.flags() + ([f"page-size={driver_page}"] if driver_page else []),
+            via=via if tables else {},
             opcodes=self.ops.to_json() if binding.type == "nor" else [],
+            sfdp_tables=tables,
             notes=self.notes,
         )
 
@@ -368,23 +378,6 @@ class _Node:
             if _PART.fullmatch(token):
                 return token
         return None
-
-    def sfdp(self, bfp: sfdp.Bfp) -> list[dict[str, Any]]:
-        """The features and operations a ``sfdp-bfp`` table gives; its erasers."""
-        for protocol, opcode in bfp.reads.items():
-            op, feature = _SFDP_READ[protocol]
-            if feature:
-                self.features.add(feature)
-            if op:
-                self.ops.add(op, f"sfdp-bfp: {protocol}", value=opcode)
-        if 4 in bfp.address_bytes:
-            self.features.add("4byte_addr")
-        erasers = []
-        for opcode, block in bfp.erases:
-            erasers.append({"opcode": opcode, "blocks": [[block, bfp.size // block]]})
-            if opcode in ERASE_BY_OPCODE:
-                self.ops.add(ERASE_BY_OPCODE[opcode], "sfdp-bfp: erase type", value=opcode)
-        return erasers
 
     def modes(self) -> None:
         """The read and program modes the board uses: readoc and writeoc,
@@ -436,11 +429,9 @@ class _Node:
         if binding.type == "nor" and erase in ERASE_FEATURE:
             self.features.add(ERASE_FEATURE[erase].value)
 
-    def flags(self, *, bfp: bool) -> list[str]:
+    def flags(self) -> list[str]:
         """The compatibles and the :data:`FLAGS` properties."""
         flags = [c for c in self.compatible if c not in _GENERIC]
-        if bfp:
-            flags.append("sfdp-bfp")
         for prop in FLAGS:
             if prop in self.props:
                 value = self.props[prop]

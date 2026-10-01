@@ -17,14 +17,15 @@ merged from the flash tables of every project that keeps one:
 | [openFPGALoader](https://github.com/trabucayre/openFPGALoader) | [`src/spiFlashdb.hpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlashdb.hpp) | 53 |
 | [IMSProg](https://github.com/bigbigmdm/IMSProg) | [`IMSProg_programmer/database/IMSProg.Dat`](https://github.com/bigbigmdm/IMSProg/blob/main/IMSProg_programmer/database/IMSProg.Dat), a binary table (SPI NOR and NAND only) | 584 (96 SPI NAND) |
 | [QEMU](https://gitlab.com/qemu-project/qemu) | [`hw/block/m25p80.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80.c), and the SFDP dumps in [`hw/block/m25p80_sfdp.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80_sfdp.c) | 137 |
-| [Zephyr](https://github.com/zephyrproject-rtos/zephyr) | the devicetree of its [boards](https://github.com/zephyrproject-rtos/zephyr/tree/main/boards) and [SoCs](https://github.com/zephyrproject-rtos/zephyr/tree/main/dts): each flash node with a `jedec-id` | 99 |
+| [Zephyr](https://github.com/zephyrproject-rtos/zephyr) | the devicetree of its [boards](https://github.com/zephyrproject-rtos/zephyr/tree/main/boards) and [SoCs](https://github.com/zephyrproject-rtos/zephyr/tree/main/dts): each flash node with a `jedec-id` | 100 |
 
 Together that is 1347 distinct chip ids (1056 SPI NOR, 291 SPI NAND) from 64
 manufacturers, 849 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
 from, and where the sources disagree (92 ids do) both answers are kept.
 Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
-(JESD216) tables, decoded.
+(JESD216) tables, and sixteen more the tables Zephyr's boards copy, decoded;
+what the tables say is worked out from them, not stored again.
 
 `spiflash sources` (or `spiflash.sources()`) names the exact upstream commits
 the shipped data was extracted from.
@@ -273,8 +274,11 @@ A chip that answers SFDP
 density, erase types and their opcodes, each fast-read mode with the dummy
 clocks it needs, its page size, how to enter 4-byte addressing and set quad
 mode. That is exactly what the tables above can only approximate, so where a
-source carries a part's SFDP dump (QEMU's flash model does, for thirteen
-parts) the record keeps it whole and the chip gets it decoded:
+source carries a part's SFDP tables the record keeps them as they are, and
+works out the rest from them when it loads: QEMU's flash model has whole
+dumps for thirteen parts (a record's `sfdp`), and some of Zephyr's boards copy
+the Basic Flash Parameter Table, and sometimes the 4-byte instruction and
+xSPI tables, without the rest (its `sfdp_tables`). The chip gets them decoded:
 
 ```python
 chip = spiflash.find("W25Q512JV")[0]
@@ -284,12 +288,22 @@ t.revision_name, t.size, t.page_size     # ('JESD216B', 67108864, 256)
 t.reads["1-4-4"].dummy_clocks            # 6: the part's own number, not a default
 t.bfpt.quad_enable_description           # 'SR2 bit 1, written with a 2-byte WRSR ...'
 t.features(), list(t.operations())       # as spiflash names them
+t.facts()                                # what they say as a record's fields: size, erasers, operations
 ```
+
+What the tables say is not stored again: the record's size, page size,
+erasers, operations (each read with its dummy clocks) and capabilities come
+from them at load, by the same rules as any source's
+([what is derived](https://spiflash.readthedocs.io/en/latest/derived.html)).
+A value the source also gives outside the tables is stored only where it
+differs, and is then the record's value, as it is the one the source's own
+code uses; `record.sfdp_disagreements()` lists those, and the site lists
+them as data issues.
 
 Parts sharing an id can answer different tables (QEMU has one for the
 MX25L25635E and another for the MX25L25635F, both `c22019`): `chip.sfdp` is
-the best source's first, and `chip.sfdp_dumps` lists every distinct dump with
-the parts it belongs to.
+the best source's first whole dump, and `chip.sfdp_dumps` lists every
+distinct one, whole dumps before copied tables, with the parts it belongs to.
 
 The same decoder reads a dump from a real chip, such as the one Linux
 exposes at `/sys/bus/spi/devices/*/spi-nor/sfdp`:
@@ -306,6 +320,65 @@ older than 2011, and what it does say is what the part's designers wrote:
 Linux keeps per-part fixups for tables with a wrong density, a wrong page size
 or a missing 4-byte method. `spiflash sfdp` reports what is written, and
 `Sfdp.warnings` what did not decode cleanly.
+
+### From the database to SFDP tables, and back
+
+Three tools turn SFDP tables into database entries and back, and compare
+them. `--entry` reads a dump as one more source: what it says, as an entry
+in the data's own shape (JSON).
+
+```sh
+spiflash sfdp /sys/bus/spi/devices/spi0.0/spi-nor/sfdp --entry
+```
+
+`sfdp-encode` writes the SFDP area the database describes for a chip, in hex
+(or `-o FILE` for the bytes; `--json` for everything). It never writes as fact
+what the database does not hold. A field the format needs and the database
+cannot give is written with a documented value and listed as `assumed`
+(on stderr); without `--assume` it leaves out what it cannot fill, lowering
+the revision (the database has no erase or program times yet, so that is
+JESD216 1.0), and lists that as `missing`:
+
+```console
+$ spiflash sfdp-encode ef4020
+53464450000101ff00000109180000ff840001023c0000ffe520f3ffffffff1f06eb086b083b04bbfeffffffffff00ffffff02eb0c200f5210d800ffff0a00fe21ffdcff
+```
+
+`sfdp-diff` compares two SFDP areas, each a file, `-`, hex bytes, a chip's
+shipped dump (`ef4019`; `c22019#2` for its second) or `encoded:QUERY`, what
+`sfdp-encode` writes for a chip. It lists the tables only one has, each
+decoded field and each dword that differ, and exits 1 when they differ, as
+`diff` does. A shipped dump against its chip's encoding shows what the
+database does not hold; the mode and wait clocks of a read are one of
+those, as the database keeps their total, so a split that differs is marked
+expected:
+
+```console
+$ spiflash sfdp-diff ef4020 encoded:ef4020
+A: ef4020#1 (qemu: W25Q512JV)
+B: encoded ef4020
+tables:
+    BFPT: 1.6, 16 dwords in A, 1.0, 9 dwords in B
+fields:
+    revision: 1.6 in A, 1.0 in B
+    page_size: 256 in A, none in B
+    dtr: True in A, False in B
+    reads.1-2-2: 0xbb, 2 mode + 2 wait clocks in A, 0xbb, 0 mode + 4 wait clocks in B  (expected: the same 4 dummy clocks, split differently)
+...
+```
+
+The same three are in the library, in `spiflash.sfdp_tools`:
+
+```python
+from spiflash.sfdp_tools import diff, encode, to_entry
+
+out = encode(chip, revision=(1, 6), assume=True)   # a Flash or a Record
+out.data, out.assumed, out.missing       # the bytes; what it assumed; what it left out
+entry = to_entry(chip.sfdp)              # a records.json entry, identity left None
+spiflash.Record.from_json(entry | {"source": "qemu", "file": "-", "line": 0, "name": "mine"})
+d = diff(chip.sfdp, out.sfdp)            # false when they agree
+d.fields, d.dwords, d.tables, d.describe()
+```
 
 ## Datasheets
 

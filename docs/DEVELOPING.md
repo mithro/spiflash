@@ -69,7 +69,8 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`enums.py <src/spiflash/enums.py>` | the fixed vocabularies, as enums: sources in priority order, flash types, id families, features, kinds of operation, ... |
 | {repo}`opcodes.py <src/spiflash/opcodes.py>` | the named operations |
 | {repo}`derive.py <src/spiflash/derive.py>` | what a record's stored fields imply, worked out at load (every such rule is here) |
-| {repo}`sfdp.py <src/spiflash/sfdp.py>` | the JESD216 (SFDP) decoder |
+| {repo}`sfdp.py <src/spiflash/sfdp.py>` | the JESD216 (SFDP) decoder, and what tables say in a record's terms (`Sfdp.facts`) |
+| {repo}`sfdp_tools.py <src/spiflash/sfdp_tools.py>` | SFDP tables from the database (`encode`), to an entry (`to_entry`), compared (`diff`) |
 | {repo}`vendors.py <src/spiflash/vendors.py>` | one name per vendor |
 | {repo}`units.py <src/spiflash/units.py>` | sizes and times as people read them |
 | {repo}`cli.py <src/spiflash/cli.py>` | the `spiflash` command |
@@ -83,7 +84,6 @@ left out (and why), are listed in {repo}`pyproject.toml`.
 | {repo}`tools/spiflash_extract/` | the extraction tools |
 | {repo}`cparse.py <tools/spiflash_extract/cparse.py>` | just enough C: find tables, split initialisers, evaluate integer expressions (`SZ_16M`, `BIT(3)`, `64 * 1024`) |
 | {repo}`dts.py <tools/spiflash_extract/dts.py>` | just enough devicetree source: the nodes of a `.dts`, `.dtsi` or `.overlay`, their labels and properties, without the C preprocessor |
-| {repo}`sfdp.py <tools/spiflash_extract/sfdp.py>` | a JESD216 Basic Flash Parameter table (SFDP), decoded |
 | {repo}`record.py <tools/spiflash_extract/record.py>` | the common record every extractor writes |
 | {repo}`ops.py <tools/spiflash_extract/ops.py>` | each record's opcodes, values checked against {repo}`src/spiflash/opcodes.py` |
 | {repo}`flashrom.py <tools/spiflash_extract/flashrom.py>`, {repo}`linux.py <tools/spiflash_extract/linux.py>`, {repo}`uboot.py <tools/spiflash_extract/uboot.py>`, {repo}`dediprog.py <tools/spiflash_extract/dediprog.py>`, {repo}`rockchip.py <tools/spiflash_extract/rockchip.py>`, {repo}`mediatek.py <tools/spiflash_extract/mediatek.py>`, {repo}`openocd.py <tools/spiflash_extract/openocd.py>`, {repo}`openfpgaloader.py <tools/spiflash_extract/openfpgaloader.py>`, {repo}`imsprog.py <tools/spiflash_extract/imsprog.py>`, {repo}`qemu.py <tools/spiflash_extract/qemu.py>`, {repo}`zephyr.py <tools/spiflash_extract/zephyr.py>` | one extractor per upstream format |

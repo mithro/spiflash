@@ -69,8 +69,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("out", type=Path, help="where to write the snapshot")
     ap.add_argument("--src", type=Path, default=REPO / "src", help="the spiflash package's root")
     args = ap.parse_args(argv)
-    sys.path.insert(0, str(args.src.resolve()))
+    src = args.src.resolve()
+    if not (src / "spiflash" / "__init__.py").is_file():
+        # Else the import below would quietly take the installed package.
+        ap.error(f"--src {args.src}: no spiflash package there")
+    sys.path.insert(0, str(src))
     import spiflash  # noqa: PLC0415 - from --src, so only after the path is set
+
+    if not Path(spiflash.__file__).resolve().is_relative_to(src):
+        msg = f"spiflash came from {spiflash.__file__}, not --src {src}"
+        raise RuntimeError(msg)
 
     chips: dict[str, Any] = {}
     for flash in spiflash.flashes():

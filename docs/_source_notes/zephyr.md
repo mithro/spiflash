@@ -12,10 +12,29 @@ some with placeholder ids.
   uses (`readoc`, `writeoc`, the MSPI I/O mode) and what the chip needs
   (`has-dpd`, `quad-enable-requirements`, `enter-4byte-addr`, ...), kept in
   the record's `flags`.
-- About a quarter of the nodes carry a copy of the chip's own SFDP Basic
-  Flash Parameter table (`sfdp-bfp`), which gives its density, fast reads,
-  erase types and page size as the chip itself reports them; where the
-  board's own values disagree with it, the record's `notes` say so.
+- About a fifth of the nodes carry a copy of the chip's own SFDP Basic
+  Flash Parameter table (`sfdp-bfp`), and a few its 4-byte instruction and
+  xSPI profile tables (`sfdp-ff84`, `sfdp-ff05`). The record stores them (its
+  `sfdp_tables`) and works out from them its density, fast reads with their
+  dummy clocks, erase types and page size as the chip itself reports them
+  ([](../derived.md#sfdp-tables)). A size or page size the node gives too is
+  stored only where it differs from the table's, and is then a
+  [data issue](../issues/sfdp.md): the `spi_nor` driver refuses a size its
+  table contradicts. The tables are what the board's porter copied, not
+  always the part's: frdm_mcxe247's W25Q64 carries the MX25R6435F's BFPT
+  byte for byte (`spiflash sfdp-diff ef4017 c22817` finds no difference;
+  its node says the quad enable is S2B1v1, the table SR1 bit 6), and
+  wio_tracker_l1's P25Q16H carries another part's, a 16 MiB one with DTR.
+- `page-size` is the part's page for `jedec,spi-nor`, but two drivers take
+  it as their own setting, though every binding inherits
+  {upstream}`jedec,jesd216.yaml <zephyr:dts/bindings/mtd/jedec,jesd216.yaml>`'s description, "Number of bytes in a page from
+  JESD216 BFP DW11": `adi,max32-spixf-nor`'s driver
+  ({upstream}`flash_max32_spixf_nor.c <zephyr:drivers/flash/flash_max32_spixf_nor.c>`) uses it only as its flash layout page
+  (`.layout.pages_size = DT_INST_PROP(0, page_size)`), and `jedec,nor`'s
+  ({upstream}`flash_mspi_nor.c <zephyr:drivers/flash/flash_mspi_nor.c>`) as its program chunk, which must fit the
+  controller (`FLASH_PAGE_SIZE_INST(inst) <= PACKET_DATA_LIMIT(inst)`;
+  frdm_mcxe247: "Single QSPI IP write must fit the 128-byte Tx FIFO."). For
+  those it is kept as a flag (`page-size=128`), not as the part's page.
 - Devicetree has no field for the part name: it is the node's name, a label,
   a comment on the `jedec-id` line or a descriptive `compatible`, whichever
   first looks like a part number, and a node none of them names is left out.
@@ -29,3 +48,9 @@ some with placeholder ids.
   copied from another board). That is why {sfsrc}`zephyr` comes last when
   sources are tied, and why its disagreements are worth reading on
   [its data issues page](../issues/source-zephyr.md).
+- Two nodes carrying a table make no record, and so their tables are not
+  kept: qemu_cortex_r5's `flash@0` and `flash@1` (id `20 bb 20`, a 512 Mbit
+  Micron part, with a BFPT) have no name that looks like a part number;
+  and stm32l4r9i_disco's MX25LM51245 node has no `jedec-id`, its
+  `sfdp-bfp` being a whole SFDP area (it starts `53 46 44 50`, "SFDP")
+  rather than the BFPT the property is for.

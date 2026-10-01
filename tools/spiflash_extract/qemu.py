@@ -15,17 +15,17 @@ The model decodes every opcode for every part (the values are its
 and flags. What makes it worth reading is
 ``.sfdp_read``: thirteen entries point at a complete SFDP dump in
 :upstream:`qemu:hw/block/m25p80_sfdp.c`, which no other upstream carries.
-Those records get the dump (``sfdp``) and everything :mod:`spiflash.sfdp`
-decodes from it: erase types, fast reads with their dummy clocks, 4-byte
-opcodes, page size.
+Those records store the dump (``sfdp``, with ``.sfdp_read`` as its
+``via``), and derive at load everything :mod:`spiflash.sfdp` decodes from
+it (:meth:`~spiflash.sfdp.Sfdp.facts`): erase types, fast reads with their
+dummy clocks, 4-byte opcodes, page size. The entry's own geometry, which the
+model uses, is stored only where it differs from the dump's.
 """
 
 from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
-
-from spiflash import sfdp as sfdp_tables
 
 from . import cparse
 from .ops import Opcodes
@@ -190,32 +190,17 @@ def _record(
     if die_cnt:
         ops.add("DIE_ERASE", f"die_cnt = {die_cnt}", "DIE_ERASE")
 
+    # The dump's facts (spiflash.sfdp) are derived at load; make() drops
+    # the INFO geometry they repeat.
     dump = None
-    page = 256
+    via = feature_via(claims)
     reader = fields.get("sfdp_read")
     if reader is not None:
         if reader not in dumps:
             msg = f"{M25P80}:{cparse.line_of(raw, entry.offset)}: no {reader}() in {SFDP_C}"
             raise ValueError(msg)
         dump = dumps[reader]
-        tables = sfdp_tables.parse(dump)
-        ops.add("RDSFDP", f".sfdp_read = {reader}", "RDSFDP")
-        # JESD216's read, fast read and page program, which every part with
-        # the tables has, are the part's own, not the model's default.
-        for use in tables.operations():
-            if use.name == "RDSFDP":
-                continue
-            if use.name is not None:
-                ops.add(use.name, f"SFDP {use.via}", value=use.opcode)
-            else:
-                notes.append(
-                    f"SFDP: 0x{use.opcode:02x} {use.protocol}, no named operation ({use.via})"
-                )
-        notes.extend(f"SFDP: {w}" for w in tables.warnings)
-        if tables.page_size is not None:
-            page = tables.page_size
-        if tables.size is not None and tables.size != size:
-            notes.append(f"SFDP density is {tables.size} bytes, the table says {size}")
+        via["sfdp"] = f".sfdp_read = {reader}"
 
     return make(
         "qemu",
@@ -227,11 +212,11 @@ def _record(
         ext_id=ext,
         id_method="rdid" if id_hex else None,
         size=size,
-        page_size=page,
+        page_size=256,  # INFO()'s, for every part
         erasers=erasers or None,
         features=features,
         flags=flags,
-        via=feature_via(claims),
+        via=via,
         opcodes=ops.to_json(),
         sfdp=dump.hex() if dump else None,
         notes=notes,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from importlib import resources
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -50,9 +51,16 @@ def test_no_erase_operation_an_eraser_gives() -> None:
 
 
 def test_no_operation_the_record_derives() -> None:
+    # As make() decides it: a stored use is a derived one when its operation
+    # is, and it gives no dummy clocks of its own or the same ones.
     def stored(r: dict[str, Any]) -> set[str]:
-        derived = {u.op for u in derive.opcodes(Record.from_json(r))}
-        return derived & {o["op"] for o in r["opcodes"]}
+        derived = derive.opcodes(Record.from_json(r))
+        return {
+            o["op"]
+            for o in r["opcodes"]
+            for u in derived
+            if o["op"] == u.op and o.get("dummy_clocks") in (None, u.dummy_clocks)
+        }
 
     assert not [(_where(r), stored(r)) for r in RECORDS if stored(r)]
 
@@ -217,3 +225,76 @@ def test_no_eraser_for_a_part_that_needs_no_erase() -> None:
         return any(e["opcode"] is not None for e in r["erasers"] or ())
 
     assert not [_where(r) for r in RECORDS if "no_erase" in r["features"] and erases(r)]
+
+
+# --- what a record's SFDP tables say is derived -------------------------------
+
+
+def _with_sfdp() -> list[dict[str, Any]]:
+    return [r for r in RECORDS if r["sfdp"] or r["sfdp_tables"]]
+
+
+def test_sfdp_is_a_dump_or_tables_not_both() -> None:
+    assert not [_where(r) for r in RECORDS if r["sfdp"] and r["sfdp_tables"]]
+    assert {r["source"] for r in _with_sfdp()} == {"qemu", "zephyr"}
+
+
+def test_the_raw_tables_round_trip() -> None:
+    # The tables are the stored fact: they load, decode, and are written
+    # back byte for byte.
+    for d in _with_sfdp():
+        r = Record.from_json(d)
+        parsed = r.parsed_sfdp
+        assert parsed is not None, _where(d)
+        assert parsed.bfpt is not None, _where(d)
+        for table_id, raw in r.sfdp_tables.items():
+            assert parsed.table(table_id) == raw, _where(d)
+        assert r.to_json()["sfdp_tables"] == d["sfdp_tables"]
+
+
+def test_no_stored_value_its_tables_give() -> None:
+    """A size, page size, eraser, operation or capability claim a record's
+    own SFDP tables give is derived, so not stored; one that differs is a
+    disagreement (Record.sfdp_disagreements). A stored operation is the
+    tables' when it states no dummy clocks, or the same ones."""
+
+    def twice(d: dict[str, Any]) -> list[str]:
+        r = Record.from_json(d)
+        assert r.sfdp_facts is not None
+        assert r.parsed_sfdp is not None
+        facts = r.sfdp_facts
+        out = [n for n in ("size", "page_size") if d[n] is not None and d[n] == getattr(facts, n)]
+        out += [f"eraser 0x{e.opcode:02x}" for e in r.eraser_claims if e in r.sfdp_erasers]
+        given = {u.op: u.dummy_clocks for u in facts.opcodes}
+        out += [
+            o["op"]
+            for o in d["opcodes"]
+            if o["op"] in given and o.get("dummy_clocks") in (None, given[o["op"]])
+        ]
+        out += [f for f in d["features"] if f in derive.sfdp_features(r.parsed_sfdp)]
+        return out
+
+    assert not [(_where(d), twice(d)) for d in _with_sfdp() if twice(d)]
+
+
+def test_a_disagreement_is_the_stored_value() -> None:
+    found = []
+    for d in _with_sfdp():
+        for field, stored, said in Record.from_json(d).sfdp_disagreements():
+            assert stored != said
+            found.append((d["name"], field))
+            if field != "erasers":
+                assert d[field] == stored, _where(d)
+    # One board copies another part's table (16 MiB, with DTR, for a 2 MiB
+    # P25Q16H). Two boards' page-size is their driver's setting, kept as a
+    # flag (spiflash_extract.zephyr.PAGE_SIZE_IS_THE_DRIVERS).
+    assert sorted(found) == [("P25Q16H", "size")]
+
+
+def test_no_sfdp_residue() -> None:
+    zephyr = [f for r in RECORDS if r["source"] == "zephyr" for f in r["flags"]]
+    assert not [f for f in zephyr if f.startswith("sfdp-")]
+    notes = [n for r in RECORDS if r["source"] in ("qemu", "zephyr") for n in r["notes"]]
+    assert not [n for n in notes if n.startswith(("SFDP:", "sfdp-bfp gives"))]
+    # One decoder: the extractors have none of their own.
+    assert not (Path(record.__file__).parent / "sfdp.py").exists()

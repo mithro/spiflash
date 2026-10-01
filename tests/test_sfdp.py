@@ -215,9 +215,9 @@ def test_w25q512jv() -> None:
         "WREAR": (0xC5, 0),
     }.items() <= named.items()
     assert "BE_32K_4B" not in named
-    # The 3-byte 4-4-4 read has no name in the operations table.
-    unnamed = [o for o in s.operations() if o.name is None]
-    assert [(o.opcode, o.protocol) for o in unnamed] == [(0xEB, "4-4-4")]
+    # The 3-byte 4-4-4 read is QPI's.
+    assert named["READ_4_4_4"] == (0xEB, 2)
+    assert [o for o in s.operations() if o.name is None] == []
     # WREAR is both the way in and the way out: listed once.
     assert sum(o.opcode == 0xC5 for o in s.operations()) == 1
     # Filler bits 20 to 31 claim octal instructions this quad part has not.
@@ -375,13 +375,16 @@ def test_profile1_and_sccr() -> None:
 
 def test_four_byte_gating() -> None:
     bfpt = [*MX_BFPT, 0, 0x00000080, 0, 0, 0, 0, 1 << 24 | 1 << 14]
-    # Bits for reads the BFPT lacks are ignored; the table is unusable
-    # without a program instruction.
+    # Bits for reads the BFPT lacks are ignored; Linux does not use the
+    # table without a program instruction, but the read it lists is still
+    # a dedicated 4-byte opcode the part has.
     s = parse(dump((0xFF00, 1, 6, 0x40, bfpt), (0xFF84, 1, 0, 0x90, [1 << 20 | 1 << 5, 0])))
     assert s.four_byte is not None
     assert not s.four_byte.usable
     assert [i.bit for i in s.four_byte.instructions if i.supported_by_bfpt] == [5]
-    assert "4byte_opcodes" not in s.features()
+    assert [o.name for o in s.operations() if o.address_bytes == 4] == ["READ_1_4_4_4B"]
+    assert "4byte_opcodes" in s.features()
+    assert "octal_read" not in s.features()
     # With read, program and erase it is usable, and DTR needs the DTR bit.
     s = parse(
         dump(
