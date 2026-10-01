@@ -421,13 +421,12 @@ def _bfpt_dwords(part: _Part, assumed: list[str], missing: list[str]) -> tuple[l
             "the dummy clocks of " + ", ".join(split) + " as 0 mode + N wait clocks "
             "(the database keeps their total, not the split)"
         )
-    types = [(op, block) for op, block in part.erasers if block & (block - 1) == 0]
+    types = _erase_types(part)
     for op, block in part.erasers:
-        if (op, block) not in types:
+        if block & (block - 1):
             missing.append(f"eraser 0x{op:02x}: {block}-byte blocks are not a power of two")
-    if len(types) > 4:
-        missing.extend(f"eraser 0x{op:02x}: the BFPT has four erase types" for op, _ in types[4:])
-        types = types[:4]
+        elif (op, block) not in types:
+            missing.append(f"eraser 0x{op:02x}: the BFPT has four erase types")
     halves = [block.bit_length() - 1 | op << 8 for op, block in types]
     halves += [0xFF00] * (4 - len(halves))
     dw[7] = halves[0] | halves[1] << 16
