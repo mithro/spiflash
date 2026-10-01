@@ -85,8 +85,10 @@ class SourceInfo:
         }
 
 
-#: The data files' format; :repo:`tools/update_db.py` writes the same number.
+#: The data files' format, which :repo:`tools/update_db.py` and
+#: :repo:`tools/import_datasheets.py` write (they import it from here).
 #: 2: records' ``opcodes`` became a list of {op, opcode, via}.
+#: 3: records gain ``sfdp`` (QEMU's SFDP dumps, hex).
 #: 4: ``opcodes`` lose ``opcode``; erase and id operations are derived;
 #: ``via``; consumed flags and notes removed.
 #: 5: ``sector_size`` dropped (derived from the erasers, which Linux, U-Boot,

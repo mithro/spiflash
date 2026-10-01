@@ -138,3 +138,5 @@ def test_import(tmp_path: Path) -> None:
     bad = tmp_path / "datasheets.jsonl"
     bad.write_text(json.dumps({**line, "ids": ["000000"]}) + "\n")
     assert import_datasheets.main([str(bad)]) == 1
+    # No manifest: said, not a traceback.
+    assert import_datasheets.main([str(tmp_path / "none.jsonl")]) == 1
