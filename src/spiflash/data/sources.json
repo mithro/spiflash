@@ -123,6 +123,22 @@
    "records": 137,
    "url": "https://gitlab.com/qemu-project/qemu.git"
   },
+  "rockchip": {
+   "branch": "next-dev",
+   "browse": "https://github.com/rockchip-linux/u-boot",
+   "commit": "1c535d65b8509f388d09e49fb6961f49fda35a1d",
+   "date": "2026-07-28T06:57:48Z",
+   "license": "GPL-2.0-only",
+   "paths": [
+    "drivers/rkflash/sfc_nor.c",
+    "drivers/rkflash/sfc_nor.h",
+    "drivers/rkflash/sfc_nand.c",
+    "drivers/rkflash/sfc_nand.h",
+    "drivers/rkflash/sfc.h"
+   ],
+   "records": 226,
+   "url": "https://github.com/rockchip-linux/u-boot"
+  },
   "u-boot": {
    "branch": "main",
    "browse": "https://github.com/u-boot/u-boot",

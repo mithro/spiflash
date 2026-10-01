@@ -241,7 +241,7 @@ class _Render:
 
         def mark(a: Answer) -> str:
             f = self.chips[a.value]
-            gives = any(f.key in d.confirmed and issue.subject in d.parts for d in f.datasheets)
+            gives = any(f.confirms(d) and issue.subject in d.parts for d in f.datasheets)
             return " {bdg-success}`datasheet`" if gives else ""
 
         return mark

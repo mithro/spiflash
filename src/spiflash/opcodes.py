@@ -378,6 +378,17 @@ _ALL = [
         WRITE,
         timing=_LINUX_4B,
     ),
+    Operation(
+        "PP_1_4_4_4B",
+        0x3E,
+        OperationKind.PROGRAM,
+        "Quad I/O page program, 4-byte address",
+        "1-4-4",
+        4,
+        0,
+        WRITE,
+        timing=(TimingSource.PART,),
+    ),
     # Erase: the command and the address of the block, nothing else.
     Operation("BE_256", 0xDB, OperationKind.ERASE, "Erase a 256 B page", "1-1-0", 3, timing=_SIZES),
     Operation(

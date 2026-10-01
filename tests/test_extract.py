@@ -21,6 +21,7 @@ from spiflash_extract import (
     openocd,
     qemu,
     record,
+    rockchip,
     sfdp,
     uboot,
     zephyr,
@@ -331,7 +332,7 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
 
     s = r["S25FL128S_UL Uniform 128 kB Sectors"]
     assert s["id"] == "012018"
-    assert s["ext_id"] == "0080"
+    assert s["ext_id"] == "4d0080"  # the id length byte, 4d, the probe skips
     assert s["tested"] == "{ .probe = NA, .read = OK }"
     assert r["M25P05"]["id_method"] == "res1"
     assert r["M25P05"]["id"] == "05"
@@ -363,6 +364,14 @@ def test_flashrom_errors(tmp_path: Path) -> None:
     write(tmp_path, {"flashchips.c": bad})
     with pytest.raises(ValueError, match="unknown probe 'SOMETHING_NEW'"):
         flashrom.extract(tmp_path, "flashprog")
+
+
+def test_flashrom_only_big_spansion_has_an_extended_id() -> None:
+    # The id length byte, 4d, belongs to PROBE_SPI_BIG_SPANSION's parts only.
+    assert flashrom.id_bytes("rdid", 0x01, 0x20180080, "SPI_BIG_SPANSION") == ("012018", "4d0080")
+    assert flashrom.id_bytes("rdid", 0xEF, 0x4018, "SPI_RDID") == ("ef4018", None)
+    with pytest.raises(ValueError, match="more than two bytes, 0x20180080, from probe 'SPI_RDID'"):
+        flashrom.id_bytes("rdid", 0x01, 0x20180080, "SPI_RDID")
 
 
 def test_flashrom_erase_opcode_without_an_operation(tmp_path: Path) -> None:
@@ -480,6 +489,176 @@ def test_openfpgaloader_no_map(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no flash_list"):
         openfpgaloader.extract(tmp_path)
 
+
+# --- Rockchip ----------------------------------------------------------------
+
+ROCKCHIP = FIXTURES / "rockchip"
+
+
+def test_rockchip_nor() -> None:
+    r = by_name(rockchip.extract_nor(ROCKCHIP))
+    gd = r["GD25Q40B"]
+    assert (gd["id"], gd["id_method"], gd["line"]) == ("c84013", "rdid", 16)
+    assert (gd["size"], gd["page_size"], gd["sector_size"]) == (512 << 10, 256, 64 << 10)
+    assert gd["erasers"] == [
+        {"opcode": 0x20, "blocks": [[4096, 128]]},
+        {"opcode": 0xD8, "blocks": [[65536, 8]]},
+    ]
+    # Feature 0x05: quad read, and the status registers written together;
+    # prog_cmd_4 is there, but no FEA_4BIT_PROG to use it.
+    assert gd["features"] == ["erase_4k", "erase_64k", "quad_read"]
+    assert gd["flags"] == ["FEA_4BIT_READ", "QE_bits=9", "write_status=snor_write_status1"]
+    assert set(ops(gd)) == {"RDID", "READ_1_1_1", "READ_1_1_4", "PP_1_1_1", "BE_4K", "SE"}
+    assert ops(gd)["READ_1_1_4"] == (0x6B, "read_cmd_4 (FEA_4BIT_READ)")
+
+    # The names in a comment, each part spelled out.
+    assert "GD25Q64B/GD25Q64C/GD25Q64E" in r
+    assert "GD25Q127C/GD25Q128C/GD25Q128E" in r
+    assert "MX25L25635E/MX25L25635F/MX25L25645G/MX25L25645GMI-08G" in r
+    assert "BH25Q128AS/BY25Q128AS" in r
+
+    # 4-byte opcodes; 0x3e is sent on one address line, not being Macronix.
+    gd256 = r["GD25Q256B/GD25Q256C/GD25Q256D/GD25Q256E"]
+    assert set(ops(gd256)) == {
+        "RDID",
+        "READ_1_1_1_4B",
+        "READ_1_1_4_4B",
+        "PP_1_1_1_4B",
+        "BE_4K_4B",
+        "SE_4B",
+    }
+    assert {"4byte_addr", "4byte_opcodes", "quad_pp"} <= set(gd256["features"])
+    assert gd256["notes"][0].startswith("prog_cmd_4 0x3e left out")
+    # XM25QH(QU)256B: the QU answers another id, so only the QH is taken.
+    xm = r["XM25QH256B"]
+    assert xm["notes"][0].startswith("the comment also names the XM25QU256B")
+    assert xm["notes"][1].startswith("prog_cmd_4 0x3e left out")
+    mx = r["MX25L25635E/MX25L25635F/MX25L25645G/MX25L25645GMI-08G"]
+    assert ops(mx)["PP_1_4_4_4B"] == (0x3E, "prog_cmd_4 (FEA_4BIT_PROG)")
+    assert "write_status=snor_write_status2" in mx["flags"]
+    assert ops(r["MX25L6433F"])["PP_1_4_4"] == (0x38, "prog_cmd_4 (FEA_4BIT_PROG)")
+
+    # Feature 0x3c: 4-byte addresses, entering 4-byte mode first.
+    w = r["W25Q256F/W25Q256J"]
+    assert ops(w)["EN4B"] == (0xB7, "FEA_4BYTE_ADDR_MODE")
+    assert "FEA_4BYTE_ADDR_MODE" in w["flags"]
+    assert {"READ_1_1_1_4B", "PP_1_1_1", "PP_1_1_4", "BE_4K", "SE"} <= set(ops(w))
+    assert "fast_read" in r["MX25U51245G"]["features"]  # 0x0c
+
+
+def test_rockchip_nand() -> None:
+    recs = rockchip.extract_nand(ROCKCHIP)
+    r = by_name(recs)
+    assert all(x["type"] == "nand" and x["id_method"] == "rdid_opcode_addr" for x in recs)
+    tc = r["TC58CVG0S0HXAIX"]
+    assert tc["id"] == "98c2"  # a third byte of 0 is not compared
+    assert (tc["size"], tc["page_size"], tc["sector_size"]) == (128 << 20, 2048, 128 << 10)
+    assert tc["features"] == []
+    assert tc["flags"] == [
+        "ecc_status=sfc_nand_get_ecc_status0",
+        "has_qe_bits=0",
+        "max_ecc_bits=8",
+        "meta={ 0x04, 0x08, 0xFF, 0xFF }",
+    ]
+    assert r["TC58CVG2S0HRAIJ"]["page_size"] == 4096
+    assert r["XT26G04A"]["sector_size"] == 128 * 2048
+    assert r["W25N01GV"]["id"] == "efaa21"
+    assert "FEA_SOFT_QOP_BIT" in r["W25N01GV"]["flags"]
+    assert r["W25N01GV"]["features"] == ["quad_pp", "quad_read"]
+    gd = r["GD5F1GQ5REYIG"]
+    # A third byte repeating the manufacturer's, or 0x7f, follows the id.
+    assert (gd["id"], gd["ext_id"]) == ("c841", "c8")
+    assert (r["F50L2G41KA"]["id"], r["F50L2G41KA"]["ext_id"]) == ("c841", "7f")
+    assert r["W25N01GV"]["ext_id"] is None
+    assert gd["notes"] == [
+        "Add 3rd code to distingush with F50L2G41KA",
+        "1 plane(s) of 1024 blocks",
+    ]
+    assert r["GD5F4GQ6REXXG"]["notes"] == ["1*4096", "2 plane(s) of 2048 blocks"]
+    assert r["GD5F4GQ6REXXG"]["size"] == 512 << 20
+    assert "MT29F2G01ABA/XT26G02E/F50L2G41XA" in r
+    assert "S35ML01G3/ANV1GCP0CLG/HYF1GQ4UTXCAE/YX25G1E/GSS01GSAM0" in r
+    # The driver takes the first entry that fits.
+    assert r["XT26Q04DWSIGT-B"]["notes"][0] == (
+        "never used: the driver matches the entry on line 37 first"
+    )
+    assert r["UM19A0HISW"]["notes"][0].endswith("on line 46 first")
+    assert r["F50L2G41KA"]["notes"] == ["1 plane(s) of 2048 blocks"]  # c8 41 7f is not c8 41 c8
+    assert len(rockchip.extract(ROCKCHIP)) == len(recs) + 11
+
+
+def rockchip_tree(tmp_path: Path, nor: str = "", nand: str = "") -> Path:
+    """A tree of the fixture's headers and one-table sources."""
+    tree = {
+        name: fixture(f"rockchip/{name}")
+        for name in (rockchip.NOR_H, rockchip.NAND_H, rockchip.SFC_H)
+    }
+    tree[rockchip.NOR] = f"static struct flash_info spi_flash_tbl[] = {{\n{nor}}};\n"
+    tree[rockchip.NAND] = f"static struct nand_info spi_nand_tbl[] = {{\n{nand}}};\n"
+    return write(tmp_path, tree)
+
+
+NOR_ENTRY = "{ 0xc84013, 128, 8, 0x03, 0x02, 0x6B, 0x32, 0x20, 0xD8, 0x05, 10, 9, 0 },\n"
+
+NAND_ENTRY = (
+    "{ 0xEF, 0xAA, 0x21, 4, 0x40, 1, 1024, 0x4C, 18, 0x1, 0, "
+    "{ 0x04, 0x14, 0x24, 0xFF }, &sfc_nand_get_ecc_status1 },\n"
+)
+
+
+def test_rockchip_nor_duplicate_id(tmp_path: Path) -> None:
+    root = rockchip_tree(tmp_path, nor=f"/* A1 */\n{NOR_ENTRY}/* B1 */\n{NOR_ENTRY}")
+    a, b = rockchip.extract_nor(root)
+    assert a["notes"] == []
+    assert b["notes"] == ["never used: the driver matches the entry on line 3 first"]
+
+
+@pytest.mark.parametrize(
+    ("entry", "error"),
+    [
+        (NOR_ENTRY, r"sfc_nor.c:2: 0 comments before the entry, not 1"),
+        (f"/* A1 */ /* B1 */ {NOR_ENTRY}", r"sfc_nor.c:2: 2 comments"),
+        (f"/* no part here */\n{NOR_ENTRY}", r"sfc_nor.c:3: no part name in 'no part here'"),
+        ("/* A1 */ { 0xc84013, 128 },", r"sfc_nor.c:2: 2 fields, not 13"),
+        (f"/* A1 */ {NOR_ENTRY.replace('128, 8,', '128, 16,')}", r"sector_size 16"),
+        (f"/* A1 */ {NOR_ENTRY.replace(' 0 }', ' 1 }')}", "reserved2 1"),
+        (f"/* A1 */ {NOR_ENTRY.replace('0x05', '0x45')}", r"unknown feature bits 0x40"),
+        (f"/* A1 */ {NOR_ENTRY.replace('0x05', '0x07')}", r"no status register write"),
+        (f"/* A1 */ {NOR_ENTRY.replace('0x03', '0x99')}", r"unknown read_cmd 0x99"),
+        (f"/* A1 */ {NOR_ENTRY.replace('0x32', '0x99')}", r"unknown prog_cmd_4 0x99"),
+        (f"/* A1 */ {NOR_ENTRY.replace('0x20', '0x52')}", r"unknown sector_erase_cmd 0x52"),
+        (f"/* A1 */ {NOR_ENTRY.replace('0x6B', 'X')}", r"sfc_nor.c:2: unknown identifier X"),
+    ],
+)
+def test_rockchip_nor_errors(tmp_path: Path, entry: str, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        rockchip.extract_nor(rockchip_tree(tmp_path, nor=entry))
+
+
+@pytest.mark.parametrize(
+    ("entry", "error"),
+    [
+        ("/* A1 */ { 0xEF, 0xAA },", r"sfc_nand.c:2: 2 fields, not 13"),
+        (f"/* A1 */ {NAND_ENTRY.replace('status1', 'mode')}", r"unknown ECC status decoder"),
+        (f"/* A1 */ {NAND_ENTRY.replace('4, 0x40', '16, 0x40')}", r"16 sectors per page"),
+        (f"/* A1 */ {NAND_ENTRY.replace('1, 1024', '4, 1024')}", r"4 planes"),
+        (f"/* A1 */ {NAND_ENTRY.replace('18,', '19,')}", r"density 19, but the geometry"),
+        (f"/* A1 */ {NAND_ENTRY.replace('0x4C', '0x5C')}", r"unknown feature bits 0x10"),
+    ],
+)
+def test_rockchip_nand_errors(tmp_path: Path, entry: str, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        rockchip.extract_nand(rockchip_tree(tmp_path, nand=entry))
+
+
+def test_rockchip_no_table(tmp_path: Path) -> None:
+    root = rockchip_tree(tmp_path)
+    (root / rockchip.NAND).write_text("int x;")
+    with pytest.raises(ValueError, match=r"sfc_nand.c: no spi_nand_tbl\[\]"):
+        rockchip.extract_nand(root)
+
+
+# --- IMSProg -----------------------------------------------------------------
 
 IMSPROG = FIXTURES / "imsprog"
 

@@ -11,16 +11,17 @@ merged from the flash tables of every project that keeps one:
 | [Linux](https://github.com/torvalds/linux) | [`drivers/mtd/spi-nor/*.c`](https://github.com/torvalds/linux/tree/master/drivers/mtd/spi-nor), [`drivers/mtd/nand/spi/*.c`](https://github.com/torvalds/linux/tree/master/drivers/mtd/nand/spi) | 377 (127 SPI NAND) |
 | [U-Boot](https://github.com/u-boot/u-boot) | [`drivers/mtd/spi/spi-nor-ids.c`](https://github.com/u-boot/u-boot/blob/master/drivers/mtd/spi/spi-nor-ids.c) | 334 |
 | [Dediprog](https://github.com/DediProgSW/SF100Linux) | [`ChipInfoDb.dedicfg`](https://github.com/DediProgSW/SF100Linux/blob/master/ChipInfoDb.dedicfg), the chip database of its SF100/SF600 programmers | 1873 (210 SPI NAND) |
+| [Rockchip](https://github.com/rockchip-linux/u-boot) | [`drivers/rkflash/sfc_nor.c`](https://github.com/rockchip-linux/u-boot/blob/next-dev/drivers/rkflash/sfc_nor.c), [`drivers/rkflash/sfc_nand.c`](https://github.com/rockchip-linux/u-boot/blob/next-dev/drivers/rkflash/sfc_nand.c): the rkflash driver of its U-Boot | 226 (138 SPI NAND) |
 | [OpenOCD](https://github.com/openocd-org/openocd) | [`src/flash/nor/spi.c`](https://github.com/openocd-org/openocd/blob/master/src/flash/nor/spi.c), and [`src/helper/jep106.inc`](https://github.com/openocd-org/openocd/blob/master/src/helper/jep106.inc) for manufacturer names | 190 |
 | [openFPGALoader](https://github.com/trabucayre/openFPGALoader) | [`src/spiFlashdb.hpp`](https://github.com/trabucayre/openFPGALoader/blob/master/src/spiFlashdb.hpp) | 53 |
 | [IMSProg](https://github.com/bigbigmdm/IMSProg) | [`IMSProg_programmer/database/IMSProg.Dat`](https://github.com/bigbigmdm/IMSProg/blob/main/IMSProg_programmer/database/IMSProg.Dat), a binary table (SPI NOR and NAND only) | 584 (96 SPI NAND) |
 | [QEMU](https://gitlab.com/qemu-project/qemu) | [`hw/block/m25p80.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80.c), and the SFDP dumps in [`hw/block/m25p80_sfdp.c`](https://github.com/qemu/qemu/blob/master/hw/block/m25p80_sfdp.c) | 137 |
 | [Zephyr](https://github.com/zephyrproject-rtos/zephyr) | the devicetree of its [boards](https://github.com/zephyrproject-rtos/zephyr/tree/main/boards) and [SoCs](https://github.com/zephyrproject-rtos/zephyr/tree/main/dts): each flash node with a `jedec-id` | 99 |
 
-Together that is 1299 distinct chip ids (1055 SPI NOR, 244 SPI NAND) from 65
-manufacturers, 773 of them described by more than one source, plus the full
+Together that is 1326 distinct chip ids (1056 SPI NOR, 270 SPI NAND) from 64
+manufacturers, 817 of them described by more than one source, plus the full
 JEP106 manufacturer list. Every entry keeps the upstream file and line it came
-from, and where the sources disagree (87 ids do) both answers are kept.
+from, and where the sources disagree (89 ids do) both answers are kept.
 Eleven of those ids (thirteen QEMU entries) also carry their complete SFDP
 (JESD216) tables, decoded.
 
@@ -72,10 +73,10 @@ What answered `9f` with `ef 40 18`?
 
 ```console
 $ spiflash id ef4018
-ef4018  Winbond  W25Q128, W25Q128JV, W25Q128BV, W25Q128FV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
+ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
     size 16 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
     features: dual_read erase_32k erase_4k erase_64k fast_read lock otp qpi quad_pp quad_read sfdp
-    from: flashrom, flashprog, linux, u-boot, dediprog, openocd, openfpgaloader, imsprog, zephyr
+    from: flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr
     datasheet: https://www.winbond.com/resource-files/W25Q128JV%20RevH%2003102021%20Plus.pdf
 ```
 
@@ -89,7 +90,7 @@ What does a part answer?
 
 ```console
 $ spiflash find GD25Q64
-c84017  GigaDevice  GD25Q64, GD25Q64C, GD25Q64B, GD25B64B, GD25B64C, GD25B64E, GD25Q64E, GD25Q64H, GD25R64C, S64M80GX, GD25Q64CSIG  (nor)
+c84017  GigaDevice  GD25Q64, GD25Q64C, GD25Q64B, GD25Q64E, GD25B64B, GD25B64C, GD25B64E, GD25Q64H, GD25R64C, S64M80GX, GD25Q64CSIG  (nor)
     size 8 MiB, page 256 B, sector 64 KiB, 2.7-3.6 V
     ...
 ```
@@ -102,18 +103,18 @@ Which opcodes does a part support?
 
 ```console
 $ spiflash opcodes W25Q128JV           # or by id: spiflash opcodes ef4018
-ef4018  Winbond  W25Q128, W25Q128JV, W25Q128BV, W25Q128FV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
-    0x9f  RDID             Read JEDEC id  [flashrom, flashprog, linux, u-boot, dediprog, openocd, openfpgaloader, imsprog, zephyr]
+ef4018  Winbond  W25Q128, W25Q128JV, W25Q128FV, W25Q128BV, W25R128FV, W25R128JV, S25FL128K, W25Q128.V  (nor)
+    0x9f  RDID             Read JEDEC id  [flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog, zephyr]
     0x5a  RDSFDP           Read SFDP (JESD216) parameters  [flashrom, flashprog]
-    0x03  READ_1_1_1       Read data (low frequency)  [flashrom, flashprog, linux, u-boot, openocd, openfpgaloader, imsprog]
+    0x03  READ_1_1_1       Read data (low frequency)  [flashrom, flashprog, linux, u-boot, rockchip, openocd, openfpgaloader, imsprog]
     0x0b  READ_1_1_1_FAST  Fast read  [flashprog, linux, u-boot, dediprog]
     0x3b  READ_1_1_2       Dual output fast read  [flashprog, linux, u-boot]
     0xbb  READ_1_2_2       Dual I/O fast read  [flashprog]
-    0x6b  READ_1_1_4       Quad output fast read  [flashprog, linux, u-boot]
+    0x6b  READ_1_1_4       Quad output fast read  [flashprog, linux, u-boot, rockchip]
     0xeb  READ_1_4_4       Quad I/O fast read  [flashprog, openocd]
-    0x02  PP_1_1_1         Page program  [flashrom, flashprog, linux, u-boot, dediprog, openocd, openfpgaloader, imsprog]
-    0x32  PP_1_1_4         Quad input page program  [u-boot, zephyr]
-    0x20  BE_4K            Erase a 4 KiB sector  [flashrom, flashprog, linux, u-boot, openfpgaloader]
+    0x02  PP_1_1_1         Page program  [flashrom, flashprog, linux, u-boot, dediprog, rockchip, openocd, openfpgaloader, imsprog]
+    0x32  PP_1_1_4         Quad input page program  [u-boot, rockchip, zephyr]
+    0x20  BE_4K            Erase a 4 KiB sector  [flashrom, flashprog, linux, u-boot, rockchip, openfpgaloader]
     ...
 ```
 
@@ -137,11 +138,11 @@ import spiflash
 
 (chip,) = spiflash.lookup("ef4018")      # or b"\xef\x40\x18", 0xef4018, [0xef, 0x40, 0x18]
 chip.manufacturer                        # 'Winbond'
-chip.names                               # ('W25Q128', 'W25Q128JV', 'W25Q128.V', 'W25Q128FV', 'W25Q128BV')
+chip.names                               # ('W25Q128', 'W25Q128JV', 'W25Q128FV', 'W25Q128BV', 'W25R128FV', ...)
 chip.size, chip.page_size, chip.sector_size   # (16777216, 256, 65536)
 chip.voltage                             # (2700, 3600), in mV
 "quad_read" in chip.features             # True
-chip.feature_sources("quad_read")        # ('flashprog', 'linux', 'u-boot', 'openocd')
+chip.feature_sources("quad_read")        # ('flashprog', 'linux', 'u-boot', 'rockchip', 'openocd')
 chip.conflicts                           # {} -- or {"page_size": {256: (...), 512: (...)}}
 
 for r in chip.records:                   # every upstream entry, as extracted
@@ -155,7 +156,7 @@ A `Flash` is one chip id, and several parts can share one (a W25Q128BV, FV and
 JV all answer `ef4018`), so it lists every name the sources give. Its single
 values (`size`, `page_size`, `sector_size`, `voltage`, `manufacturer`) are what
 most sources agree on, ties going to flashrom, then flashprog, Linux, U-Boot, Dediprog,
-OpenOCD, openFPGALoader, IMSProg, QEMU and Zephyr; `values("size")` shows who says what. `features`
+Rockchip, OpenOCD, openFPGALoader, IMSProg, QEMU and Zephyr; `values("size")` shows who says what. `features`
 is everything any source claims, from this list:
 
 | feature | meaning |

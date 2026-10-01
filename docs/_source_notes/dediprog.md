@@ -31,7 +31,9 @@ byte first starts with that byte, 00 (`0x00EFAA21`), which is not part of
 the id. RES, read without its three dummy address bytes, starts with three
 0xff. The entries' SPI NAND ids give two or three bytes after that dummy
 byte, and spiflash keeps them as given, so a NAND id can be a byte longer or
-shorter than the one {sfsrc}`linux` matches for the same part.
+shorter than the one {sfsrc}`linux` matches for the same part. The shorter
+id is folded into the longer one where that is unambiguous (the chip page
+lists it as matched on its first bytes; see {sfsrc}`rockchip`'s page).
 
 Some ids are under the wrong command, and spiflash's parser reads each for
 what it is:
