@@ -32,7 +32,11 @@ status register bits:
 - `global_lock` parts (the SST26VF032B and 064B) power up locked, and it
   unlocks them with [ULBPR](../opcodes/ULBPR.md).
 
-The rest stay its records' `flags`. The
+The rest stay its records' `flags`, but what says nothing: `global_lock =
+false`, a quad enable bit not filled in, and `has_extended`, which
+spiFlash.cpp never reads. A comment saying where the QE or TB bit is ("QE =
+SR2 S9 = bit1 of byte read by RDSR-2 (0x35)") is what the field holds, and
+is no note. The
 opcodes are what its {upstream}`openfpgaloader:src/spiFlash.cpp` sends:
 read, page program, and the erases the table allows. The read and page
 program, sent to every part, and the 4-byte forms of all of them, which it

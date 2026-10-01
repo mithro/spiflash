@@ -70,10 +70,20 @@ def extract(root: Path) -> list[Record]:
         notes = cparse.comments(raw[entry.offset : entry.offset + len(entry.body)])
         layout, layout_via = _protection(fields, symbols, chip_id, notes)
         quad_enable, quad_via = _quad_enable(fields, symbols)
+        # A comment saying where the QE or TB bit is ("QE = SR2 S9 = bit1 of
+        # byte read by RDSR-2 (0x35)", "TB (SR1 S6)") says what the field
+        # holds: not a note.
+        notes = [
+            n
+            for n in notes
+            if not (n.startswith("QE =") and quad_enable)
+            and not (n.startswith("TB (") and layout and "tb" in layout)
+        ]
         flags = [
             f"{k}={v.strip()}"
             for k, v in fields.items()
-            if k not in ("manufacturer", "model", "nr_sector")
+            if k not in ("manufacturer", "model", "nr_sector", "has_extended")
+            and f"{k}={v.strip()}" not in _SAYS_NOTHING
         ]
         records.append(
             make(
@@ -101,6 +111,13 @@ def extract(root: Path) -> list[Record]:
             )
         )
     return records
+
+
+#: Fields that say nothing of the part, so are no flag: "no global lock",
+#: and the quad enable bit not filled in (``NONER``, a mask of 0; its
+#: error says "has no Quad bit (or spiFlashdb must be updated)").
+#: ``has_extended`` is no flag either: spiFlash.cpp never reads it.
+_SAYS_NOTHING = frozenset({"global_lock=false", "quad_register=NONER", "quad_mask=0"})
 
 
 def _mask_bit(mask: int) -> int | None:

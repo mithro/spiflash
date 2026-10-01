@@ -698,7 +698,8 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
         "EQPI_38": (0x38, "FEATURE_QPI_38_FF"),
         "RSTQIO_FF": (0xFF, "FEATURE_QPI_38_FF"),
     }
-    assert "EON_ID_NOPREFIX: EON, missing 0x7F prefix" in e["notes"]
+    # The maker id's comment is every part's: not a note.
+    assert not [n for n in e["notes"] if n.startswith("EON_ID_NOPREFIX")]
     assert "supports SFDP" not in e["notes"]  # RDSFDP's via holds it
     # The id read and the block erases are derived, so not stored; the chip
     # erase is stored, and its layout derived.
@@ -798,6 +799,23 @@ def test_flashrom_errors(tmp_path: Path) -> None:
     write(tmp_path, {"flashchips.c": bad})
     with pytest.raises(ValueError, match="unknown probe 'SOMETHING_NEW'"):
         flashrom.extract(tmp_path, "flashprog")
+
+
+def test_notes_that_restate_a_field_go() -> None:
+    # Dediprog's Description, where it says only the size, supply and clock.
+    for template in (
+        "128 Mbit, Low Voltage, Serial Flash Memory With 104MHz SPI Bus Interface",
+        "1Gbit, Serial NAND Flash Memory With SPI Bus Interface",
+        "3V 16M-BIT FLASH MEMORY",
+        "SPI_FLASH",
+    ):
+        assert not dediprog.says_more(template), template
+    assert dediprog.says_more("16 Mbit Serial Flash Memory with Boot and Parameter Sectors")
+    # Zephyr's comment giving the node's size.
+    assert zephyr.states_size("64 Mbits", 8 << 20)
+    assert zephyr.states_size("134217728 bits = 16 Mbytes", 16 << 20)
+    assert zephyr.states_size("Size (2 MiB) is in bits", 2 << 20)
+    assert not zephyr.states_size("64 Mbits", 16 << 20)  # another size: a note
 
 
 def test_flashrom_comment_operations() -> None:
@@ -1431,7 +1449,8 @@ def test_imsprog() -> None:
     # which gives BRWR and BRRD, holds the token.
     assert s["four_byte_modes"] == ["brwr"]
     assert s["via"] == {"four_byte_modes:brwr": "addr4bit=0x21"}
-    assert s["flags"] == ["algorithmCode=0x00", "delay=1000"]
+    # delay=1000 is the bus at its usual speed: no flag.
+    assert s["flags"] == ["algorithmCode=0x00"]
     assert s["supply_mv"] == 3300
     # IMSProg never sends 0xc7.
     assert set(ops(s)) == {"RDID", "READ_1_1_1", "PP_1_1_1", "SE", "BRWR", "BRRD"}
@@ -2683,7 +2702,9 @@ def test_dediprog(tmp_path: Path) -> None:
     # ChipEraseTime is seconds, its bound not said; Clock one clock.
     assert w["timings"] == {"chip_erase": {"unspecified": 200 * 10**9}}
     assert w["listed_clock_hz"] == 75_000_000
-    assert w["notes"][0].startswith("128 Mbit")
+    # Its Description ("128 Mbit, Low Voltage, ...") says what its fields hold:
+    # not a note.
+    assert not [n for n in w["notes"] if n.startswith("128 Mbit")]
     # Legacy ids: REMS, AT25F, and RES read with its dummy bytes (0xff), or
     # answering the manufacturer too (with its continuation code).
     assert (r["25LF040A"]["id"], r["25LF040A"]["id_method"]) == ("bf44", "rems")

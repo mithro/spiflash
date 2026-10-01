@@ -104,6 +104,9 @@ some with placeholder ids.
   manufacturer.
 - Boards often share a chip: nodes that give the same values are one record,
   at the first file, with a note listing the others.
+- The node's comments are the record's notes, but one that only gives the
+  node's size ("64 Mbits", "134217728 bits = 16 Mbytes"), which the record
+  holds.
 - The values are written, and copied between boards, by each board's porter,
   and some are wrong (a size given in bytes where bits are meant, an id
   copied from another board). That is why {sfsrc}`zephyr` comes last when

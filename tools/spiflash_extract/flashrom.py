@@ -609,9 +609,12 @@ def _record(
         raise ValueError(msg)
     name = cparse.c_string(f["name"])
     notes = cparse.comments(raw[entry.offset : entry.offset + len(entry.body)])
-    for sym in (mfr_sym, model_sym):
-        if sym in id_notes:
-            notes.append(f"{sym}: {id_notes[sym]}")
+    # The model id's comment is about the part (SST_SST25VF010_REMS: "REMS or
+    # RES opcode, same as SST25VF010A"); the maker id's (ATMEL_ID: "Atmel
+    # (now used by Adesto)") about every part of the maker, which the
+    # record's vendor and id say: not a note.
+    if model_sym in id_notes:
+        notes.append(f"{model_sym}: {id_notes[model_sym]}")
 
     mfr = cparse.evaluate(mfr_sym, symbols)
     model = cparse.evaluate(model_sym, symbols)

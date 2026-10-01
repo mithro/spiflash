@@ -497,7 +497,7 @@ class _Node:
         driver_page = None
         if binding_name in PAGE_SIZE_IS_THE_DRIVERS and "page-size" in self.props:
             driver_page, page_size = page_size, None
-        self.notes = _comments(self.text, self.node)
+        self.notes = [n for n in _comments(self.text, self.node) if not states_size(n, size)]
         # The tables' facts are derived at load (spiflash.sfdp); make()
         # drops a size or page size they repeat. Zephyr's spi_nor driver
         # refuses a size the BFPT contradicts, and other drivers use the
@@ -760,6 +760,24 @@ def _flag_value(value: str) -> str:
     except (ValueError, cparse.EvalError):
         return " ".join(value.split())
     return f"0x{n:x}" if value.strip("<> ").startswith("0x") else str(n)
+
+
+# A comment giving the node's size: "64 Mbits", "128 Mbit", "128 Mbits (16 MB)",
+# "134217728 bits = 16 Mbytes", "Size (2 MiB) is in bits".
+_SIZE_COMMENT = re.compile(
+    r"(?i)(?:size \()?(?P<n>\d+) ?(?P<unit>[kmg]?)i?(?P<what>bits?|b|bytes?)\)?"
+    r"(?: = \d+ ?[kmg]?bytes| \(\d+ ?[kmg]?b\)| is in bits)?"
+)
+
+
+def states_size(comment: str, size: int | None) -> bool:
+    """Whether a comment only gives the node's size, which the record
+    holds: not a note."""
+    m = _SIZE_COMMENT.fullmatch(comment.strip())
+    if m is None or size is None:
+        return False
+    n = int(m["n"]) << {"": 0, "k": 10, "m": 20, "g": 30}[m["unit"].lower()]
+    return size == (n // 8 if m["what"].lower().startswith("bit") else n)
 
 
 def _comments(text: str, node: dts.Node) -> list[str]:

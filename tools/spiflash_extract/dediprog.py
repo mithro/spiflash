@@ -531,7 +531,7 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         timings=timings,
         opcodes=ops.to_json(),
         notes=(
-            ([description] if description else [])
+            ([description] if says_more(description) else [])
             + qe_notes
             + legacy_notes
             + clock_notes
@@ -539,6 +539,50 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         ),
         **nand,
     )
+
+
+#: The words of a ``Description`` that say nothing a field does not:
+#: the kind of part, and its size, supply class and clock, which the
+#: record's size, supply and listed clock hold.
+_TEMPLATE_WORDS = frozenset(
+    [
+        "low",
+        "voltage",
+        "volt",
+        "only",
+        "volt-only",
+        "wide",
+        "vcc",
+        "range",
+        "serial",
+        "nor",
+        "nand",
+        "flash",
+        "memory",
+        "with",
+        "spi",
+        "bus",
+        "interface",
+        "cmos",
+        "high",
+        "speed",
+        "spi_flash",
+    ]
+)
+# A size, a voltage or a clock: "128", "Mbit", "64M-BIT", "1.8V", "104MHz", "2.5-volt".
+_TEMPLATE_VALUE = re.compile(
+    r"(?i)(?:[\d.]+(?:-[\d.]+)?)?(?:k|m|g|kilo|mega|giga)?-?(?:bits?|b|bytes?|v|volts?|mhz)?"
+)
+
+
+def says_more(description: str) -> bool:
+    """Whether a ``Description`` says more than the record's fields: not
+    ``"128 Mbit, Low Voltage, Serial Flash Memory With 104MHz SPI Bus
+    Interface"``, whose size, supply class and clock the fields hold, but
+    ``"... Serial Flash Memory with Boot and Parameter Sectors"``."""
+    words = re.split(r"[\s,/()]+", description.strip())
+    rest = [w for w in words if w and w.lower() not in _TEMPLATE_WORDS]
+    return any(not _TEMPLATE_VALUE.fullmatch(w) for w in rest)
 
 
 #: The spellings of the clock attribute: ``Clock`` on nearly every entry,
