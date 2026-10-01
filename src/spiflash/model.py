@@ -331,7 +331,8 @@ class Record:
 
     The fields made from arguments are what the entry states, as the data
     stores them; :attr:`size`, :attr:`page_size`, :attr:`erasers`,
-    :attr:`features`, :attr:`opcodes` and :attr:`sector_size` are worked
+    :attr:`features`, :attr:`opcodes`, :attr:`sector_size`,
+    :attr:`quad_enable_requirement` and :attr:`quad_enable` are worked
     out from them and from its SFDP tables (:mod:`spiflash.derive`). See
     :mod:`spiflash_extract.record` for what each field means."""
 
