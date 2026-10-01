@@ -35,4 +35,7 @@ uses, is stored only where it differs from the dump's: on every one of the
 thirteen it agrees, so their size and erase layouts come from the dumps; the
 `ER_4K` and `ER_32K` flags stating an erase layout a dump gives stay its
 provenance (the record's `via`, shown in a chip page's erase layouts). The
-chip pages show each dump decoded.
+chip pages show each dump decoded. Its model keeps no time (it never sets
+the busy bit), but the eight records whose dumps have DWORDs 10 to 14 have
+the times those give, derived ([](../derived.md#times)), and deep
+power-down (DP and RDPD); the BFPT 1.0 dumps give none.

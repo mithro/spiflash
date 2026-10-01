@@ -86,7 +86,8 @@ def test_tables_a_source_copies_come_after_the_whole_dumps() -> None:
     assert "`spiflash sfdp-diff c22817 c22817#2`" in sfdp
     # Each set says whose board copied it, and how the two differ.
     assert ", in `boards/ezurio/bl5340_dvk/bl5340_dvk_nrf5340_cpuapp_common.dtsi:308`" in sfdp
-    assert "The first two differ in BFPT DW12." in sfdp
+    # In DW12, the erase resume-to-suspend interval: 448 µs, and 320 µs.
+    assert "The first two differ in suspend." in sfdp
     # The W25Q512JV: QEMU's whole dump.
     sfdp = nor_page("ef4020")
     assert "Dump of" in sfdp[sfdp.index("## SFDP") :]
@@ -116,6 +117,26 @@ def test_registers() -> None:
     assert "put bp3 and tb on one bit, SR1 bit 5" in regs
     # A chip no source gives a register bit has no section.
     assert "## Registers" not in nor_page("1f6601")
+
+
+def test_timing_section() -> None:
+    text = nor_page("c22817")
+    timing = text[text.index("## Timing") : text.index("## What each source says")]
+    # A column per bound given, a row per time; SFDP's marked hollow.
+    assert all(b in timing for b in ("Minimum", "Typical", "Maximum"))
+    assert "Leave deep power-down (tRES1, tRDP)" in timing
+    assert "Block erase ({sfop}`0x20`)" in timing
+    assert "{sfimplied}`its SFDP tables (BFPT DW10)`" in timing
+    assert "{sfclaimed}`t-exit-dpd=35000`" in timing
+    assert "{sfsrc}`dediprog` lists {sfnum}`70 MHz`, a catalogue figure" in timing
+    # Dediprog's chip erase time is its own column, the bound not given.
+    assert "Unspecified" in nor_page("ef4018")
+    # The DPD operations, derived from DW14 or has-dpd.
+    assert "[`RDPD`](../opcodes/RDPD.md)" in text
+    # Fractional times keep their fraction (the markup's, and the site's
+    # number role: tests/sites/test_page_nodes.py).
+    mx66 = nor_page("c2201b")
+    assert "{sfnum}`2.24 s`" in mx66[mx66.index("## Timing") :]
 
 
 def test_phase_6_sections() -> None:

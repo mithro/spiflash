@@ -140,5 +140,8 @@ Its entries are not reviewed in the open, and a few disagree with the other
 sources: it gives the F50L1G41LC 2 Gbit, where {sfsrc}`linux` and
 {sfsrc}`dediprog` give 1 Gbit, and the FM25S02BI3 1 Gbit, where
 {sfsrc}`dediprog` gives 2 Gbit.
+Its erase timeouts (400 ms, 2 s and 40 s by erase kind), its status register
+and program waits and its SPI NAND 1 s timeout are its driver's, for every
+part: no time per part ([](../derived.md#times)).
 [Its data issues page](../issues/source-rockchip.md) lists where it
 disagrees with the others.

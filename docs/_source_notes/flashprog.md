@@ -34,4 +34,5 @@ unqualified one claims SFDP.
 
 Its `FEATURE_4BA_*` ways into 4-byte mode and its `OTP:` comments are read
 as {sfsrc}`flashrom`'s are ([](../derived.md#4-byte-addressing),
-[](../derived.md#otp)).
+[](../derived.md#otp)). Like flashrom, it gives no time per SPI part: its
+`.probe_timing` is for parallel chips, and its waits are its driver's.

@@ -32,6 +32,25 @@ def test_id(capsys: pytest.CaptureFixture[str]) -> None:
     assert "from: flashrom" in out
 
 
+def test_id_timing(capsys: pytest.CaptureFixture[str]) -> None:
+    # QEMU's IS25WP256 dump: typical and maximum (DW10's multiplier, 8);
+    # Dediprog's chip erase time, its bound not given.
+    _, out = run(capsys, "id", "9d7019")
+    assert "    timing: chip erase 60 s typ, ≤ 480 s, ~180 s (bound not given);" in out
+    assert "page program 200 µs typ, ≤ 1.2 ms; DPD exit ≤ 15 µs" in out
+    # -v: every time, each value with who gives it; and the clock.
+    _, out = run(capsys, "id", "c22817", "-v")
+    assert "    time: dpd_exit maximum: 5 µs (zephyr); 35 µs (zephyr)" in out
+    assert "    time: block_erase:0x20 maximum: 384 ms (zephyr (SFDP))" in out
+    assert "    clock: Dediprog lists 70 MHz" in out
+    # Compared at SFDP resolution, shown as given.
+    assert "sources disagree on timings.dpd_exit.maximum: 5 µs (zephyr); 35 µs (zephyr)" in out
+    _, js = run(capsys, "id", "c22817", "--json")
+    (chip,) = json.loads(js)
+    assert chip["timings"]["dpd_exit"]["maximum"]["value"] == 35_000
+    assert chip["listed_clock_hz"] == 70_000_000
+
+
 def test_id_registers(capsys: pytest.CaptureFixture[str]) -> None:
     # The QE bit on the detail line; the layout and requirement with -v.
     code, out = run(capsys, "id", "c84016", "-v")
@@ -212,10 +231,25 @@ def test_human_size(n: int | None, text: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("us", "text"), [(704, "704 us"), (64_000, "64 ms"), (192_000_000, "192 s"), (1500, "1.5 ms")]
+    ("ns", "text"),
+    [
+        (20, "20 ns"),
+        (704_000, "704 µs"),
+        (64_000_000, "64 ms"),
+        (192_000_000_000, "192 s"),
+        (1_500_000, "1.5 ms"),
+        (35_000, "35 µs"),
+    ],
 )
-def test_human_time(us: int, text: str) -> None:
-    assert units.human_time(us) == text
+def test_human_duration(ns: int, text: str) -> None:
+    assert units.human_duration(ns) == text
+
+
+@pytest.mark.parametrize(
+    ("hz", "text"), [(104_000_000, "104 MHz"), (500_000, "500 kHz"), (33_300_000, "33.3 MHz")]
+)
+def test_human_frequency(hz: int, text: str) -> None:
+    assert units.human_frequency(hz) == text
 
 
 def test_opcodes_by_id_and_by_name(capsys: pytest.CaptureFixture[str]) -> None:

@@ -70,12 +70,12 @@ from source_pages import generate_all as source_pages
 from source_pages import sources_table as sources_list
 from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE, NAND_ERASE_BY_OPCODE
-from spiflash.enums import Feature, FlashType, OperationKind, Source
+from spiflash.enums import Bound, Feature, FlashType, OperationKind, Source, TimedEvent
 from spiflash.model import compared_value, strip_continuation
 from spiflash.opcodes import OPERATIONS, sort_key
 from spiflash.registers import ROLES, RegisterBit
 from spiflash.sfdp_tools import diff as sfdp_diff
-from spiflash.units import human_size, human_time
+from spiflash.units import human_duration, human_frequency, human_size
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -121,6 +121,7 @@ def chip_page(
     out += _sfdp(f)
     out += _opcodes(f)
     out += _erase_layouts(f)
+    out += _timing(f)
     out += _sources(db, f)
     out += chip_issues(db, slugs, f, issues)
     out.append(f"\n[All {esc(vendor_of(f))} parts](../vendors/{vendor_slug}.md)\n")
@@ -563,8 +564,8 @@ def _sfdp(f: Flash) -> list[str]:
 
 def _sfdp_differences(f: Flash) -> str:
     """What the chip's first two SFDP dumps differ in, in a sentence: the
-    decoded fields, else the dwords (two boards' copies of the MX25R6435F's
-    BFPT differ in DW12 alone)."""
+    decoded fields (two boards' copies of the MX25R6435F's BFPT differ in
+    DW12's erase resume-to-suspend interval alone), else the dwords."""
     d = sfdp_diff(f.sfdp_dumps[0].sfdp, f.sfdp_dumps[1].sfdp)
     if not d:
         return "The first two say the same."
@@ -609,8 +610,8 @@ def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
             text = f"`0x{e.opcode:02x}` {size_text(e.size)}"
             if e.opcode_4b is not None:
                 text += f" (`0x{e.opcode_4b:02x}` with a 4-byte address)"
-            if e.typical_us is not None:
-                text += f", typically {human_time(e.typical_us)}"
+            if e.typical_ns is not None:
+                text += f", typically {human_duration(e.typical_ns)}"
             erases.append(text)
         rows.append(["Erase types", "; ".join(erases)])
     if s.reads:
@@ -749,6 +750,87 @@ def _erase_layouts(f: Flash) -> list[str]:
         list_table(["Source", "As", "Opcode", "Operation", "Blocks"], rows, "sf-table"),
         "",
     ]
+
+
+#: Each time event as a row heading.
+_EVENT_TEXT = {
+    TimedEvent.BLOCK_ERASE: "Block erase",
+    TimedEvent.CHIP_ERASE: "Chip erase",
+    TimedEvent.PAGE_PROGRAM: "Page program",
+    TimedEvent.BYTE_PROGRAM_FIRST: "Byte program, first byte",
+    TimedEvent.BYTE_PROGRAM_ADDITIONAL: "Byte program, each further byte",
+    TimedEvent.PAGE_READ: "Page read (array to cache)",
+    TimedEvent.ERASE_SUSPEND: "Erase suspend",
+    TimedEvent.PROGRAM_SUSPEND: "Program suspend",
+    TimedEvent.ERASE_RESUME_TO_SUSPEND: "Erase resume to next suspend",
+    TimedEvent.PROGRAM_RESUME_TO_SUSPEND: "Program resume to next suspend",
+    TimedEvent.DPD_ENTER: "Enter deep power-down (tDP)",
+    TimedEvent.DPD_EXIT: "Leave deep power-down (tRES1, tRDP)",
+    TimedEvent.DPD_MIN_TIME: "Least time in deep power-down (tDPDD)",
+    TimedEvent.DPD_WAKE_PULSE: "Wake-up chip select pulse (tCRDP)",
+    TimedEvent.RESET_PULSE: "Reset pulse",
+    TimedEvent.RESET_RECOVERY: "Reset recovery",
+}
+
+
+def _timing(f: Flash) -> list[str]:
+    """The part's times: a row per event (a block erase per opcode), a
+    column per bound, each time with the sources giving it, stated
+    ({sfyes}`✓`) or from their SFDP tables ({sfhollow}`○`); and the
+    clock the sources list."""
+    clocks = f.values("listed_clock_hz")
+    if not f.timings and not clocks:
+        return []
+    out = ["## Timing\n"]
+    if f.timings:
+        bounds = [b for b in Bound if any(kb[1] is b for kb in f.timings)]
+        rows = []
+        for key in dict.fromkeys(k for k, _ in f.timings):
+            what = _EVENT_TEXT[key.event]
+            if key.opcode is not None:
+                what += f" ({{sfop}}`0x{key.opcode:02x}`)"
+            cells = []
+            for bound in bounds:
+                given = f.timings.get((key, bound), {})
+                cells.append(
+                    "\n\n".join(
+                        num(human_duration(ns))
+                        + " "
+                        + " ".join(
+                            f"{_mark('sfimplied' if s.implied else 'sfclaimed', s.because)} "
+                            f"{source_badge(s.source)}"
+                            for s in sources
+                        )
+                        for ns, sources in given.items()
+                    )
+                    or EM_DASH
+                )
+            rows.append([what, *cells])
+        out += [
+            (
+                "How long the part takes, as the sources give it: stated ({sfyes}`✓`), or "
+                "from their SFDP tables ({sfhollow}`○`), where a maximum is the typical "
+                "time times the table's multiplier ([](../derived.md#times)). Each bound "
+                "is its own value; Dediprog's chip erase time does not say which it is "
+                "(unspecified).\n"
+            ),
+            list_table(
+                ["", *(esc(str(b).capitalize()) for b in bounds)], rows, "sf-table sf-timing"
+            ),
+            "",
+        ]
+    if clocks:
+        said = "; ".join(
+            f"{source_badge(s)} lists {num(human_frequency(hz))}"
+            for hz, sources in sorted(clocks.items())
+            for s in sources
+        )
+        out.append(
+            f"Clock: {said}, a catalogue figure whose meaning it does not give, often "
+            "below the part's fastest; not a safe maximum "
+            "([](../derived.md#times)).\n"
+        )
+    return out
 
 
 def _sfdp_mark(r: Record, attr: str) -> str:
@@ -1408,7 +1490,7 @@ class NumberRole(SphinxRole):
             if sep:
                 part(sep, "sf-n-sep")
             part(whole, "sf-n-int")
-            if kind == "volt":
+            if kind == "volt" or frac:
                 part(f".{frac}" if frac else "", "sf-n-frac")
         if unit:
             # A missing value keeps the unit's room but not its text.

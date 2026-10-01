@@ -42,3 +42,6 @@ defaults: they imply no capability.
 Its XT25F32B (`0x0b4016`) has `nr_sector = 1024`, which makes the 4 MiB part
 64 MiB: a size the other sources contradict, and the only source of the
 record's `4byte_addr`.
+
+Its table has no time: `spi_wait`'s timeouts count loop iterations, its
+driver's for every part ([](../derived.md#times)).

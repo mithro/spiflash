@@ -17,10 +17,11 @@ import pytest
 import spiflash
 from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE, ID_OPERATION
-from spiflash.enums import ENTER_METHODS, Feature, IdMethod, OperationKind
-from spiflash.model import EraseBlock, Record
+from spiflash.enums import ENTER_METHODS, Bound, Feature, IdMethod, OperationKind
+from spiflash.model import TIMING_COMPONENTS, EraseBlock, Record
 from spiflash.opcodes import OPERATIONS
 from spiflash.registers import Register, RegisterBit
+from spiflash.timings import BOUNDS, TimingKey, Timings, component_name, parse_component
 from spiflash_extract import record
 from spiflash_extract.flashrom import otp as flashrom_otp
 
@@ -305,14 +306,23 @@ def test_a_disagreement_is_the_stored_value() -> None:
         for field, stored, said in Record.from_json(d).sfdp_disagreements():
             assert stored != said
             found.append((d["name"], field))
-            if field != "erasers":
+            if field.startswith("timings."):
+                key, bound = parse_component(field.removeprefix("timings."))
+                assert d["timings"][str(key)][str(bound)] == stored, _where(d)
+            elif field != "erasers":
                 assert d[field] == stored, _where(d)
     # One board copies another part's table (16 MiB, with DTR, for a 2 MiB
     # P25Q16H). Two boards' page-size is their driver's setting, kept as a
     # flag (spiflash_extract.zephyr.PAGE_SIZE_IS_THE_DRIVERS). frdm_mcxe247's
     # W25Q64 carries the MX25R6435F's table (QE at SR1 bit 6), and its own
-    # quad-enable-requirements, Winbond's S2B1v1.
-    assert sorted(found) == [("P25Q16H", "size"), ("W25Q64", "quad_enable_requirement")]
+    # quad-enable-requirements, Winbond's S2B1v1. nrf7002dk's MX25R6435F
+    # gives t-exit-dpd 5 µs; its BFPT's DW14 40 µs (the datasheet's tRDP is
+    # 35 µs, or 45 µs in high-performance mode).
+    assert sorted(found) == [
+        ("MX25R6435F", "timings.dpd_exit.maximum"),
+        ("P25Q16H", "size"),
+        ("W25Q64", "quad_enable_requirement"),
+    ]
 
 
 def test_no_sfdp_residue() -> None:
@@ -730,3 +740,125 @@ def test_otp_sizes_the_comments_get_wrong_are_the_datasheets() -> None:
         for d in [d for d in RECORDS if d["name"] == name and d["otp"]]:
             assert d["otp"]["size"] == 768, _where(d)
             assert any(n.startswith("OTP area 768 B") for n in d["notes"]), _where(d)
+
+
+# --- times and the maximum clock (phase 7) -------------------------------------
+
+
+def _times(d: dict[str, Any]) -> list[tuple[str, str, int]]:
+    return [
+        (key, bound, ns) for key, bounds in d["timings"].items() for bound, ns in bounds.items()
+    ]
+
+
+def test_timing_keys_and_bounds_are_known() -> None:
+    for d in RECORDS:
+        for key, bound, ns in _times(d):
+            parsed = TimingKey.parse(key)
+            assert Bound(bound) in BOUNDS[parsed.event], _where(d)
+            assert isinstance(ns, int), _where(d)
+            assert ns > 0, _where(d)
+            # Every time a record gives is one the sources are compared on.
+            assert component_name(parsed, Bound(bound)) in TIMING_COMPONENTS, _where(d)
+        r = Record.from_json(d)
+        tables = r.sfdp_facts.timings if r.sfdp_facts else Timings()
+        assert r.timings == Timings.from_json(d["timings"]).over(tables), _where(d)
+        for key, bound in r.timings:
+            assert component_name(key, bound) in TIMING_COMPONENTS, _where(d)
+
+
+def test_timing_bounds_in_order() -> None:
+    for d in RECORDS:
+        assert not Timings.from_json(d["timings"]).disorder(), _where(d)
+        # And with what its tables give.
+        assert not Record.from_json(d).timings.disorder(), _where(d)
+
+
+#: Who gives a time, as (source, event, bound): each a per-part statement
+#: of the entry, never a driver's wait for every part.
+TIMINGS_FROM = {
+    ("dediprog", "chip_erase", "unspecified"),
+    ("zephyr", "dpd_enter", "maximum"),
+    ("zephyr", "dpd_exit", "maximum"),
+    ("zephyr", "dpd_min_time", "minimum"),
+    ("zephyr", "dpd_wake_pulse", "minimum"),
+    ("zephyr", "reset_pulse", "minimum"),
+    ("zephyr", "reset_recovery", "maximum"),
+}
+
+
+def test_only_the_known_sources_give_timings() -> None:
+    found = {(d["source"], key, bound) for d in RECORDS for key, bound, _ in _times(d)}
+    assert found == TIMINGS_FROM
+
+
+def test_dediprogs_chip_erase_is_unspecified() -> None:
+    times = [(d, ns) for d in RECORDS if d["source"] == "dediprog" for _, _, ns in _times(d)]
+    assert len(times) == 899
+    for d, ns in times:
+        assert ns % 10**9 == 0, _where(d)
+        assert d["via"]["timings.chip_erase"] == f"ChipEraseTime={ns // 10**9}", _where(d)
+
+
+def test_no_stored_timing_its_tables_give() -> None:
+    def twice(d: dict[str, Any]) -> list[str]:
+        facts = Record.from_json(d).sfdp_facts
+        assert facts is not None
+        return [
+            f"{k}.{b}"
+            for k, b, ns in _times(d)
+            if facts.timings.values.get((TimingKey.parse(k), Bound(b))) == ns
+        ]
+
+    assert not [(_where(d), twice(d)) for d in _with_sfdp() if twice(d)]
+
+
+def test_no_timing_from_a_driver_default() -> None:
+    def default(via: str) -> bool:
+        # IMSProg's delay= (a bus-speed factor), not the AT45's dpd-delays.
+        words = ("Timeout", "probe_timing", "Clock", "spi-max-frequency", "MAX_FREQ")
+        return any(w in via for w in words) or re.search(r"(?<![\w-])delay=", via) is not None
+
+    vias = [(d, v) for d in RECORDS for k, v in d["via"].items() if k.startswith("timings")]
+    assert vias
+    assert not [_where(d) for d, v in vias if default(v)]
+
+
+def test_no_timing_residue() -> None:
+    tokens = ("has-dpd", "dpd-wakeup-sequence", "t-enter-dpd", "t-exit-dpd", "t-reset-")
+    tokens += ("ChipEraseTime", "enter-dpd-delay", "exit-dpd-delay")
+    assert not [(_where(d), f) for d in RECORDS for f in d["flags"] if f.startswith(tokens)]
+    noted = [(_where(d), n) for d in RECORDS for n in d["notes"] if n.startswith(tokens)]
+    # A note saying why a value was not read is no residue.
+    assert not [(w, n) for w, n in noted if " not read: " not in n]
+
+
+def test_dpd_release_is_not_a_signature_read() -> None:
+    # RDPD is 0xab alone; RES, the id read on the same opcode, is never
+    # what has-dpd gives. A part waking by a chip select pulse (Zephyr's
+    # dpd-wakeup-sequence) states no RDPD.
+    for d in RECORDS:
+        ops = {o["op"]: o["via"] for o in d["opcodes"]}
+        if "RDPD" in ops and "RES" in ops:
+            assert ops["RES"] != ops["RDPD"], _where(d)
+        if d["via"].get("timings", "").startswith("dpd-wakeup-sequence"):
+            assert "RDPD" not in ops, _where(d)
+    stated = {d["source"] for d in RECORDS for o in d["opcodes"] if o["op"] in ("DP", "RDPD")}
+    assert stated == {"zephyr"}
+    assert OPERATIONS["RDPD"].opcode == OPERATIONS["RES"].opcode == 0xAB
+    assert OPERATIONS["RDPD"].protocol != OPERATIONS["RES"].protocol
+
+
+def test_every_stored_timing_has_its_token() -> None:
+    for d in RECORDS:
+        for key, _, _ in _times(d):
+            assert f"timings.{key}" in d["via"] or "timings" in d["via"], _where(d)
+
+
+def test_a_clock_only_where_dediprog_gives_one() -> None:
+    clocked = [d for d in RECORDS if d["listed_clock_hz"] is not None]
+    assert {d["source"] for d in clocked} == {"dediprog"}
+    for d in clocked:
+        assert d["listed_clock_hz"] % 10**6 == 0, _where(d)
+        via = d["via"]["listed_clock_hz"]
+        assert re.fullmatch(r"(Clock|clock|CLOCK)=\d+ ?MHz", via, re.IGNORECASE), _where(d)

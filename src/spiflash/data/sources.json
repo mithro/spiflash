@@ -1,5 +1,5 @@
 {
- "format": 9,
+ "format": 10,
  "sources": {
   "dediprog": {
    "branch": "master",
@@ -177,7 +177,12 @@
     "boards/**/*.dts",
     "boards/**/*.dtsi",
     "boards/**/*.overlay",
-    "dts/**/*.dtsi"
+    "dts/**/*.dtsi",
+    "dts/bindings/mtd/jedec,spi-nor-common.yaml",
+    "dts/bindings/mtd/jedec,jesd216.yaml",
+    "dts/bindings/mtd/jedec,nor-mspi.yaml",
+    "dts/bindings/mtd/atmel,at45.yaml",
+    "dts/bindings/mtd/jedec,spi-nand.yaml"
    ],
    "records": 100,
    "url": "https://github.com/zephyrproject-rtos/zephyr"

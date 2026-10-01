@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from . import derive
-from .enums import AddressBytes, FlashType, FourByteMethod
+from .enums import AddressBytes, Bound, FlashType, FourByteMethod, TimedEvent
 from .model import Eraser, Flash, Record
 from .opcodes import OPERATIONS
 from .registers import QE_NONE, QuadEnableRequirement, Register
@@ -45,6 +45,8 @@ from .sfdp import (
     Table,
     parse,
 )
+from .timings import Timings
+from .units import human_duration
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -122,12 +124,17 @@ ENCODE_LOSSES = {
         "16 MiB, whatever its BFPT says (QEMU's IS25WP256 says 3)"
     ),
     "dtr": "DTR reads, which have no operation here",
-    "erase_types": "erase times (DW10)",
+    "erase_types": "erase times (DW10), where the maxima are not one multiplier of them",
+    "erase_multiplier": "the erase multiplier (DW10), where the erase times are not written",
     "page_size": "the page size, in a revision encode cannot fill",
-    "page_program_us": "program times (DW11)",
-    "chip_erase_us": "chip erase time (DW11)",
-    "suspend_resume": "suspend and resume (DW12-13)",
-    "deep_power_down": "deep power-down (DW14)",
+    "program_multiplier": "the program multiplier (DW11), where the program times are not written",
+    "page_program_ns": "program times (DW11), where the maxima are not one multiplier of them",
+    "byte_program": "byte program times (DW11), likewise",
+    "chip_erase_ns": "chip erase time (DW11), likewise",
+    "suspend_resume": "suspend and resume (DW12-13), where the suspend times are not known",
+    "suspend": "the suspend latencies and intervals (DW12), likewise",
+    "deep_power_down": "deep power-down (DW14), where it is not released with 0xab",
+    "dpd_exit_delay": "the deep power-down exit delay (DW14), likewise",
     "quad_enable": "the quad enable requirement (DW15), where it is the reserved 7",
     "qpi_enable": "the QPI enable sequence, in a revision encode cannot fill",
     "qpi_disable": "the QPI disable sequence, in a revision encode cannot fill",
@@ -182,6 +189,12 @@ class _Part:
     quad_enable_requirement: QuadEnableRequirement | None = None
     quad_enable: RegisterBit | NoQuadEnable | None = None
     four_byte_modes: frozenset[FourByteMethod] = frozenset()
+    #: Its times: a record's own (stated, or from its SFDP tables), or each
+    #: (key, bound) as a chip's sources agree on it.
+    timings: Timings = field(default_factory=Timings)
+
+    def time(self, event: TimedEvent, bound: Bound, opcode: int | None = None) -> int | None:
+        return self.timings.get(event, bound, opcode)
 
 
 def _uniform(erasers: Iterable[Eraser], size: int | None) -> list[tuple[int, int]]:
@@ -216,6 +229,7 @@ def _from_record(r: Record) -> _Part:
         r.quad_enable_requirement,
         r.quad_enable,
         r.four_byte_modes,
+        r.timings,
     )
 
 
@@ -249,6 +263,13 @@ def _from_flash(f: Flash) -> _Part:
         f.quad_enable_requirement,
         f.quad_enable,
         f.four_byte_modes,
+        Timings(
+            {
+                (key, bound): ns
+                for key, bound in f.timings
+                if (ns := f.timing(key.event, bound, key.opcode)) is not None
+            }
+        ),
     )
 
 
@@ -293,8 +314,13 @@ def encode(
 
     ``revision`` 1.5 and 1.6 add DW10 to DW16: erase and program times,
     suspend and resume, deep power-down, the quad enable requirement and
-    4-byte address mode, which the database does not hold (but for a quad
-    enable requirement and the ways into 4-byte mode a source gives).
+    4-byte address mode. The times are written where the database holds
+    exactly what a dword says (:func:`_dw10`, :func:`_dw11_times`,
+    :func:`_dw14`): each typical time one the BFPT can write, in the finest
+    unit that holds it, and the maxima one multiplier of them; a time is
+    never rounded, nor a maximum made up. Suspend and resume are not
+    modelled, and the rest is what the database holds of the quad enable
+    requirement and the ways into 4-byte mode.
     Without ``assume``, ``encode`` then lowers the revision to 1.0, the
     highest it can fill, and lists what it left out in ``missing``; with
     ``assume``, it writes JESD216's "not supported" encodings or the
@@ -320,7 +346,10 @@ def encode(
     later = _later_dwords(part, assume=assume)
     if revision >= (1, 5):
         missing.extend(f"{dwords}: {what}" for dwords, what in later.blocked)
-        if assume:
+        # What no value can say without contradicting the database lowers
+        # the revision, even with assume.
+        missing.extend(f"{dwords}: {what}" for dwords, what in later.unwritable)
+        if assume and not later.unwritable:
             assumed.extend(f"{dwords}: {what}, {how}" for dwords, what, how in later.unknown)
             bfpt += later.dwords
         else:
@@ -416,13 +445,21 @@ class _Later:
     #: (dwords, what the database holds and these dwords cannot say without
     #: saying more): written as JESD216's reserved value, and missing.
     blocked: list[tuple[str, str]] = field(default_factory=list)
+    #: (dwords, what the database holds that no value of them can say
+    #: without contradicting it): the revision is lowered to 1.0, even
+    #: with ``assume``.
+    unwritable: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _later_dwords(part: _Part, *, assume: bool) -> _Later:
     """DW10 to DW16 (JESD216A and B), and what in them the database does
     not hold, or holds and only they can give."""
     out = _Later()
-    out.unknown.append(("DW10", "erase type times", "written as typically 1 ms"))
+    dw10 = _dw10(part)
+    if dw10 is None:
+        out.unknown.append(("DW10", "erase type times", "written as typically 1 ms"))
+    else:
+        out.lost.append(("DW10", "the erase types' times"))
     page = part.page_size
     if page is None:
         out.unknown.append(("DW11", "the page size", "written as 256 bytes"))
@@ -433,9 +470,13 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
         page = 256
     else:
         out.lost.append(("DW11", f"the page size, {page} bytes"))
-    out.unknown.append(("DW11", "program and chip erase times", "written as the shortest"))
-    out.unknown.append(("DW12-13", "suspend and resume", "written as not supported"))
-    out.unknown.append(("DW14", "deep power-down", "written as not supported"))
+    dw11 = _dw11_times(part)
+    if dw11 is None:
+        out.unknown.append(("DW11", "program and chip erase times", "written as the shortest"))
+    else:
+        out.lost.append(("DW11", "the program and chip erase times"))
+    dw12 = _dw12_13(part, out)
+    dw14 = _dw14(part, out)
     qer = _requirement(part, out)
     out.unknown.append(("DW15", "0-4-4 mode", "written as not supported"))
     ops = part.ops
@@ -471,15 +512,189 @@ def _later_dwords(part: _Part, *, assume: bool) -> _Later:
     if not assume:
         return out
     out.dwords = [
-        0x00000000,  # DW10: multiplier 2, every erase type 1 ms
-        1 << 31 | (page.bit_length() - 1) << 4,  # DW11
-        0xFFFFFFFF,  # DW12: bit 31, suspend and resume not supported
-        0xFFFFFFFF,  # DW13
-        0xFFFFFFFF,  # DW14: bit 31, deep power-down not supported
+        0x00000000 if dw10 is None else dw10,  # unknown: multiplier 2, every erase type 1 ms
+        1 << 31 | (page.bit_length() - 1) << 4 | (dw11 or 0),  # DW11; unknown: the shortest
+        0xFFFFFFFF if dw12 is None else dw12[0],  # DW12; bit 31: no suspend and resume
+        0xFFFFFFFF if dw12 is None else dw12[1],  # DW13
+        0xFFFFFFFF if dw14 is None else dw14,  # DW14; bit 31: deep power-down not supported
         0xFF000000 | qer << 20 | enter << 4 | leave,  # DW15
         modes_in | modes_out | 1 << 7,  # DW16
     ]
     return out
+
+
+def _erase_types(part: _Part) -> list[tuple[int, int]]:
+    """(opcode, block) of the BFPT's erase types :func:`encode` writes: the
+    part's uniform erasers of a power-of-two block, smallest first, the
+    first four."""
+    return [(op, block) for op, block in part.erasers if block & (block - 1) == 0][:4]
+
+
+def _multiplier(typical: int | None, maximum: int | None) -> int | None:
+    """The JESD216 multiplier a maximum is of a typical time, 2 x (N + 1)
+    for N 0 to 15: an even whole number from 2 to 32; else ``None``."""
+    if typical is None or maximum is None or maximum % typical:
+        return None
+    m = maximum // typical
+    return m if 2 <= m <= 32 and m % 2 == 0 else None
+
+
+def _place(units: tuple[int, ...], counts: int, ns: int | None, count_lo: int, unit_lo: int) -> int:
+    """A time's bits in its dword: its count at ``count_lo`` and its unit
+    code at ``unit_lo``; ``-1`` where the BFPT cannot write it exactly."""
+    found = None if ns is None else derive.sfdp_time(units, counts, ns)
+    if found is None:
+        return -1
+    unit, count = found
+    return count << count_lo | (unit << unit_lo if len(units) > 1 else 0)
+
+
+def _dw10(part: _Part) -> int | None:
+    """DW10, where the database holds what it says: every erase type
+    written has a typical time a BFPT can write exactly and a maximum, the
+    maxima are one multiplier of the typical times, and so is the chip
+    erase's, where it is known and takes DW10's
+    (:data:`spiflash.derive.CHIP_ERASE_MULTIPLIER`). ``None`` otherwise:
+    nothing is rounded, and no maximum made up."""
+    types = _erase_types(part)
+    if not types:
+        return None
+    dword = 0
+    ratios = set()
+    for i, (op, _) in enumerate(types):
+        typ = part.time(TimedEvent.BLOCK_ERASE, Bound.TYPICAL, op)
+        ratios.add(_multiplier(typ, part.time(TimedEvent.BLOCK_ERASE, Bound.MAXIMUM, op)))
+        bits = _place(derive.ERASE_UNITS_NS, 32, typ, 4 + 7 * i, 9 + 7 * i)
+        if bits < 0:
+            return None
+        dword |= bits
+    chip = (
+        part.time(TimedEvent.CHIP_ERASE, Bound.TYPICAL),
+        part.time(TimedEvent.CHIP_ERASE, Bound.MAXIMUM),
+    )
+    if derive.CHIP_ERASE_MULTIPLIER == "DW10" and None not in chip:
+        ratios.add(_multiplier(*chip))
+    if len(ratios) != 1 or None in ratios:
+        return None
+    (m,) = ratios
+    assert m is not None
+    return dword | (m // 2 - 1)
+
+
+#: DW11's times: (event, units, counts, count bit, unit bit).
+_DW11_TIMES = (
+    (TimedEvent.PAGE_PROGRAM, derive.PAGE_PROGRAM_UNITS_NS, 32, 8, 13),
+    (TimedEvent.BYTE_PROGRAM_FIRST, derive.BYTE_PROGRAM_UNITS_NS, 16, 14, 18),
+    (TimedEvent.BYTE_PROGRAM_ADDITIONAL, derive.BYTE_PROGRAM_UNITS_NS, 16, 19, 23),
+    (TimedEvent.CHIP_ERASE, derive.CHIP_ERASE_UNITS_NS, 32, 24, 29),
+)
+
+
+def _dw11_times(part: _Part) -> int | None:
+    """DW11's time bits (not its page size), where the database holds what
+    they say: the page program's, the byte programs' and the chip erase's
+    typical times, each one a BFPT can write exactly, and the programs'
+    maxima one multiplier of their typical times (the chip erase's too,
+    where it takes DW11's). ``None`` otherwise."""
+    dword = 0
+    ratios = set()
+    for event, units, counts, count_lo, unit_lo in _DW11_TIMES:
+        typ = part.time(event, Bound.TYPICAL)
+        bits = _place(units, counts, typ, count_lo, unit_lo)
+        if bits < 0:
+            return None
+        dword |= bits
+        program = event is not TimedEvent.CHIP_ERASE
+        if program or derive.CHIP_ERASE_MULTIPLIER == "DW11":
+            ratios.add(_multiplier(typ, part.time(event, Bound.MAXIMUM)))
+    if len(ratios) != 1 or None in ratios:
+        return None
+    (m,) = ratios
+    assert m is not None
+    return dword | (m // 2 - 1)
+
+
+#: The suspend and resume opcodes :func:`encode` writes in DW13 where the
+#: part can suspend: the commonest pair (Winbond's, GigaDevice's, ISSI's,
+#: Micron's), as no suspend operation is modelled; listed assumed.
+SUSPEND_OPCODES = (0x75, 0x7A)
+
+
+def _dw12_13(part: _Part, out: _Later) -> tuple[int, int] | None:
+    """DW12 and DW13, where the part's suspend times are known (so it can
+    suspend), each one a BFPT can write exactly: the latencies and
+    intervals, with what the database does not hold written as documented
+    values and listed in ``out``: the operations prohibited while
+    suspended (written as the most restrictive, 0b0100: no erase, no
+    program, no read in the suspended page) and the opcodes
+    (:data:`SUSPEND_OPCODES`). ``None`` (written as not supported, as the
+    database knows no suspend) otherwise."""
+    fields = (
+        (TimedEvent.PROGRAM_RESUME_TO_SUSPEND, Bound.TYPICAL, derive.RESUME_UNITS_NS, 16, 9, 0),
+        (TimedEvent.PROGRAM_SUSPEND, Bound.MAXIMUM, derive.LATENCY_UNITS_NS, 32, 13, 18),
+        (TimedEvent.ERASE_RESUME_TO_SUSPEND, Bound.TYPICAL, derive.RESUME_UNITS_NS, 16, 20, 0),
+        (TimedEvent.ERASE_SUSPEND, Bound.MAXIMUM, derive.LATENCY_UNITS_NS, 32, 24, 29),
+    )
+    given = [part.time(event, bound) for event, bound, *_ in fields]
+    if all(t is None for t in given):
+        out.unknown.append(("DW12-13", "suspend and resume", "written as not supported"))
+        return None
+    dword = 0b0100 | 0b0100 << 4 | 1 << 8  # bit 8 reserved
+    for (event, _, units, counts, count_lo, unit_lo), ns in zip(fields, given, strict=True):
+        bits = _place(units, counts, ns, count_lo, unit_lo)
+        if bits < 0:
+            # The part can suspend, so "not supported" would be wrong.
+            out.unwritable.append(
+                ("DW12-13", f"suspend and resume: its {event} time, unknown or not exact")
+            )
+            return None
+        dword |= bits
+    out.lost.append(("DW12", "the suspend latencies and resume-to-suspend intervals"))
+    out.unknown.append(
+        ("DW12", "the operations prohibited while suspended", "written as the most restrictive")
+    )
+    suspend, resume = SUSPEND_OPCODES
+    out.unknown.append(
+        ("DW13", "the suspend and resume opcodes", f"written as 0x{suspend:02x} and 0x{resume:02x}")
+    )
+    return dword, resume | suspend << 8 | resume << 16 | suspend << 24
+
+
+def _dw14(part: _Part, out: _Later) -> int | None:
+    """DW14, where the part has deep power-down (``DP``, 0xb9) released by
+    a command (``RDPD``, 0xab) and its exit delay is known, one a BFPT can
+    write exactly; and what is said of it in ``out``. ``None`` (written as
+    not supported) otherwise. Its status polling, DW14[7:2], is written as
+    legacy 0x05 polling, which every SPI NOR part has, and the flag status
+    register's (0x70) where the part has ``RDFSR``: listed assumed."""
+    ops = part.ops
+    delay = part.time(TimedEvent.DPD_EXIT, Bound.MAXIMUM)
+    bits = _place(derive.LATENCY_UNITS_NS, 32, delay, 8, 13)
+    if "DP" not in ops:
+        out.unknown.append(("DW14", "deep power-down", "written as not supported"))
+        return None
+    if "RDPD" not in ops or bits < 0:
+        out.unknown.append(
+            ("DW14", "how deep power-down is left, and how long it takes", "written as none")
+        )
+        return None
+    assert delay is not None
+    out.lost.append(
+        ("DW14", f"deep power-down, released with 0xab, ready within {human_duration(delay)}")
+    )
+    flag_status = "RDFSR" in ops
+    out.unknown.append(
+        (
+            "DW14",
+            "how to poll for busy",
+            "written as 0x05 (legacy)" + (" and 0x70 (flag status)" if flag_status else ""),
+        )
+    )
+    polling = 1 << 2 | (1 << 3 if flag_status else 0)
+    reserved = 0b11 | 0b1111 << 4
+    return (
+        OPERATIONS["DP"].opcode << 23 | OPERATIONS["RDPD"].opcode << 15 | bits | polling | reserved
+    )
 
 
 #: The DW15 QER code JESD216 reserves: what :func:`encode` writes where it
@@ -531,7 +746,7 @@ def _four_byte_dwords(part: _Part, reads: set[str], missing: list[str]) -> list[
             missing.append(f"{op}: the 4BAIT lists a 4-byte read only with its 3-byte form")
             continue
         dw1 |= 1 << bit
-    types = [(op, block) for op, block in part.erasers if block & (block - 1) == 0][:4]
+    types = _erase_types(part)
     dw2 = 0
     for i in range(4):
         opcode = 0xFF
@@ -556,9 +771,12 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
     source: its size, page size, quad enable requirement, dies, erasers and
     ways into 4-byte mode, its operations with their dummy clocks (not the
     erases its erasers give, nor the operations its ways into 4-byte mode
-    give), and the capabilities only SFDP says
-    (:func:`spiflash.derive.sfdp_claims`), with their reasons in ``via``.
-    The identity (``source``, ``name``, ``id``, ...) is ``None``:
+    give), the capabilities only SFDP says
+    (:func:`spiflash.derive.sfdp_claims`), with their reasons in ``via``,
+    and its times (DW10 to DW14, the maxima worked out as
+    :func:`spiflash.derive.sfdp_timings` does), under one ``via`` token: the
+    entry holds no tables, so it states what they gave, as a source
+    describing the part would. The identity (``source``, ``name``, ``id``, ...) is ``None``:
     ``Record.from_json(to_entry(s) | {"source": ..., ...})`` reads it."""
     facts = sfdp.facts()
     erase_ops = {derive.ERASE_BY_OPCODE.get(e.opcode) for e in facts.erasers if e.opcode}
@@ -578,7 +796,10 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
         "erasers": [e.to_json() for e in facts.erasers] or None,
         "features": sorted(claims),
         "flags": [],
-        "via": {f"feature:{f}": why for f, why in sorted(claims.items())},
+        "via": {
+            **{f"feature:{f}": why for f, why in sorted(claims.items())},
+            **({"timings": "SFDP BFPT DW10-14"} if facts.timings else {}),
+        },
         "voltage": None,
         "supply_mv": None,
         "quad_enable": None,
@@ -595,6 +816,8 @@ def to_entry(sfdp: Sfdp) -> dict[str, Any]:
         "four_byte_modes": sorted(facts.four_byte_modes),
         "otp": None,
         "legacy_ids": [],
+        "listed_clock_hz": None,
+        "timings": facts.timings.to_json(),
         "opcodes": [
             {
                 "op": u.op,
@@ -744,15 +967,29 @@ def _fields(s: Sfdp) -> dict[str, Any]:
     for protocol, r in s.reads.items():
         out[f"reads.{protocol}"] = r
     for e in s.erase_types:
-        out[f"erase_types.{e.index}"] = (e.size, e.opcode, e.opcode_4b, e.typical_us)
+        out[f"erase_types.{e.index}"] = (e.size, e.opcode, e.opcode_4b, e.typical_ns)
     if bfpt is not None:
         out |= {
-            "page_program_us": bfpt.page_program_us,
-            "chip_erase_us": bfpt.chip_erase_us,
+            "erase_multiplier": bfpt.erase_max_multiplier,
+            "program_multiplier": bfpt.program_max_multiplier,
+            "page_program_ns": bfpt.page_program_ns,
+            "byte_program": (bfpt.byte_program_first_ns, bfpt.byte_program_additional_ns)
+            if bfpt.byte_program_first_ns is not None
+            else None,
+            "chip_erase_ns": bfpt.chip_erase_ns,
             "suspend_resume": bfpt.suspend_resume,
+            "suspend": (
+                bfpt.erase_suspend_ns,
+                bfpt.program_suspend_ns,
+                bfpt.erase_resume_to_suspend_ns,
+                bfpt.program_resume_to_suspend_ns,
+            )
+            if bfpt.erase_suspend_ns is not None
+            else None,
             "deep_power_down": (bfpt.enter_deep_power_down, bfpt.exit_deep_power_down)
             if bfpt.enter_deep_power_down is not None
             else None,
+            "dpd_exit_delay": bfpt.exit_deep_power_down_delay_ns,
             "quad_enable": None
             if bfpt.quad_enable is None
             else QUAD_ENABLE.get(bfpt.quad_enable, f"reserved code {bfpt.quad_enable}"),

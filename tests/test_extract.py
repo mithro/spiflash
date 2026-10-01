@@ -1694,7 +1694,11 @@ def test_zephyr() -> None:
     assert (m["id"], m["vendor"], m["size"], m["page_size"]) == ("c22817", None, None, None)
     assert list(m["sfdp_tables"]) == ["ff00"]
     assert m["sfdp_tables"]["ff00"].startswith("e520f1ff")
-    assert m["via"] == {"sfdp_tables": "sfdp-bfp"}
+    assert m["via"] == {
+        "sfdp_tables": "sfdp-bfp",
+        "timings.dpd_enter": "t-enter-dpd=10000",
+        "timings.dpd_exit": "t-exit-dpd=35000",
+    }
     assert m["erasers"] is None
     loaded = Record.from_json(m)
     assert (loaded.size, loaded.page_size) == (8 << 20, 256)
@@ -1713,7 +1717,15 @@ def test_zephyr() -> None:
         "quad_read",
         "sfdp",
     ]
-    assert {"has-dpd", "nordic,qspi-nor", "readoc=read4io", "writeoc=pp4io"} <= set(m["flags"])
+    assert {"nordic,qspi-nor", "readoc=read4io", "writeoc=pp4io"} <= set(m["flags"])
+    # has-dpd: DP and RDPD, which its BFPT's DW14 gives too (so derived),
+    # with the exit delay, 40 µs. The node's t-exit-dpd, 35 µs, is more
+    # precise: stored, and no disagreement (35 µs is 40 µs on DW14's grid).
+    assert loaded.sfdp_facts is not None
+    assert loaded.sfdp_facts.timings.get("dpd_exit", "maximum") == 40_000
+    assert m["timings"] == {"dpd_enter": {"maximum": 10000}, "dpd_exit": {"maximum": 35000}}
+    assert {"DP", "RDPD"} <= {u.op for u in loaded.opcodes}
+    assert not [o for o in m["opcodes"] if o["op"] in ("DP", "RDPD")]
     assert not [f for f in m["flags"] if f.startswith("sfdp-")]
     # The table gives the 1-4-4 read readoc names, with its dummy clocks.
     assert ops(m)["READ_1_4_4"] == (0xEB, "SFDP BFPT 1-4-4 fast read: 2 mode + 4 wait clocks")
@@ -1759,7 +1771,14 @@ def test_zephyr() -> None:
 
 def zephyr_board(tmp_path: Path, nodes: str) -> list[record.Record]:
     """The records of a board file holding ``nodes``."""
-    write(tmp_path, {"boards/x/x.dts": f"/dts-v1/;\n&spi0 {{\n{nodes}\n}};\n"})
+    bindings = ZEPHYR / zephyr.BINDINGS_DIR
+    write(
+        tmp_path,
+        {
+            "boards/x/x.dts": f"/dts-v1/;\n&spi0 {{\n{nodes}\n}};\n",
+            **{f"{zephyr.BINDINGS_DIR}/{p.name}": p.read_text() for p in bindings.iterdir()},
+        },
+    )
     return zephyr.extract(tmp_path)
 
 
@@ -1788,7 +1807,99 @@ def test_zephyr_node_values(tmp_path: Path) -> None:
     assert r["via"]["four_byte_modes:en4b"] == "enter-4byte-addr=0x1"
     assert not any(f.startswith("enter-4byte-addr") for f in r["flags"])
     assert "has-lock=0x1c" in r["flags"]
-    assert "dpd-wakeup-sequence=<30000>, <20>, <30000>" in r["flags"]
+    # The wake-up sequence's three times, from one token; no flag.
+    assert r["timings"] == {
+        "dpd_exit": {"maximum": 30000},
+        "dpd_min_time": {"minimum": 30000},
+        "dpd_wake_pulse": {"minimum": 20},
+    }
+    assert r["via"]["timings"] == "dpd-wakeup-sequence=<30000>, <20>, <30000>"
+    assert not [f for f in r["flags"] if "dpd" in f]
+
+
+def test_zephyr_times(tmp_path: Path) -> None:
+    recs = by_name(
+        zephyr_board(
+            tmp_path,
+            """flash@0 {
+                compatible = "jedec,spi-nor";
+                jedec-id = [c2 20 16];  /* mx25l3233f */
+                has-dpd;
+                t-enter-dpd = <10000>;
+                t-exit-dpd = <100000>;
+                t-reset-recovery = <0>;
+            };
+            flash@1 {
+                compatible = "jedec,spi-nor";
+                jedec-id = [c2 28 17];  /* mx25r6435f */
+                has-dpd;
+                t-enter-dpd = <0>;
+                dpd-wakeup-sequence = <30000 20 35000>;
+            };
+            flash@2 {
+                compatible = "jedec,nor";
+                jedec-id = [c2 84 37];  /* mx25uw6345g */
+                t-reset-pulse = <10000>;
+                t-reset-recovery = <35000>;
+            };""",
+        )
+    )
+    # has-dpd: DP and RDPD; the properties' times, by the binding's words.
+    m = recs["MX25L3233F"]
+    given = {o["op"]: o["via"] for o in m["opcodes"]}
+    assert (given["DP"], given["RDPD"]) == ("has-dpd", "has-dpd")
+    assert m["timings"] == {"dpd_enter": {"maximum": 10000}, "dpd_exit": {"maximum": 100000}}
+    assert m["via"]["timings.dpd_exit"] == "t-exit-dpd=100000"
+    assert "timings.reset_recovery" not in m["via"]  # 0 is not given
+    # A wake-up sequence: no RDPD, and the release is its tRDP.
+    r = recs["MX25R6435F"]
+    assert {o["op"] for o in r["opcodes"]} >= {"DP"}
+    assert "RDPD" not in {o["op"] for o in r["opcodes"]}
+    assert "dpd_enter" not in r["timings"]
+    assert r["timings"]["dpd_exit"] == {"maximum": 35000}
+    u = recs["MX25UW6345G"]
+    assert u["timings"] == {"reset_pulse": {"minimum": 10000}, "reset_recovery": {"maximum": 35000}}
+
+
+def test_zephyr_board_margins_are_not_the_parts(tmp_path: Path) -> None:
+    # The b_m2mem shield's reset line powers the module: its reset times
+    # are the rail's, not read, and a note says why.
+    bindings = ZEPHYR / zephyr.BINDINGS_DIR
+    node = """/dts-v1/;
+&spi0 { flash@0 {
+    compatible = "jedec,nor";
+    jedec-id = [c2 85 3a];  /* mx25lm51245 */
+    t-reset-pulse = <5000000>;
+    t-reset-recovery = <10000000>;
+}; };
+"""
+    write(
+        tmp_path,
+        {
+            "boards/shields/st_b_m2mem_pack1/x.overlay": node,
+            **{f"{zephyr.BINDINGS_DIR}/{p.name}": p.read_text() for p in bindings.iterdir()},
+        },
+    )
+    (r,) = zephyr.extract(tmp_path)
+    assert r["timings"] == {}
+    assert any(n.startswith("t-reset-pulse=5000000 not read: ") for n in r["notes"])
+
+
+def test_zephyr_reads_the_bindings(tmp_path: Path) -> None:
+    # A property the extractor maps that its binding no longer declares
+    # stops the build.
+    binding = ZEPHYR / zephyr.BINDINGS_DIR / "jedec,spi-nor-common.yaml"
+    write(
+        tmp_path,
+        {
+            f"{zephyr.BINDINGS_DIR}/{p.name}": p.read_text()
+            for p in (ZEPHYR / zephyr.BINDINGS_DIR).iterdir()
+        },
+    )
+    renamed = binding.read_text().replace("  t-exit-dpd:", "  t-exit-dpd-ns:")
+    write(tmp_path, {f"{zephyr.BINDINGS_DIR}/{binding.name}": renamed})
+    with pytest.raises(ValueError, match="no t-exit-dpd of type int"):
+        zephyr.extract(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -2389,6 +2500,35 @@ def test_dediprog_supply(tmp_path: Path, voltage: str, mv: int) -> None:
     assert (w["supply_mv"], w["voltage"]) == (mv, None)
 
 
+def test_dediprog_chip_erase_time_of_zero_is_not_given(tmp_path: Path) -> None:
+    (w,) = dediprog_chip(tmp_path, ChipEraseTime="0")
+    assert w["timings"] == {}
+    assert "timings.chip_erase" not in w["via"]
+
+
+@pytest.mark.parametrize(
+    ("attrs", "hz", "note"),
+    [
+        ({"Clock": "133 MHz"}, 133_000_000, None),
+        ({"Clock": None, "clock": "104Mhz"}, 104_000_000, None),
+        ({"Clock": "33/100MHz"}, None, "Clock=33/100MHz not read: two clocks"),
+        ({"Clock": "166Mbit"}, None, "Clock=166Mbit not read: not a clock in MHz"),
+        ({"Clock": "166"}, None, "Clock=166 not read: not a clock in MHz"),
+        ({"Clock": "416MHz"}, None, "Clock=416MHz not read: the 104 MHz quad read's"),
+    ],
+)
+def test_dediprog_clock(
+    tmp_path: Path, attrs: dict[str, str | None], hz: int | None, note: str | None
+) -> None:
+    (w,) = dediprog_chip(tmp_path, **attrs)
+    assert w["listed_clock_hz"] == hz
+    if note is None:
+        assert not [n for n in w["notes"] if "not read" in n]
+    else:
+        assert any(n.startswith(note) for n in w["notes"])
+        assert "listed_clock_hz" not in w["via"]
+
+
 def test_dediprog_protect_mask_is_no_layout(tmp_path: Path) -> None:
     # ProtectBlockMask is the bits the programmer clears, not where each
     # role is: lock stays a claim, and there is no layout.
@@ -2414,7 +2554,15 @@ def test_dediprog(tmp_path: Path) -> None:
     # Voltage is the supply dpcmd powers the part at: a field, not a flag.
     assert w["supply_mv"] == 3300
     assert not any(f.startswith(("Voltage", "AlternativeID")) for f in w["flags"])
-    assert w["via"] == {"feature:lock": "ProtectBlockMask=0x9C", "feature:qpi": "QPIEnable"}
+    assert w["via"] == {
+        "feature:lock": "ProtectBlockMask=0x9C",
+        "feature:qpi": "QPIEnable",
+        "listed_clock_hz": "Clock=75MHz",
+        "timings.chip_erase": "ChipEraseTime=200",
+    }
+    # ChipEraseTime is seconds, its bound not said; Clock one clock.
+    assert w["timings"] == {"chip_erase": {"unspecified": 200 * 10**9}}
+    assert w["listed_clock_hz"] == 75_000_000
     assert w["notes"][0].startswith("128 Mbit")
     # Legacy ids: REMS, AT25F, and RES read with its dummy bytes (0xff), or
     # answering the manufacturer too (with its continuation code).

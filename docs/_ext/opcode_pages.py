@@ -1,5 +1,5 @@
-"""A page per SPI operation: what it does, its timing diagram, where the timing
-comes from, and every part in the database that has it."""
+"""A page per SPI operation: what it does, its timing diagram, where its bus
+shape comes from, and every part in the database that has it."""
 
 from __future__ import annotations
 
@@ -23,51 +23,51 @@ from page_markup import (
     vendor_link,
     vendor_of,
 )
-from spiflash.enums import DataPhase, FlashType, OperationKind, TimingSource
+from spiflash.enums import DataPhase, FlashType, OperationKind, ShapeSource
 from spiflash.opcodes import OPERATIONS
 
 if TYPE_CHECKING:
     from spiflash import Database, Flash
     from spiflash.opcodes import Operation
 
-# Where the timing numbers come from, as the pages cite it.
-TIMING_TEXT = {
-    TimingSource.LINUX_DEFAULT: (
+# Where the bus-shape numbers come from, as the pages cite it.
+SHAPE_TEXT = {
+    ShapeSource.LINUX_DEFAULT: (
         "{sfsrc}`linux`'s `spi_nor_init_default_params()` in "
         "{upstream}`linux:drivers/mtd/spi-nor/core.c` sets up, for every part, read "
         "(0x03) with no dummy clocks, fast read (0x0b) with 8, and page program (0x02); "
         "and quad page program (0x32) for parts flagged `SPI_NOR_QUAD_PP`."
     ),
-    TimingSource.LINUX_NO_SFDP: (
+    ShapeSource.LINUX_NO_SFDP: (
         "{sfsrc}`linux`'s `spi_nor_no_sfdp_init_params()` in "
         "{upstream}`linux:drivers/mtd/spi-nor/core.c` gives the 1-1-2, 1-1-4 and 1-1-8 "
         "reads 8 dummy clocks, and octal DTR reads 20, for parts that have no SFDP tables."
     ),
-    TimingSource.LINUX_4B: (
+    ShapeSource.LINUX_4B: (
         "{sfsrc}`linux`'s `spi_nor_convert_3to4_read()` and its siblings in "
         "{upstream}`linux:drivers/mtd/spi-nor/core.c` map each 3-byte-address operation "
         "to its 4-byte form, which keeps the same dummy clocks."
     ),
-    TimingSource.FLASHPROG_FEATURES: (
+    ShapeSource.FLASHPROG_FEATURES: (
         "{sfsrc}`flashprog`'s `FEATURE_*` definitions in {upstream}`flashprog:include/flash.h` "
         "give the dummy clocks: 8 for fast read (0x0b), dual output (0x3b) and quad "
         "output (0x6b), 4 for dual I/O (0xbb), 6 for quad I/O (0xeb)."
     ),
-    TimingSource.FLASHROM_SIZES: (
+    ShapeSource.FLASHROM_SIZES: (
         "{sfsrc}`flashrom`'s `JEDEC_*_OUTSIZE` and `_INSIZE` definitions in "
         "{upstream}`flashrom:include/spi.h` give the bytes sent and received: the "
         "command, the address, any dummy bytes, and the data."
     ),
-    TimingSource.JESD216: (
+    ShapeSource.JESD216: (
         f"[JEDEC JESD216]({JESD216}) (SFDP) specifies a 3-byte address and 8 dummy clocks."
     ),
-    TimingSource.LINUX_SPINAND: (
+    ShapeSource.LINUX_SPINAND: (
         "{sfsrc}`linux`'s `SPINAND_*_OP` macros in "
         "{upstream}`linux:include/linux/mtd/spinand.h` give each SPI NAND operation's "
         "address bytes and lines; its dummy bytes are each part's, from the op variants "
         "its entry lists (shown on the chip pages as dummy clocks)."
     ),
-    TimingSource.PART: (
+    ShapeSource.PART: (
         "The details vary by part: check its datasheet. Where the dummy clocks are "
         "shown as varying, the part sets them in a register or states them in its SFDP "
         "tables."
@@ -97,9 +97,23 @@ NOTES = {
         "id; with address 0x000001 most parts answer them the other way round."
     ),
     "RES": (
-        "Wakes the flash from deep power-down; after three dummy bytes it answers its "
-        "one-byte electronic signature ({sfsrc}`flashrom`'s RES1; RES2 parts answer two bytes). "
+        "After three dummy bytes the flash answers its one-byte electronic signature "
+        "({sfsrc}`flashrom`'s RES1; RES2 parts answer two bytes). The same opcode alone is "
+        "the release from deep power-down on many parts ([`RDPD`](RDPD.md)), so this "
+        "wakes them too. "
         "Older parts use this in place of the JEDEC id ([`RDID`](RDID.md))."
+    ),
+    "DP": (
+        "Puts the flash in deep power-down once chip select goes high (after tDP), where it "
+        "ignores everything but its release: [`RDPD`](RDPD.md), or on some parts (Macronix's "
+        "MX25R) a pulse of chip select. The chip pages give the times "
+        "([](../derived.md#times))."
+    ),
+    "RDPD": (
+        "The release from deep power-down alone: 0xab, then chip select high, and the part is "
+        "ready after tRES1. On many parts the same opcode followed by dummy bytes reads a "
+        "signature ([`RES`](RES.md)), but not on all (the M25PX parts give none), so the two "
+        "are separate operations."
     ),
     "RDSFDP": (
         f"Reads the Serial Flash Discoverable Parameters ([JESD216]({JESD216})) from the given "
@@ -384,9 +398,9 @@ def operation_page(op: Operation, flashes: list[Flash], slugs: dict[int, str]) -
     )
     out.append(list_table(["Phase", "Lines", "Clocks", "What"], phases(op), "sf-table"))
     out.append("")
-    if op.timing:
-        out.append("### Where the timing comes from\n")
-        out += [f"- {TIMING_TEXT[t]}" for t in op.timing]
+    if op.shape_source:
+        out.append("### Where the bus shape comes from\n")
+        out += [f"- {SHAPE_TEXT[t]}" for t in op.shape_source]
         out.append("")
 
     others = related(op)

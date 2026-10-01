@@ -92,7 +92,11 @@ class SourceInfo:
 #: 9: records gain ``four_byte_modes`` (the 4-byte mode operations they
 #: give dropped), ``supply_mv``, ``otp`` and ``legacy_ids`` (their flags,
 #: notes and ``otp`` claims dropped); new OTP operations.
-FORMAT = 9
+#: 10: records gain ``timings`` (Dediprog's chip erase time, Zephyr's deep
+#: power-down and reset times; those their SFDP tables give derived) and
+#: ``listed_clock_hz`` (the clock Dediprog lists); Zephyr's ``has-dpd`` is the new
+#: ``DP`` and ``RDPD`` operations, its DPD flags gone.
+FORMAT = 10
 
 
 def _read(name: str) -> dict[str, Any]:

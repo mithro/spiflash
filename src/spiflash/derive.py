@@ -29,7 +29,13 @@ the record stores (:data:`~spiflash.model.CLAIMS`). They are:
   :data:`ERASE_FEATURE` and :data:`SFDP_FEATURES`), among them
   ``4byte_addr`` from :func:`address_bytes`; so do its quad enable bit
   (``quad_read``) and its block-protection bits (``lock``);
-- its erasers give its sector size (:func:`sector_size`).
+- its erasers give its sector size (:func:`sector_size`);
+- its SFDP tables give times (:func:`sfdp_timings`): the erase types',
+  the chip erase's and the programs' typical times with their maxima
+  through BFPT DW10's and DW11's multipliers
+  (:data:`CHIP_ERASE_MULTIPLIER`), DW12's suspend times and DW14's deep
+  power-down exit delay; times are compared at the tables' resolution
+  (:func:`compared_time`).
 
 :func:`opcodes`, :func:`features` and :func:`sector_size` apply them, and
 :func:`sfdp_features` the capability rules to a dump alone. The extractors
@@ -43,9 +49,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
-from .enums import AddressBytes, Feature, FlashType, FourByteMethod, IdMethod
+from .enums import AddressBytes, Bound, Feature, FlashType, FourByteMethod, IdMethod, TimedEvent
 from .opcodes import OPERATIONS, OpcodeUse
 from .registers import QuadEnableRequirement, RegisterBit
+from .timings import TimingKey, Timings
 from .units import human_size
 
 if TYPE_CHECKING:
@@ -602,6 +609,130 @@ def sector_size(record: Record) -> int | None:
             if e.opcode == opcode and len(e.blocks) == 1 and not e.assumed:
                 return e.blocks[0].size
     return None
+
+
+#: The units of the BFPT's times (JESD216B), in nanoseconds, by the unit
+#: code: an erase type's typical time (DW10), a chip erase's (DW11[30:29]),
+#: a page program's (DW11[13]) and a byte program's (DW11[18], [23]), a
+#: suspend latency (DW12) and the deep power-down exit delay (DW14). A
+#: time is (count + 1) units.
+ERASE_UNITS_NS = (1_000_000, 16_000_000, 128_000_000, 1_000_000_000)
+CHIP_ERASE_UNITS_NS = (16_000_000, 256_000_000, 4_000_000_000, 64_000_000_000)
+PAGE_PROGRAM_UNITS_NS = (8_000, 64_000)
+BYTE_PROGRAM_UNITS_NS = (1_000, 8_000)
+LATENCY_UNITS_NS = (128, 1_000, 8_000, 64_000)
+#: DW12's resume-to-suspend intervals have one unit, 64 µs.
+RESUME_UNITS_NS = (64_000,)
+
+#: Which multiplier a chip erase's maximum takes: BFPT DW10[3:0] (the
+#: erase types') or DW11[3:0] (the programs'). JESD216B's field names, as
+#: vendors reproduce the BFPT (Macronix MX25U25645G Rev. 1.4 p. 101:
+#: DW10 "Multiplier from typical erase time to maximum erase time", DW11
+#: "Multiplier from typical time to max time for Page or byte program";
+#: Cypress S70FS01GS 002-03833 ``Rev. *E`` p. 126 alike), scope DW11's to
+#: programs, and Infineon's SMIF driver (mtb-pdl-cat1
+#: ``drivers/source/cy_smif_sfdp.c:1378-1417``, ``SfdpGetChipEraseTime``)
+#: computes the chip-erase maximum with DW10's, the only driver found that
+#: computes one and acts on it. Zephyr's ``struct jesd216_bfp_dw11`` keeps
+#: the chip erase time beside DW11's factor because the bits are in that
+#: dword; no Zephyr driver multiplies them. Changing this constant changes
+#: every derived chip-erase maximum.
+CHIP_ERASE_MULTIPLIER = "DW10"
+
+_T, _M = Bound.TYPICAL, Bound.MAXIMUM
+
+#: The (event, bound) pairs a BFPT writes directly, with the units it can
+#: write each in and the most units it can count: the typicals of the
+#: erases and programs, the suspend latencies and resume intervals, the
+#: deep power-down exit delay. A maximum worked out through a multiplier is
+#: not here: the multiplier gives a coarse upper bound, not a rounding.
+SFDP_GRID: dict[tuple[TimedEvent, Bound], tuple[tuple[int, ...], int]] = {
+    (TimedEvent.BLOCK_ERASE, _T): (ERASE_UNITS_NS, 32),
+    (TimedEvent.CHIP_ERASE, _T): (CHIP_ERASE_UNITS_NS, 32),
+    (TimedEvent.PAGE_PROGRAM, _T): (PAGE_PROGRAM_UNITS_NS, 32),
+    (TimedEvent.BYTE_PROGRAM_FIRST, _T): (BYTE_PROGRAM_UNITS_NS, 16),
+    (TimedEvent.BYTE_PROGRAM_ADDITIONAL, _T): (BYTE_PROGRAM_UNITS_NS, 16),
+    (TimedEvent.ERASE_SUSPEND, _M): (LATENCY_UNITS_NS, 32),
+    (TimedEvent.PROGRAM_SUSPEND, _M): (LATENCY_UNITS_NS, 32),
+    (TimedEvent.ERASE_RESUME_TO_SUSPEND, _T): (RESUME_UNITS_NS, 16),
+    (TimedEvent.PROGRAM_RESUME_TO_SUSPEND, _T): (RESUME_UNITS_NS, 16),
+    (TimedEvent.DPD_EXIT, _M): (LATENCY_UNITS_NS, 32),
+}
+
+
+def sfdp_time(units: tuple[int, ...], counts: int, ns: int) -> tuple[int, int] | None:
+    """How a BFPT writes exactly ``ns``: ``(unit code, count)``, in the
+    finest unit whose count fits (64 µs is 8 x 8 µs before 1 x 64 µs);
+    ``None`` where no unit writes it exactly."""
+    for code, unit in enumerate(units):
+        if ns % unit == 0 and 1 <= ns // unit <= counts:
+            return code, ns // unit - 1
+    return None
+
+
+def on_sfdp_grid(event: TimedEvent, bound: Bound, ns: int) -> int | None:
+    """The least time a BFPT can write at or above ``ns`` for ``event`` at
+    ``bound`` (:data:`SFDP_GRID`): 35 µs is 40 µs (5 x 8 µs), as a deep
+    power-down exit delay. ``None`` for a pair a BFPT does not write
+    directly, or a time above the most it can."""
+    grid = SFDP_GRID.get((event, bound))
+    if grid is None:
+        return None
+    units, counts = grid
+    found = [unit * -(-ns // unit) for unit in units if -(-ns // unit) <= counts]
+    return min(found) if found else None
+
+
+def compared_time(event: TimedEvent, bound: Bound, ns: int) -> int:
+    """A time as the sources are compared on it: at SFDP resolution
+    (:func:`on_sfdp_grid`) where a BFPT writes the pair directly, so a
+    stated 35 µs and a table's 40 µs agree; else exactly."""
+    found = on_sfdp_grid(event, bound, ns)
+    return ns if found is None else found
+
+
+def sfdp_timings(sfdp: Sfdp) -> Timings:
+    """The times SFDP tables give (:attr:`SfdpFacts.timings
+    <spiflash.sfdp.SfdpFacts.timings>`): each erase type's typical time,
+    under its opcode, and the chip erase's, each with a maximum of the
+    typical times DW10's multiplier (the chip erase's:
+    :data:`CHIP_ERASE_MULTIPLIER`); the page program's and the byte
+    programs' typical times, each with a maximum of the typical times
+    DW11's; the suspend latencies (maxima) and resume-to-suspend intervals
+    (typical) of DW12, where the part can suspend; and DW14's deep
+    power-down exit delay, a maximum, where it has deep power-down. A
+    JESD216 maximum is 2 x (N + 1) x the typical time. SFDP gives no time to
+    enter deep power-down."""
+    bfpt = sfdp.bfpt
+    out: dict[tuple[TimingKey, Bound], int] = {}
+    if bfpt is None:
+        return Timings(out)
+    erase_x, program_x = bfpt.erase_max_multiplier, bfpt.program_max_multiplier
+    chip_x = erase_x if CHIP_ERASE_MULTIPLIER == "DW10" else program_x
+
+    def give(key: TimingKey, typical: int | None, multiplier: int | None) -> None:
+        if typical is None:
+            return
+        out[key, _T] = typical
+        if multiplier is not None:
+            out[key, _M] = typical * multiplier
+
+    for e in sfdp.erase_types:
+        give(TimingKey(TimedEvent.BLOCK_ERASE, e.opcode), e.typical_ns, erase_x)
+    give(TimingKey(TimedEvent.CHIP_ERASE), bfpt.chip_erase_ns, chip_x)
+    give(TimingKey(TimedEvent.PAGE_PROGRAM), bfpt.page_program_ns, program_x)
+    give(TimingKey(TimedEvent.BYTE_PROGRAM_FIRST), bfpt.byte_program_first_ns, program_x)
+    give(TimingKey(TimedEvent.BYTE_PROGRAM_ADDITIONAL), bfpt.byte_program_additional_ns, program_x)
+    for event, bound, ns in (
+        (TimedEvent.ERASE_SUSPEND, _M, bfpt.erase_suspend_ns),
+        (TimedEvent.PROGRAM_SUSPEND, _M, bfpt.program_suspend_ns),
+        (TimedEvent.ERASE_RESUME_TO_SUSPEND, _T, bfpt.erase_resume_to_suspend_ns),
+        (TimedEvent.PROGRAM_RESUME_TO_SUSPEND, _T, bfpt.program_resume_to_suspend_ns),
+        (TimedEvent.DPD_EXIT, _M, bfpt.exit_deep_power_down_delay_ns),
+    ):
+        if ns is not None:
+            out[TimingKey(event), bound] = ns
+    return Timings(out)
 
 
 def block_eraser(opcode: int, block: int, size: int, *, assumed: bool = False) -> Eraser:

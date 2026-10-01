@@ -476,6 +476,19 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         nand["dies"] = dies
         via["dies"] = f"DieSizeInKByte={chip['DieSizeInKByte']}"
     description = chip.get("Description", "").strip()
+    timings = {}
+    seconds = int(chip.get("ChipEraseTime") or 0)
+    if seconds:
+        timings = {"chip_erase": {"unspecified": seconds * 10**9}}
+        via["timings.chip_erase"] = f"ChipEraseTime={chip['ChipEraseTime']}"
+    clock, clock_notes = _clock(chip)
+    if clock is not None:
+        via["listed_clock_hz"] = f"{_clock_attribute(chip)}={_clock_value(chip)}"
+        described = [int(n) for n in _DESCRIBED_CLOCK.findall(description)]
+        if described and clock // 10**6 not in described:
+            mhz = " / ".join(f"{n} MHz" for n in described)
+            token = via["listed_clock_hz"]
+            clock_notes.append(f"{token} is not the {mhz} its Description gives")
     voltage = chip.get("Voltage", "")
     if voltage not in VOLTAGES:
         msg = f"Voltage={voltage!r}: not one of {sorted(VOLTAGES)}"
@@ -499,10 +512,62 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         quad_enable=quad_enable,
         supply_mv=VOLTAGES[voltage],
         legacy_ids=legacy,
+        listed_clock_hz=clock,
+        timings=timings,
         opcodes=ops.to_json(),
-        notes=([description] if description else []) + qe_notes + legacy_notes,
+        notes=([description] if description else []) + qe_notes + legacy_notes + clock_notes,
         **nand,
     )
+
+
+#: The spellings of the clock attribute: ``Clock`` on nearly every entry,
+#: ``clock`` on 40, ``CLOCK`` on one.
+CLOCK_ATTRIBUTES = ("Clock", "clock", "CLOCK")
+
+# One clock: "104MHz", "133 MHz", "104Mhz".
+_ONE_CLOCK = re.compile(r"(\d+) ?MHz", re.IGNORECASE)
+# The clocks a Description names: "... With 104MHz SPI Bus Interface",
+# "... With 33 MHz / 100 MHz SPI ...", "104-MHz".
+_DESCRIBED_CLOCK = re.compile(r"(\d+)[ -]?MHz", re.IGNORECASE)
+# Two: a read's and a fast read's, "33/100MHz".
+_TWO_CLOCKS = re.compile(r"(\d+)/(\d+) ?MHz", re.IGNORECASE)
+
+#: ``Clock`` values that are no clock of the part, by value, and why: each
+#: checked against the part's datasheet.
+CLOCK_WRONG = {
+    "416MHz": ("the 104 MHz quad read's 416 Mbit/s (A25LQ64 datasheet: 104 MHz), not a clock"),
+    "416MHZ": ("the 104 MHz quad read's 416 Mbit/s (W25Q64FW datasheet: 104 MHz), not a clock"),
+}
+
+
+def _clock_attribute(chip: dict[str, str]) -> str | None:
+    return next((a for a in CLOCK_ATTRIBUTES if chip.get(a)), None)
+
+
+def _clock_value(chip: dict[str, str]) -> str:
+    attribute = _clock_attribute(chip)
+    return chip[attribute] if attribute else ""
+
+
+def _clock(chip: dict[str, str]) -> tuple[int | None, list[str]]:
+    """The fastest SPI clock ``Clock`` gives the part, in hertz, and the
+    notes on a value that is not one clock: two clocks (a read's and a fast
+    read's, ``33/100MHz``: not one fact, so not taken), a value with no
+    unit or the wrong one (``166``, ``166Mbit``, ``A13112``), or a known
+    wrong one (:data:`CLOCK_WRONG`). Dpcmd never reads it (parse.c reads no
+    clock attribute)."""
+    attribute = _clock_attribute(chip)
+    if attribute is None:
+        return None, []
+    value = chip[attribute]
+    token = f"{attribute}={value}"
+    if value in CLOCK_WRONG:
+        return None, [f"{token} not read: {CLOCK_WRONG[value]}"]
+    if (m := _ONE_CLOCK.fullmatch(value)) is not None:
+        return int(m[1]) * 10**6, []
+    if _TWO_CLOCKS.fullmatch(value):
+        return None, [f"{token} not read: two clocks (read, fast read), not the part's one"]
+    return None, [f"{token} not read: not a clock in MHz"]
 
 
 def _dies(chip: dict[str, str], size: int) -> int | None:

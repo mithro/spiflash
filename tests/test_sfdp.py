@@ -167,14 +167,19 @@ def test_w25q512jv() -> None:
     assert s.reads["1-2-2"].mode_clocks == 2
     assert s.reads["1-2-2"].wait_states == 2
     assert s.reads["4-4-4"] == sfdp.FastRead("4-4-4", 0xEB, 2, 0)
-    assert [(e.size, e.opcode, e.opcode_4b, e.typical_us) for e in s.erase_types] == [
-        (4096, 0x20, 0x21, 64_000),
-        (32 << 10, 0x52, None, 128_000),
-        (64 << 10, 0xD8, 0xDC, 160_000),
+    assert [(e.size, e.opcode, e.opcode_4b, e.typical_ns) for e in s.erase_types] == [
+        (4096, 0x20, 0x21, 64_000_000),
+        (32 << 10, 0x52, None, 128_000_000),
+        (64 << 10, 0xD8, 0xDC, 160_000_000),
     ]
-    assert s.bfpt.page_program_us == 704
-    assert s.bfpt.chip_erase_us == 192_000_000
+    assert s.bfpt.page_program_ns == 704_000
+    assert s.bfpt.chip_erase_ns == 192_000_000_000
+    assert (s.bfpt.erase_max_multiplier, s.bfpt.program_max_multiplier) == (14, 6)
+    assert (s.bfpt.byte_program_first_ns, s.bfpt.byte_program_additional_ns) == (32_000, 3_000)
     assert s.bfpt.suspend_resume is True
+    # DW12: Winbond's tSUS, 20 µs, for both.
+    assert (s.bfpt.erase_suspend_ns, s.bfpt.program_suspend_ns) == (20_000, 20_000)
+    assert s.bfpt.exit_deep_power_down_delay_ns == 3_000  # tRES1
     assert (s.bfpt.enter_deep_power_down, s.bfpt.exit_deep_power_down) == (0xB9, 0xAB)
     assert s.bfpt.quad_enable == 4
     assert s.bfpt.quad_enable_description is not None

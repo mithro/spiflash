@@ -92,6 +92,8 @@ CASES = [
         "{sfnum}`1,024 " + TIMES + " 4 KiB`",
         number("size", ("count", "1,024"), ("times", f" {TIMES} "), ("int", "4"), ("unit", " KiB")),
     ),
+    # A duration's fraction is kept, not cut off: 2.24 s, not 2 s.
+    ("{sfnum}`2.24 s`", number("size", ("int", "2"), ("frac", ".24"), ("unit", " s"))),
     ("{sfnum}`1,234`", number("plain", ("int", "1,234"))),
     ("{sfnum}`n/a`", '<span class="sf-num">n/a</span>'),
 ]

@@ -8,7 +8,7 @@ from issue_pages import VALUE_TITLES, chip_issues, generate_all
 from page_markup import EM_SPACE, EN_DASH
 from spiflash import Database, Datasheet
 from spiflash.enums import Source
-from spiflash.model import COMPARED
+from spiflash.model import COMPARED, part_key
 from spiflash.registers import Register, RegisterBit
 from test_db import rec
 from test_sfdp import MX25L25635E
@@ -119,11 +119,26 @@ def test_two_roles_on_one_bit() -> None:
 
 
 def test_one_source_two_values() -> None:
-    db = Database([rec(page_size=256), rec(name="w25q128x", line=2, page_size=512)])
+    db = Database([rec(page_size=256), rec(line=2, page_size=512)])
     (issue,) = find(db)
     assert issue.kind is IssueKind.SAME_SOURCE
     assert issue.attribute == "page_size"
     assert issue.sources == (Source.LINUX,)
+
+
+def test_one_sources_parts_sharing_an_id_are_not_one_part() -> None:
+    # Two parts at one id (a revision letter apart) may each be right; an
+    # ordering code's tail and a parenthesised variant are the same part.
+    two = Database(
+        [rec(name="EN25Q32", page_size=256), rec(name="EN25Q32C", line=2, page_size=512)]
+    )
+    assert IssueKind.SAME_SOURCE not in kinds(two)
+    one = Database(
+        [rec(name="W25Q512JV", page_size=256), rec(name="W25Q512JV-IQ", line=2, page_size=512)]
+    )
+    assert IssueKind.SAME_SOURCE in kinds(one)
+    assert part_key("W25Q512JV-IQ") == part_key("w25q512jv")
+    assert part_key("W25Q128JW-DTR") != part_key("W25Q128JW")
 
 
 def test_extended_ids_tell_entries_apart() -> None:
@@ -221,7 +236,10 @@ def test_datasheet_not_giving_the_id() -> None:
 
 def test_shipped_data() -> None:
     found = find()
-    assert {i.kind for i in found} == set(IssueKind)
+    # No two sources give one chip's bounds out of order: only Dediprog's
+    # chip erase time (unspecified, so not ordered) and Zephyr's maxima and
+    # minima meet the tables' times.
+    assert {i.kind for i in found} == set(IssueKind) - {IssueKind.TIMING}
     by_kind = {k: [i for i in found if i.kind is k] for k in IssueKind}
     # U-Boot's MT25QL01G id has its bytes swapped; the datasheet gives 20 ba 21.
     (mt,) = [i for i in by_kind[IssueKind.NAME_IDS] if i.subject == "MT25QL01G"]

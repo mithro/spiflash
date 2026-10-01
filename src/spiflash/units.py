@@ -1,4 +1,4 @@
-"""Sizes and times as people read them."""
+"""Sizes, times and frequencies as people read them."""
 
 from __future__ import annotations
 
@@ -13,10 +13,18 @@ def human_size(n: int | None) -> str:
     return f"{n} B"
 
 
-def human_time(us: int) -> str:
-    """A duration in microseconds as ``704 us``, ``64 ms`` or ``192 s``."""
-    if us >= 1_000_000:
-        return f"{us / 1_000_000:g} s"
-    if us >= 1_000:
-        return f"{us / 1_000:g} ms"
-    return f"{us} us"
+def human_duration(ns: int) -> str:
+    """A duration in nanoseconds, the package's one unit of time, as
+    ``20 ns``, ``35 µs``, ``0.704 ms`` or ``192 s``."""
+    for unit, scale in (("s", 10**9), ("ms", 10**6), ("µs", 10**3)):
+        if ns >= scale:
+            return f"{ns / scale:g} {unit}"
+    return f"{ns} ns"
+
+
+def human_frequency(hz: int) -> str:
+    """A frequency in hertz as ``104 MHz``, ``33.3 MHz`` or ``500 kHz``."""
+    for unit, scale in (("GHz", 10**9), ("MHz", 10**6), ("kHz", 10**3)):
+        if hz >= scale:
+            return f"{hz / scale:g} {unit}"
+    return f"{hz} Hz"

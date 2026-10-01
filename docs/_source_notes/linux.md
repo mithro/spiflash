@@ -117,3 +117,12 @@ MT29F8G01ADAFD and MT29F8G01ADBFD with bit 6 of feature 0xd0 (the record's
 the GD5F4GQ6) has dies, but no select: they are row address bits.
 `USE_FSR`, `USE_CLSR` and `USE_CLPEF` are the flag status register and the
 error-clearing commands its driver sends.
+
+It gives no time per part ([](../derived.md#times)): its 40 s ready wait,
+its chip erase wait of 40 s per 2 MiB and its soft reset sleep
+({upstream}`linux:drivers/mtd/spi-nor/core.c`), and its SPI NAND poll delays
+and 400 ms timeout ({upstream}`linux:include/linux/mtd/spinand.h`), are its
+driver's, and its SFDP parser reads no time from the
+BFPT. The clock limits of some Winbond SPI NAND read variants
+(`SPI_MEM_OP_MAX_FREQ`) are the operations' bus shape, not yet modelled
+([](../derived.md#dummy-clocks)).

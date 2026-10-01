@@ -147,9 +147,44 @@ gives 128). Its `ReadCmd` and `ProgramCmd` words (`0x006B000B`,
 taken. Its `SupportLUT` is the bad block lookup table's swap and read
 ([NAND_BBM_SWAP](../opcodes/NAND_BBM_SWAP.md),
 [NAND_READ_BBM_LUT](../opcodes/NAND_READ_BBM_LUT.md)), and its read-id is
-SPI NAND's, from the id method. The entry has much that the database has no
-field for yet: the maximum clock, the status and configuration register
-commands, erase and program timeouts, the 4 KiB sector size where no opcode
+SPI NAND's, from the id method.
+
+`ChipEraseTime` (seconds; set on 1,747 entries, 0 on 846) is a chip erase
+time whose bound the table does not say: the record's
+`chip_erase.unspecified` ([](../derived.md#times)), 0 being not given.
+Against nine datasheets it is the maximum three times (W25Q16JV 25 s,
+GD25Q32C 80 s, AT25SF128A 120 s), the typical twice (W25Q64JV 20 s, where
+the W25Q64JV-DTR entry gives the maximum, 100 s; S25FL256S 66 s), and
+neither four times (W25Q128JV 50 s against 40 s and 200 s; GD25Q64C 160 s
+against 25 s and 60 s; MX25L12835F 72 s against 50 s and 80 s; N25Q128A13
+240 s against 170 s and 250 s). Dpcmd never reads it (parse.c fills
+neither it nor `RDSRCnt` and `WRSRCnt`). So it is compared only with other
+unspecified times: Dediprog's own, at an id several entries share.
+`Timeout` is a template's poll count (a step function of the size, one
+value in 28 of 41 templates, and never filled by dpcmd), not a time of the
+part, and is not taken.
+
+`Clock` (`clock` on 40 entries, `CLOCK` on one) is the record's
+`listed_clock_hz` where it is one clock in MHz: the clock Dediprog lists,
+a catalogue figure whose meaning it does not give (not read by dpcmd), and
+not a safe maximum, so it is shown as "Dediprog lists 104 MHz" and not
+compared. It is a poor guide to the part's fastest clock: against twelve
+datasheets it was that three times
+(GD25WB256E 104 MHz, MX66L1G45G 166 MHz, W25Q512JV 133 MHz), a slower clock
+seven times (AT25SF128A 104 against 133 MHz, GD25LB256E 133 against 166,
+MX25L12833F 104 against 133, MX25R6435F 70 against 80, MX25R8035F 70
+against 108, MX25U25645G 104 against 166, MX25U6432F 85 against 133), above
+it once (W25Q80BL 75 MHz, against 50 MHz in its datasheet, Rev. G1), and
+once no clock (the IS25WP256D's `166Mbit`). Its `Description`'s "With
+NN MHz SPI Bus" is a template too, so is not taken either; where it names
+other clocks than `Clock`, a note on the record says so. Left out, each with a note: two clocks, a read's and a
+fast read's (`33/100MHz` and the like, 55 entries: not one fact), a value
+in no unit or the wrong one (`166`, `166Mbit`, `A13112`), and `416MHz` (the
+A25LQ64's and the W25Q64FW's 104 MHz quad read, as 416 Mbit/s).
+
+The entry has much that the database has no
+field for yet: the status and configuration register
+commands, the 4 KiB sector size where no opcode
 goes with it, the classes' die counts (`N25Qxxx_Large_2Die`, which are its
 programming algorithms'), and for SPI NAND the ECC layout
 (`DefaultErrorBits`, `DefaultDataUnitSize`), the read dummy length and the
