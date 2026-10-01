@@ -329,35 +329,49 @@ def encode(
     consensus) or one entry: an SFDP header, a BFPT, and a 4BAIT where the
     part has 4-byte operations.
 
+    It never states the opposite of what the database holds.
+
     The BFPT's first nine dwords (JESD216) are what the database holds: the
     density, the address bytes, the 4 KiB erase, up to four erase types
     (uniform block erasers, smallest first), and the 1-1-2, 1-2-2, 1-1-4,
-    1-4-4 and 4-4-4 reads with their dummy clocks. A read the database has
-    no dummy clocks for is left out, and so listed in ``missing``. An
-    operation the database does not list is written as not supported, as
-    the format has no other way to say "not known". What the format needs
-    and the database cannot say (the write granularity of a part without a
-    page size, DW1's status-register bits, how a read's dummy clocks split
-    into mode and wait clocks, a read's usual dummy clocks where no source
-    gives the part's) is written with a documented value and listed in
-    ``assumed``.
+    1-4-4 and 4-4-4 reads with their dummy clocks. An operation the
+    database does not list is written as not supported, as the format has
+    no other way to say "not known". What the format needs and the database
+    cannot say (the write granularity of a part without a page size, DW1's
+    status-register bits, how a read's dummy clocks split into mode and
+    wait clocks, a read's usual dummy clocks where no source gives the
+    part's) is written with a documented value and listed in ``assumed``.
+    These dwords are in every revision, so where they would deny what the
+    database says (a read the part has with no dummy clocks known, QPI or a
+    quad read with no such read, a 4 KiB erase with no uniform 3-byte
+    eraser of it), ``encode`` refuses.
 
     ``revision`` 1.5 and 1.6 add DW10 to DW16: erase and program times,
-    suspend and resume, deep power-down, the quad enable requirement and
-    4-byte address mode. The times are written where the database holds
-    exactly what a dword says (:func:`_dw10`, :func:`_dw11_times`,
-    :func:`_dw14`): each typical time one the BFPT can write, in the finest
-    unit that holds it, and the maxima one multiplier of them; a time is
-    never rounded, nor a maximum made up. Suspend and resume are not
-    modelled, and the rest is what the database holds of the quad enable
-    requirement and the ways into 4-byte mode.
+    suspend and resume, deep power-down, the quad enable requirement,
+    the QPI sequences and 4-byte address mode. The times are written where
+    the database holds exactly what a dword says (:func:`_dw10`,
+    :func:`_dw11_times`, :func:`_dw12_13`, :func:`_dw14`): each typical
+    time one the BFPT can write, in the finest unit that holds it, and the
+    maxima one multiplier of them; no typical time is rounded, nor a
+    maximum made up, but a maximum the BFPT writes directly (a suspend
+    latency, the deep power-down exit delay) is rounded up to the next one
+    it can write, which is still true, and listed in ``assumed``. The rest
+    is what the database holds of the QE bit and the ways into 4-byte mode.
+
     Without ``assume``, ``encode`` then lowers the revision to 1.0, the
-    highest it can fill, and lists what it left out in ``missing``; with
-    ``assume``, it writes JESD216's "not supported" encodings or the
-    shortest times, and the ways out of 4-byte mode and the QPI sequences
-    the operations suggest, each listed in ``assumed``. ``ValueError`` for
-    a SPI NAND part, a part of no known size, or a revision it cannot write
-    (:data:`REVISIONS`)."""
+    highest it can fill, and lists what it left out in ``missing``. With
+    ``assume``, what the database holds nothing of is written as JESD216's
+    "not supported", the shortest times or the reserved QER 7 (no
+    requirement), and the ways out of 4-byte mode, the QPI sequences and
+    how the QE bit is written as the operations suggest, each listed in
+    ``assumed``; but where a dword cannot be written without contradicting
+    the database (a time known but not as it writes it, deep power-down
+    with no release or exit delay known, a page size that is not a power of
+    two, suspend times it cannot write), the revision is still lowered.
+
+    ``ValueError`` for a SPI NAND part, a part of no known size, a revision
+    it cannot write (:data:`REVISIONS`), or first nine dwords that would
+    deny the database."""
     if revision not in REVISIONS:
         known = ", ".join(f"{a}.{b}" for a, b in REVISIONS)
         msg = f"encode writes SFDP {known}, not {revision[0]}.{revision[1]}"

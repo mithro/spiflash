@@ -547,7 +547,10 @@ def _parser() -> argparse.ArgumentParser:
             "stderr as 'assumed:': DW1's status-register bits (3-4), a read's usual "
             "dummy clocks where no source gives the part's, and every read's split "
             "into 0 mode + N wait clocks. What cannot be filled is left out, lowering "
-            "the revision, and listed as 'missing:'."
+            "the revision, and listed as 'missing:', even with --assume where any value "
+            "would contradict the database. Nothing written denies what the database "
+            "says: where the first nine dwords, in every revision, would (QPI with no "
+            "4-4-4 read known, say), the chip is refused."
         ),
     )
     p.add_argument("query", help="a JEDEC id or part name naming one chip")

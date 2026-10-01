@@ -338,11 +338,17 @@ spiflash sfdp /sys/bus/spi/devices/spi0.0/spi-nor/sfdp --entry
 
 `sfdp-encode` writes the SFDP area the database describes for a chip, in hex
 (or `-o FILE` for the bytes; `--json` for everything). It never writes as fact
-what the database does not hold. A field the format needs and the database
-cannot give is written with a documented value and listed as `assumed`
-(on stderr); without `--assume` it leaves out what it cannot fill, lowering
-the revision (the database has no erase or program times yet, so that is
-JESD216 1.0), and lists that as `missing`:
+what the database does not hold, nor anything that denies what it does. A
+field the format needs and the database cannot give is written with a
+documented value and listed as `assumed` (on stderr). Without `--assume` it
+leaves out what it cannot fill, lowering the revision (to JESD216 1.0, as
+few parts have every time and suspend figure DW10 to DW16 need), and lists
+that as `missing`; with it, it fills the rest with JESD216's "not supported",
+the shortest times and the like, each listed, but still lowers the revision
+where any value would contradict the database (Dediprog's chip erase time,
+whose bound is not given, has no place in DW11). A chip whose first nine
+dwords would deny something (QPI with no 4-4-4 read known) is refused. The
+W25Q512JV, without `--assume`:
 
 ```console
 $ spiflash sfdp-encode ef4020
