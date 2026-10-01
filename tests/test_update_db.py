@@ -97,3 +97,12 @@ def test_make_refuses_to_lose_an_operation(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(record.derive, "opcodes", lambda _: next(calls, ()))
     with pytest.raises(AssertionError, match=r"lost \['SE'\]"):
         record.make("linux", "f", 1, "n", opcodes=[{"op": "SE", "via": "x"}])
+
+
+def test_db_snapshot_refuses_a_src_without_the_package(tmp_path: Path) -> None:
+    # Else it would quietly snapshot the installed package instead.
+    import db_snapshot  # noqa: PLC0415 - a tool, imported where it is tested
+
+    with pytest.raises(SystemExit):
+        db_snapshot.main(["--src", str(tmp_path / "nope"), str(tmp_path / "out.json")])
+    assert not (tmp_path / "out.json").exists()
