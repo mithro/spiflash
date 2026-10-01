@@ -27,11 +27,11 @@ some with placeholder ids.
   wio_tracker_l1's P25Q16H carries another part's, a 16 MiB one with DTR.
 - `page-size` is the part's page for `jedec,spi-nor`, but two drivers take
   it as their own setting, though every binding inherits
-  `jedec,jesd216.yaml`'s description, "Number of bytes in a page from
+  {upstream}`jedec,jesd216.yaml <zephyr:dts/bindings/mtd/jedec,jesd216.yaml>`'s description, "Number of bytes in a page from
   JESD216 BFP DW11": `adi,max32-spixf-nor`'s driver
-  (`flash_max32_spixf_nor.c`) uses it only as its flash layout page
+  ({upstream}`flash_max32_spixf_nor.c <zephyr:drivers/flash/flash_max32_spixf_nor.c>`) uses it only as its flash layout page
   (`.layout.pages_size = DT_INST_PROP(0, page_size)`), and `jedec,nor`'s
-  (`flash_mspi_nor.c`) as its program chunk, which must fit the
+  ({upstream}`flash_mspi_nor.c <zephyr:drivers/flash/flash_mspi_nor.c>`) as its program chunk, which must fit the
   controller (`FLASH_PAGE_SIZE_INST(inst) <= PACKET_DATA_LIMIT(inst)`;
   frdm_mcxe247: "Single QSPI IP write must fit the 128-byte Tx FIFO."). For
   those it is kept as a flag (`page-size=128`), not as the part's page.

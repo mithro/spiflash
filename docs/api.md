@@ -186,7 +186,7 @@ SFDP tools):
   revision"`, and each table's `"revision"` and `"pointer"` are `null`
   (its header was made up):
 
-  ```json
+  ```text
   {"partial": true, "revision": null, "revision_name": "unknown revision",
    "access_protocol": null,
    "tables": [{"id": 65280, "name": "BFPT", "revision": null, "length": 16,

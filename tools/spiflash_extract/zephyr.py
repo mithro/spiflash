@@ -161,10 +161,10 @@ _IO_MODE = {
 #: inherits jedec,jesd216.yaml's "Number of bytes in a page from JESD216 BFP
 #: DW11". The drivers differ:
 #:
-#: - ``adi,max32-spixf-nor`` (drivers/flash/flash_max32_spixf_nor.c) uses it
+#: - ``adi,max32-spixf-nor`` (:upstream:`zephyr:drivers/flash/flash_max32_spixf_nor.c`) uses it
 #:   only as the flash layout page, ``.layout.pages_size =
 #:   DT_INST_PROP(0, page_size)``, and programs by the BFPT's page;
-#: - ``jedec,nor`` (drivers/flash/flash_mspi_nor.c) programs in chunks of it,
+#: - ``jedec,nor`` (:upstream:`zephyr:drivers/flash/flash_mspi_nor.c`) programs in chunks of it,
 #:   which must fit the controller: ``FLASH_PAGE_SIZE_INST(inst) <=
 #:   PACKET_DATA_LIMIT(inst)``; frdm_mcxe247's node says why it gives 128:
 #:   "Single QSPI IP write must fit the 128-byte Tx FIFO."
