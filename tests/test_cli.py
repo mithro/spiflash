@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
 from typing import TYPE_CHECKING
 
 import pytest
 
+import spiflash
 from spiflash import cli, units
 from spiflash.enums import FlashType
 from spiflash.model import Flash
@@ -36,12 +38,15 @@ def test_id_timing(capsys: pytest.CaptureFixture[str]) -> None:
     # QEMU's IS25WP256 dump: typical and maximum (DW10's multiplier, 8);
     # Dediprog's chip erase time, its bound not given.
     _, out = run(capsys, "id", "9d7019")
-    assert "    timing: chip erase 60 s typ, ≤ 480 s, ~180 s (bound not given);" in out
+    assert (
+        "    timing: chip erase 60 s typ, ≤ 480 s, ~180 s (bound not given; also 70 s, 90 s);"
+        in out
+    )
     assert "page program 200 µs typ, ≤ 1.2 ms; DPD exit ≤ 15 µs" in out
     # -v: every time, each value with who gives it; and the clock.
     _, out = run(capsys, "id", "c22817", "-v")
-    assert "    time: dpd_exit maximum: 5 µs (zephyr); 35 µs (zephyr)" in out
-    assert "    time: block_erase:0x20 maximum: 384 ms (zephyr (SFDP))" in out
+    assert "    time: DPD exit, maximum: 5 µs (zephyr); 35 µs (zephyr)" in out
+    assert "    time: block erase 0x20, maximum: 384 ms (zephyr (SFDP))" in out
     assert "    clock: Dediprog lists 70 MHz" in out
     # Compared at SFDP resolution, shown as given.
     assert "sources disagree on timings.dpd_exit.maximum: 5 µs (zephyr); 35 µs (zephyr)" in out
@@ -197,15 +202,89 @@ def test_list(capsys: pytest.CaptureFixture[str]) -> None:
 def test_jep106(capsys: pytest.CaptureFixture[str]) -> None:
     assert run(capsys, "jep106", "c2") == (0, "Macronix\n")
     assert run(capsys, "jep106", "7f1c") == (0, "Eon Silicon Devices\n")
-    code, out = run(capsys, "jep106", "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01")
-    assert code == 1
-    assert "no JEP106 manufacturer 0x01 in bank 20" in out
+    assert cli.main(["jep106", "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01"]) == 1
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert "spiflash: no JEP106 manufacturer 0x01 in bank 20" in printed.err
+    code, out = run(capsys, "jep106", "--json", "c2")
+    assert (code, json.loads(out)) == (0, {"code": "c2", "bank": 1, "manufacturer": "Macronix"})
 
 
 def test_sources(capsys: pytest.CaptureFixture[str]) -> None:
     code, out = run(capsys, "sources")
     assert code == 0
     assert "https://github.com/torvalds/linux (GPL-2.0-only)" in out
+    code, out = run(capsys, "sources", "--json")
+    doc = json.loads(out)
+    assert (code, doc["linux"]["license"]) == (0, "GPL-2.0-only")
+    assert spiflash.database().sources["linux"].to_json() == doc["linux"]
+
+
+def test_legacy_keys_are_taken_where_they_are_printed(capsys: pytest.CaptureFixture[str]) -> None:
+    # id, find and the site write res1:05; every command takes it back.
+    code, out = run(capsys, "id", "res1:05")
+    assert (code, out.splitlines()[0]) == (0, "res1:05  Micron  M25P05  (nor)")
+    code, out = run(capsys, "opcodes", "res1:05")
+    assert code == 0
+    assert "RES" in out
+    assert cli.main(["sfdp-encode", "res1:14"]) == 0  # the EPCS16S, not the JEDEC parts
+    assert capsys.readouterr().err.startswith("res1:14 EPCS16S:")
+    assert cli.main(["id", "res1:05", "--method", "rems"]) == 2
+    assert "res1:05 is a res1 id, not a rems one" in capsys.readouterr().err
+    # list shows a legacy chip's key, and --json gives it, and no JEDEC id.
+    code, out = run(capsys, "list", "--manufacturer", "micron")
+    assert any(line.startswith("res1:05    nor  Micron") for line in out.splitlines())
+    code, out = run(capsys, "list", "--json", "--manufacturer", "micron")
+    m25p05 = next(d for d in json.loads(out) if d["key"] == "res1:05")
+    assert (m25p05["jedec_id"], m25p05["id"], m25p05["id_family"]) == (None, "05", "res1")
+
+
+def test_every_failure_says_why(capsys: pytest.CaptureFixture[str]) -> None:
+    for args, said in (
+        (["opcodes", "nosuch"], "spiflash: no chip nosuch"),
+        (["find", ""], "spiflash: no part name matches ''"),
+        (["find", "--nearest", ""], "spiflash: no part name is near ''"),
+        (["find", "--regex", "^NOSUCH$"], "spiflash: no part name matches '^NOSUCH$'"),
+        (["id", "bf", "--method", "rems"], "spiflash: no chip answers bf to REMS"),
+        (["id", "14", "--method", "res2"], "spiflash: no chip answers 14 to RES2"),
+        (["id", "res2:14"], "spiflash: no chip answers res2:14"),
+        (["list", "--manufacturer", "nosuch"], "spiflash: no manufacturer 'nosuch'"),
+        (["list", "--manufacturer", "eon", "--type", "nand"], "spiflash: no NAND chip of eon"),
+    ):
+        assert cli.main(args) == 1, args
+        assert said in capsys.readouterr().err, args
+    # A SPI NAND id read with its leading dummy byte: a hint.
+    assert cli.main(["id", "00efaa21"]) == 1
+    assert "a SPI NAND part sends a dummy byte before its id: try efaa21" in (
+        capsys.readouterr().err
+    )
+    # A method that is none is argparse's to refuse, naming them all.
+    with pytest.raises(SystemExit):
+        cli.main(["id", "14", "--method", "bogus"])
+    assert "jedec, rems, res1, res2, at25f, st95" in capsys.readouterr().err
+
+
+def test_a_dump_is_chosen_by_number(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["sfdp-diff", "ef4020#x", "ef4020"]) == 2
+    assert "ef4020#x: a dump is chosen by its number (#2), not #x" in capsys.readouterr().err
+    assert cli.main(["sfdp-diff", "ef4020#3", "ef4020"]) == 2
+    assert "ef4020 has 1 SFDP dump, not a dump #3" in capsys.readouterr().err
+
+
+def test_a_closed_pipe_ends_it_quietly() -> None:
+    # spiflash list | head: no BrokenPipeError traceback.
+    with subprocess.Popen(
+        [sys.executable, "-m", "spiflash.cli", "list"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as p:
+        assert p.stdout is not None
+        assert p.stderr is not None
+        p.stdout.readline()
+        p.stdout.close()
+        err = p.stderr.read()
+    assert p.returncode == 1
+    assert b"Traceback" not in err, err
 
 
 def test_version(capsys: pytest.CaptureFixture[str]) -> None:

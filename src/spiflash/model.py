@@ -1971,7 +1971,8 @@ class Flash:
         """A plain-JSON summary, as the ``spiflash`` command prints it."""
         return {
             "id": self.id_hex,
-            "jedec_id": self.jedec_id,
+            "key": self.key,
+            "jedec_id": self.jedec_id if self.family is IdFamily.JEDEC else None,
             "ids": [i.hex() for i in self.ids],
             "id_family": self.family,
             "type": self.type,

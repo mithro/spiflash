@@ -71,6 +71,19 @@ class SourceInfo:
             records=d["records"],
         )
 
+    def to_json(self) -> dict[str, Any]:
+        """What :meth:`from_json` reads."""
+        return {
+            "url": self.url,
+            "browse": self.browse,
+            "branch": self.branch,
+            "commit": self.commit,
+            "date": self.date.isoformat(),
+            "paths": list(self.paths),
+            "license": self.license,
+            "records": self.records,
+        }
+
 
 #: The data files' format; :repo:`tools/update_db.py` writes the same number.
 #: 2: records' ``opcodes`` became a list of {op, opcode, via}.
@@ -368,7 +381,8 @@ class Database:
         are ignored, since many chips leave them out. Bytes past the id narrow
         the answer to the variants whose extended id agrees (an S25FL128S
         answers ``01 20 18 4d 01 80``). ``method`` selects a legacy id
-        instead (``"rems"``, ``"res1"``, ``"res2"``, ``"at25f"``): the chips
+        instead (``"rems"``, ``"res1"``, ``"res2"``, ``"at25f"``, ``"st95"``), as
+        does a legacy chip's :attr:`~spiflash.model.Flash.key` (``"res1:15"``): the chips
         grouped by that id, then the JEDEC chips whose records say their
         part answers it too (:attr:`Flash.legacy_ids
         <spiflash.model.Flash.legacy_ids>`), each with
@@ -383,6 +397,16 @@ class Database:
         longer id of either type fits: ``c22603`` is the SPI NAND
         MX35LF2GE4AD alone."""
         family = IdFamily(method)
+        given, _, rest = chip_id.partition(":") if isinstance(chip_id, str) else ("", "", "")
+        if given.strip().lower() in IdFamily.__members__.values():
+            # A legacy chip's key, as Flash.key writes it: "res1:15" (not
+            # "ef:40:18", hex bytes).
+            keyed = IdFamily(given.strip().lower())
+            chip_id = rest
+            if family not in (IdFamily.JEDEC, keyed):
+                msg = f"{given}:{chip_id} is a {keyed} id, not a {family} one"
+                raise ValueError(msg)
+            family = keyed
         wanted = FlashType(flash_type) if flash_type is not None else None
         _bank, core = strip_continuation(parse_id(chip_id))
         found: list[tuple[int, Flash]] = []
