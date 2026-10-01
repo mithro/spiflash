@@ -20,4 +20,17 @@ bytes of it: it has the most recent parts, and extended ids (the bytes after
 the JEDEC id) that separate variants answering the same id. For chips without
 SFDP it carries capability flags (`SECT_4K`, `SPI_NOR_QUAD_READ`, ...). Parts
 it reads entirely from SFDP have no size in the table: their records have
-`size: null` and the `sfdp` feature.
+`size: null`, no erase layouts, and the [RDSFDP](../opcodes/RDSFDP.md)
+operation (so the `sfdp` capability).
+
+A part with a size is erased with 0xd8 over its `.sector_size` blocks, and
+with 0x20 over 4 KiB sectors for `SECT_4K` (`spi_nor_no_sfdp_init_params()`):
+its records give those as erase layouts, from which its sector size and its
+erase capabilities follow. Most entries give no `.sector_size`, and the
+kernel takes `SPI_NOR_DEFAULT_SECTOR_SIZE`, 64 KiB: that is taken as the
+entry's own, as it erases every such part with it, an entry for a part with
+other blocks gives its own (`SZ_256K` for the S25FL512S), and
+{sfsrc}`u-boot`'s `INFO()` table, which Linux's was, states the 64 KiB in each
+entry. The read, fast read (a board's devicetree choice, `m25p,fast-read`),
+page program and chip erase it sets up for every part are its driver's
+defaults: they imply no capability.

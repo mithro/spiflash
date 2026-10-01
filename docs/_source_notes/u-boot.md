@@ -11,4 +11,10 @@ designated fields for the odd parts, FRAM), grouped under
 `CONFIG_SPI_FLASH_<VENDOR>`. It has parts {sfsrc}`linux` dropped or never
 had, and like Linux it gives each part's size, page and sector size and
 capability flags, from which the opcodes its
-{upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` would use follow.
+{upstream}`u-boot:drivers/mtd/spi/spi-nor-core.c` would use follow. Its
+sector size is an erase layout, 0xd8 over the `INFO` sectors (and 0x20 or
+0xd7 over 4 KiB ones for `SECT_4K` or `SECT_4K_PMC`). The read, fast read
+(unless `SPI_NOR_NO_FR`), page program and chip erase it sets up for every
+part, and the quad page program it adds for every `SPI_NOR_QUAD_READ` part,
+are its driver's defaults, as are their 4-byte forms: they imply no
+capability.

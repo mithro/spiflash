@@ -36,7 +36,10 @@ the id read of the way the entry reads its id ([`RDID`](opcodes/RDID.md),
 [`REMS`](opcodes/REMS.md), [`RES`](opcodes/RES.md), ...), unless the entry
 names the command it reads the id with ({sfsrc}`dediprog`'s `RDIDCommand`), and
 the erase each of its erase layouts sends. A chip page marks those *implied* in "Why each source
-lists each opcode".
+lists each opcode". An operation a source's driver sends to every part, whatever the
+entry says (Linux's fast read, U-Boot's quad page program for every quad-read part), is
+marked a *driver default*: it says nothing of the part, so implies no capability
+([](derived.md)).
 
 The opcode values themselves are read from each upstream's own headers
 (`SPINOR_OP_*`, `JEDEC_*`, `SPIFLASH_READ_ID`, `FLASH_*`, {sfsrc}`qemu`'s `FlashCMD`

@@ -32,8 +32,8 @@ it (`mtk_snand_setup()` in
   set from the page number (`mtk_snand_get_plane_address()`). So a wrong
   `planes_per_die` does not change the size: the MT29F1G01AAADD's is 1,
   where its datasheet has 2 planes of 512 blocks;
-- the sector size is the erase block, page x pages per block, as
-  {sfsrc}`linux` gives it;
+- the erase block, page x pages per block, is its block erase's layout
+  (and so its sector size), as {sfsrc}`linux` gives it;
 - the id is every byte the entry lists, the manufacturer's first.
   `mtk_snand_id_probe()` sends 0x9f and a zero byte, then 0x9f alone, and
   compares each answer with the entries in turn, taking the first whose
