@@ -375,10 +375,13 @@ class Database:
         :attr:`~spiflash.model.Flash.answers_legacy` set. A RES id is one
         byte, which parts of several makers share: those are candidates.
 
-        Only the longest ids that fit come back, NOR before NAND: a SPI NAND
-        id is two bytes, so a NOR id can start with one (``c22018`` also
-        fits the MX35LF2G14AC's ``c220``); pass ``flash_type="nor"`` to rule that
-        out."""
+        Only the longest ids of each type that fit come back, longest first
+        and NOR before NAND among equals: a SPI NAND id is two bytes, so a
+        NOR id can start with one (``c22018`` also fits the MX35LF2G14AC's
+        ``c220``); pass ``flash_type="nor"`` to rule that out. A one-byte id
+        (Linux's "any Macronix part", ``c2``) comes back only where no
+        longer id of either type fits: ``c22603`` is the SPI NAND
+        MX35LF2GE4AD alone."""
         family = IdFamily(method)
         wanted = FlashType(flash_type) if flash_type is not None else None
         _bank, core = strip_continuation(parse_id(chip_id))
@@ -405,7 +408,7 @@ class Database:
         if any(n > 1 for n, _ in best):
             best = [(n, f) for n, f in best if n > 1]
         chips = [
-            f for n, f in sorted(best, key=lambda nf: (nf[1].type is not FlashType.NOR, -nf[0]))
+            f for n, f in sorted(best, key=lambda nf: (-nf[0], nf[1].type is not FlashType.NOR))
         ]
         if family is IdFamily.JEDEC:
             return chips
