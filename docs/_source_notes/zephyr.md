@@ -16,6 +16,19 @@ some with placeholder ids.
   on a `jedec,spi-nor` node, whose driver takes the requirement from the
   BFPT and ignores the property: there it stays a flag. `requires-ulbpr`
   gives [ULBPR](../opcodes/ULBPR.md).
+- `enter-4byte-addr` is BFPT DW16[31:24] as a byte
+  ({upstream}`jedec,jesd216.yaml <zephyr:dts/bindings/mtd/jedec,jesd216.yaml>`;
+  {upstream}`spi_nor.c <zephyr:drivers/flash/spi_nor.c>`'s
+  `spi_nor_set_address_mode` and
+  {upstream}`nrf_qspi_nor.c <zephyr:drivers/flash/nrf_qspi_nor.c>` read it so):
+  the record's ways into 4-byte mode ([](../derived.md#4-byte-addressing)),
+  bit 5 (dedicated 4-byte opcodes) a `4byte_opcodes` claim, 0 and 0xff
+  nothing. The only one in the tree, p2d's GD25LE255E `<0xb7>`, is EN4B's
+  opcode, with the reserved bit 7 set: it is not read, and a note says so
+  (its BFPT's DW16 gives `en4b` anyway). The Renesas OSPI binding's
+  `enter-4byte-command`, the opcode its driver sends with no write enable
+  ({upstream}`flash_renesas_ra_ospi_b.c <zephyr:drivers/flash/flash_renesas_ra_ospi_b.c>`),
+  is `en4b` for `<0xb7>`.
 - About a fifth of the nodes carry a copy of the chip's own SFDP Basic
   Flash Parameter table (`sfdp-bfp`), and a few its 4-byte instruction and
   xSPI profile tables (`sfdp-ff84`, `sfdp-ff05`). The record stores them (its

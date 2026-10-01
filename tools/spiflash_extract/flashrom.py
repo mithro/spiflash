@@ -77,7 +77,7 @@ _FEATURES = [
     (re.compile(r"FEATURE_NO_ERASE"), "no_erase"),
 ]
 
-#: The FEATURE_4BA_* bits giving a way into 4-byte mode (include/flash.h;
+#: The FEATURE_4BA_* bits giving a way into 4-byte mode (:upstream:`flashrom:include/flash.h`;
 #: spi25.c's spi_enter_exit_4ba and spi_write_extended_address_register):
 #: 0xb7 without and with a write enable first, bit 7 of the extended
 #: address register, and 3-byte addresses with the top byte in the

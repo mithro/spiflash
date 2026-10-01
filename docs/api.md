@@ -77,6 +77,12 @@ record is made ({py:mod}`spiflash.derive`), never stored:
   {py:attr}`~spiflash.model.Record.quad_enable` the bit the entry states, or
   failing that the one its requirement puts it at; the requirement gives
   the register operations writing the bit too;
+- {py:attr}`~spiflash.model.Record.four_byte_modes` is the ways into 4-byte
+  mode the entry states ({py:attr}`~spiflash.model.Record.four_byte_mode_claims`)
+  and those its SFDP tables give (BFPT DW16); they give their operations
+  (EN4B, WREAR and RDEAR, BRWR and BRRD) and `4byte_addr`, and
+  {py:attr}`~spiflash.model.Record.address_bytes` follows; an OTP area
+  ({py:attr}`~spiflash.model.Record.otp`) gives `otp`;
 - {py:attr}`~spiflash.model.Record.sector_size` is the block of its 0xd8
   eraser (failing that its 0xdc, then its 0x52 eraser; a SPI NAND part's
   block erase), and `None` for a part that needs no erase
@@ -331,3 +337,78 @@ Changes in data format 8 (SPI NAND geometry, dies, SPI NAND operations):
   opcode table a part's own dummy clocks; the site a NAND geometry (or
   Dies) section and a Dummy column on the chip pages, a SPI NAND table on
   [](opcodes.md), and data issues for the new values.
+
+Changes in data format 9 (4-byte addressing, supply, OTP, legacy ids):
+
+- {py:class}`~spiflash.enums.FourByteMethod` and
+  {py:class}`~spiflash.enums.AddressBytes` live in {py:mod}`spiflash.enums`
+  (`spiflash.sfdp` still imports them); a `FourByteMethod`'s value is a
+  token (`"en4b"`, `"wren_en4b"`, `"wrear"`, `"ear_bit7"` (new: flashrom's
+  bit 7 of the extended address register), `"brwr"`, `"nv_cr"`,
+  `"opcodes_4b"`, `"always_4b"`, and the ways out `"hw_reset"`,
+  `"sw_reset"`, `"power_cycle"`), and its old display string is
+  {py:attr}`~spiflash.enums.FourByteMethod.label`. So
+  {py:meth}`Sfdp.to_json() <spiflash.sfdp.Sfdp.to_json>`'s
+  `"four_byte_enter"` and `"four_byte_exit"` (in `spiflash sfdp --json` and
+  {py:meth}`Flash.to_json() <spiflash.model.Flash.to_json>`'s `"sfdp"`) are
+  lists of tokens, `["en4b", "wrear"]`, not of display strings;
+- the records gain `"four_byte_modes"` (the ways into 4-byte address mode
+  the entry states, `[]` without; never `"opcodes_4b"` nor a way out),
+  `"supply_mv"` (the voltage, in millivolts, a programmer's table says to
+  power the part at; never with `"voltage"`), `"otp"` (`{"size": 768,
+  "regions": 3}`: the OTP bytes the user can program, `"regions"` only where
+  given) and `"legacy_ids"` (`[["res1", "15"], ["rems", "ef12"]]`, `[]`
+  without). A `"via"` key may name a way in (`"four_byte_modes:en4b"`, or
+  `"four_byte_modes"` for one token giving several), `supply_mv` and `otp`;
+- the operations a way in gives (EN4B; WREAR and RDEAR; BRWR and BRRD:
+  {py:data}`~spiflash.derive.FOUR_BYTE_MODE_OPERATIONS`) are no longer
+  stored, but derived, and {py:class}`~spiflash.sfdp.SfdpFacts` gives
+  `four_byte_modes` and `opcodes_4b` instead of `four_byte_enter`, and no
+  operation a way in gives; {sfsrc}`flashrom`'s and {sfsrc}`flashprog`'s
+  `FEATURE_4BA_ENTER_EAR7` no longer gives 0xc5/0xc8 (its Spansion parts
+  write bit 7 with 0x17); the `otp` claims an area or an OTP operation
+  implies, and the flags and notes the new fields hold, go (Dediprog's
+  `Voltage` and `AlternativeID`, IMSProg's `chipVCC` and its page and
+  block template, flashrom's OTP comments, the `FEATURE_4BA_` ways in,
+  Rockchip's `FEA_4BYTE_ADDR_MODE`);
+- {py:class}`~spiflash.model.Record` has
+  {py:attr}`~spiflash.model.Record.four_byte_mode_claims` (stored, JSON
+  `"four_byte_modes"`), {py:attr}`~spiflash.model.Record.four_byte_modes`
+  (it and its SFDP tables'), {py:attr}`~spiflash.model.Record.supply_mv`,
+  {py:attr}`~spiflash.model.Record.otp` (a new
+  {py:class}`~spiflash.model.Otp`),
+  {py:attr}`~spiflash.model.Record.legacy_ids` (new
+  {py:class}`~spiflash.model.LegacyId`s), and derived
+  {py:attr}`~spiflash.model.Record.address_bytes` and
+  {py:attr}`~spiflash.model.Record.test_status`
+  ({py:func}`~spiflash.model.parse_tested`, a
+  {py:class}`~spiflash.model.TestStatus` of
+  {py:class}`~spiflash.enums.TestResult`s); a way in implies `4byte_addr`,
+  an OTP area or OTP operation `otp`;
+- {py:class}`~spiflash.model.Flash` has
+  {py:attr}`~spiflash.model.Flash.four_byte_modes`,
+  {py:meth}`~spiflash.model.Flash.four_byte_mode_sources`,
+  {py:attr}`~spiflash.model.Flash.address_bytes` (`4byte_addr` is in
+  {py:attr}`~spiflash.model.Flash.features` exactly when it is neither
+  `"3"` nor `None`), {py:attr}`~spiflash.model.Flash.supply_mv`,
+  {py:meth}`~spiflash.model.Flash.supply_outside`,
+  {py:attr}`~spiflash.model.Flash.otp`,
+  {py:attr}`~spiflash.model.Flash.legacy_ids` and
+  {py:attr}`~spiflash.model.Flash.answers_legacy`; {py:meth}`Flash.to_json()
+  <spiflash.model.Flash.to_json>` gains them;
+- {py:data}`~spiflash.model.COMPARED` gains `otp`, compared per component
+  (`"otp.size"`, `"otp.regions"`); `supply_mv` is not compared for
+  equality, but against the ranges (a new SUPPLY kind of data issue);
+- {py:meth}`Database.lookup(id, method="res1") <spiflash.db.Database.lookup>`
+  also gives the JEDEC chips whose records list the id, after the legacy
+  chips, each with `answers_legacy` set;
+- new operations: [RSECR](opcodes/RSECR.md), [PSECR](opcodes/PSECR.md),
+  [ESECR](opcodes/ESECR.md), [READ_OTP](opcodes/READ_OTP.md),
+  [ENSO](opcodes/ENSO.md), [EXSO](opcodes/EXSO.md),
+  [ENTER_OTP_3A](opcodes/ENTER_OTP_3A.md) and [RUID](opcodes/RUID.md) (an id
+  read, so listed before the reads in `spiflash opcodes`);
+- the command's description gains `supply 3.3 V` (where no source gives a
+  range), `OTP 768 B (3 x 256 B)`, `4-byte: ...` and `also answers
+  res1:15`, and with `-v` the legacy ids and the supplies outside a range;
+  the site a 4-byte addressing section, legacy ids and the OTP area on the
+  chip pages, and the SUPPLY data issues.

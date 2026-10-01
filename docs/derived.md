@@ -305,6 +305,102 @@ Micron's SPI NAND die select bit (feature 0xd0 bit 6, a record's
 `die_select_bit`). A SPI NAND part of several LUNs and one target has dies
 but no select: they are row address bits.
 
+## 4-byte addressing
+
+A part over 16 MiB needs a fourth address byte, and a source may say how it
+gets one: its *ways into 4-byte mode* (`four_byte_modes`), as BFPT DW16[31:24]
+lists them ({py:class}`~spiflash.enums.FourByteMethod`):
+
+| Way in | What it is | The operations it gives |
+|---|---|---|
+| `en4b` | 0xb7 | [EN4B](opcodes/EN4B.md) |
+| `wren_en4b` | a write enable (0x06), then 0xb7 | [EN4B](opcodes/EN4B.md) |
+| `wrear` | the extended address register holds address bits 31 to 24 (3-byte addresses) | [WREAR](opcodes/WREAR.md), [RDEAR](opcodes/RDEAR.md) |
+| `brwr` | the bank address register, whose bit 7 also enters 4-byte mode | [BRWR](opcodes/BRWR.md), [BRRD](opcodes/BRRD.md) |
+| `ear_bit7` | {sfsrc}`flashrom`'s bit 7 of the extended address register, written with whichever register write the part's other way gives | none of its own |
+| `nv_cr` | a 16-bit non-volatile configuration register | none |
+| `always_4b` | always in 4-byte mode | none |
+
+A source's ways in are stored; their operations are derived
+({py:data}`~spiflash.derive.FOUR_BYTE_MODE_OPERATIONS`), and a record's SFDP
+tables give its ways in too (BFPT DW16, where the part has a 4-byte mode).
+The way out, EX4B (0xe9), is no way in, so it stays an operation where a
+source states it. Dedicated 4-byte opcodes (DW16 bit 29) are never a way in:
+the `_4B` operations say them, and give `4byte_opcodes`.
+
+Each per entry, never a driver's default: {sfsrc}`flashrom`'s and
+{sfsrc}`flashprog`'s `FEATURE_4BA_ENTER`, `_ENTER_WREN`, `_ENTER_EAR7`,
+`_EAR_C5C8` and `_EAR_1716`; {sfsrc}`imsprog`'s `addr4bit` (0x01 and 0x11
+`en4b`, 0x21 `brwr`); {sfsrc}`rockchip`'s `FEA_4BYTE_ADDR_MODE`; and
+{sfsrc}`zephyr`'s `enter-4byte-addr` (a DW16[31:24] byte: 0 and 0xff say
+nothing, and a byte with the reserved bit 7 set, such as p2d's `<0xb7>`, EN4B's
+opcode, is not read) and `enter-4byte-command` (`<0xb7>`). {sfsrc}`linux`'s
+and {sfsrc}`u-boot`'s per-maker `set_4byte_addr_mode` functions are drivers'
+defaults for every part of a maker, and are not taken.
+
+A part's address bytes ({py:func}`~spiflash.derive.address_bytes`) are
+4 where it is always in 4-byte mode; what its SFDP tables say where they say
+4 (or 3 or 4); else 3 or 4 where its size is over 16 MiB, it has a 4-byte
+operation or a way in, or a source claims `4byte_addr`; else 3. `4byte_addr`
+is in its capabilities exactly when that is not 3.
+
+## Supply
+
+A part's `voltage` is a supply range a source gives (flashrom's and
+flashprog's). Its `supply_mv` is something else, and only where a record
+has no range: the voltage a programmer's table says to power the part at,
+a setting of that programmer's ({sfsrc}`dediprog`'s `Voltage`, which dpcmd
+powers the part at once it has found it; {sfsrc}`imsprog`'s `chipVCC`,
+which picks the picture of how to wire it, 1.8 V through an adapter). The
+two are never compared for equality: two programmers may power one part at
+two voltages in its range. A setting outside the range another source gives
+the same part is a data issue of its own kind: mostly two parts at one id,
+each with its own supply (Puya's P25Q32H and P25Q32L), sometimes one source
+wrong. {sfsrc}`linux`'s comments naming a part's supply (`/* 3.3V */`) stay
+notes: a nominal supply is not a programmer's setting.
+
+## OTP
+
+A part's `otp` is its one-time-programmable area: the bytes the user can
+program, and in how many regions of one size where a source says
+({py:class}`~spiflash.model.Otp`). {sfsrc}`linux`'s `SNOR_OTP(len,
+n_regions, base, offset)` gives regions; {sfsrc}`flashrom`'s and
+{sfsrc}`flashprog`'s `OTP:` comments give a total, less what they say is
+reserved or pre-programmed ("1024B total, 256B reserved" is 768: Winbond
+reserves security register 0), and the commands they name
+([RSECR](opcodes/RSECR.md), [PSECR](opcodes/PSECR.md),
+[ESECR](opcodes/ESECR.md), [READ_OTP](opcodes/READ_OTP.md),
+[ENSO](opcodes/ENSO.md), [EXSO](opcodes/EXSO.md),
+[ENTER_OTP_3A](opcodes/ENTER_OTP_3A.md); a "read ID 0x4B" is
+[RUID](opcodes/RUID.md), the unique id). A comment qualified to one model of
+an entry ("(B version only)", "later 3x 512B") stays a note. An area, or an
+OTP operation (not RUID), gives `otp`. The sources are compared on the size
+and the regions each on its own.
+
+## Legacy ids
+
+Older parts answer other commands with other ids: REMS (0x90) the maker and
+part, RES (0xab) a one-byte electronic signature. A record read by one of
+those is grouped by it, as its own chip (`rems:bf48`). A record read by
+JEDEC read-id may also list the legacy ids its part answers
+(`legacy_ids`): {sfsrc}`dediprog`'s `AlternativeID`, one byte a RES
+signature (the M25P16's 0x14, as flashrom's M25P05 to M25P40-OLD res1
+entries give), two a REMS answer (the W25Q40's 0xef12, as its datasheet
+gives). They make no chip of their own, as one RES byte is many makers'
+parts: `spiflash id --method res1 15` gives the RES chips, then the JEDEC
+chips whose records list the id, each marked. Left out: a copy of the
+record's own id, Intel's and ESMT's values given for parts of every density
+(templates), Sanyo's one-byte values (its RES answers two bytes), and a
+three-byte value.
+
+## Test status
+
+{sfsrc}`flashrom`'s and {sfsrc}`flashprog`'s `.tested` is stored as they
+write it, and parsed when read ({py:attr}`Record.test_status
+<spiflash.model.Record.test_status>`): `TEST_OK_PREW` is probe, read, erase
+and write tested, write protection not. A field a `{...}` leaves out is
+unknown, not the `OK` that C makes it.
+
 ## Dummy clocks
 
 An operation's page gives its usual dummy clocks

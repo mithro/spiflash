@@ -31,3 +31,7 @@ clocks) has no field yet.
 
 Its "supports SFDP" comments are read as {sfsrc}`flashrom`'s are: only an
 unqualified one claims SFDP.
+
+Its `FEATURE_4BA_*` ways into 4-byte mode and its `OTP:` comments are read
+as {sfsrc}`flashrom`'s are ([](../derived.md#4-byte-addressing),
+[](../derived.md#otp)).

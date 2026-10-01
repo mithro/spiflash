@@ -65,6 +65,10 @@ Fields (``None`` / empty when the upstream does not say):
     ...) need none, and operations have their own ``via``.
 ``voltage``
     ``[min_mV, max_mV]``.
+``supply_mv``
+    The voltage, in millivolts, a programmer's table says to power the part
+    at (Dediprog's ``Voltage``, IMSProg's ``chipVCC``): a setting of the
+    programmer's, never with ``voltage``.
 ``quad_enable``
     Where the part's quad enable bit is, as the entry states it:
     ``{"register": "sr2", "bit": 1}`` (and ``"writability"`` where it is not
@@ -101,6 +105,18 @@ Fields (``None`` / empty when the upstream does not say):
     register (Micron's ``{"register": "nand-d0", "bit": 6}``); one that
     selects it with a command has the ``NAND_DIE_SELECT`` or ``DIE_SELECT``
     operation instead, never both.
+``four_byte_modes``
+    The ways into 4-byte address mode the entry states
+    (:class:`spiflash.enums.FourByteMethod` tokens: ``["en4b", "wrear"]``),
+    not those its SFDP tables give; never ``opcodes_4b`` (the ``_4B``
+    operations say it) nor a way out. The operations a way in gives
+    (:data:`spiflash.derive.FOUR_BYTE_MODE_OPERATIONS`) are not stored.
+``otp``
+    The OTP area: ``{"size": 768, "regions": 3}``, the bytes the user can
+    program, ``"regions"`` only where the entry gives them.
+``legacy_ids``
+    The ids the part also answers to legacy commands, besides its own:
+    ``[["res1", "15"], ["rems", "ef12"]]``; never its own id.
 ``opcodes``
     The operations the entry states (a record's ``opcode_claims``):
     ``[{"op": "READ_1_1_4", "via": "SPI_NOR_QUAD_READ"}, ...]``, ``op`` a name

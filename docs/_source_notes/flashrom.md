@@ -35,6 +35,33 @@ so its `lock` ([](../derived.md#registers)). The `FEATURE_WRSR*`, `CFGR` and
 `FEATURE_WRSR_EXT3` is the `FEATURE_WRSR_EXT2` bit and one of its own,
 with no name, so a record gives it by its own name.
 
+The `FEATURE_4BA_ENTER`, `_ENTER_WREN`, `_ENTER_EAR7`, `_EAR_C5C8` and
+`_EAR_1716` bits are the record's ways into 4-byte mode, `en4b`,
+`wren_en4b`, `ear_bit7`, `wrear` and `brwr` ({upstream}`flashrom:include/flash.h`;
+spi25.c's `spi_enter_exit_4ba` and `spi_write_extended_address_register`),
+which give their operations ([](../derived.md#4-byte-addressing)); the way
+out, [EX4B](../opcodes/EX4B.md), is stated beside the first two. `_ENTER_EAR7`
+writes bit 7 of the extended address register with 0xc5 or, on the
+Spansion S25FL256S and S25FL512S entries, which have no `_EAR_C5C8`, with
+0x17: it gives no operation of its own. `FEATURE_4BA_READ`, `_FAST_READ`
+and `_WRITE` are 4-byte operations.
+
+An `OTP:` comment about the whole entry is its OTP area, the bytes the user
+can program ("1024B total, 256B reserved" is 768: Winbond reserves security
+register 0), in regions where it says ("3x 512B"), and the commands it
+names are its operations ([RSECR](../opcodes/RSECR.md),
+[PSECR](../opcodes/PSECR.md), [ESECR](../opcodes/ESECR.md),
+[READ_OTP](../opcodes/READ_OTP.md) where 0x4b reads what 0x42 programs,
+[ENSO](../opcodes/ENSO.md), [EXSO](../opcodes/EXSO.md),
+[ENTER_OTP_3A](../opcodes/ENTER_OTP_3A.md); "read ID 0x4B" is
+[RUID](../opcodes/RUID.md)); the comment leaves the notes for the area's
+`via`, with `FEATURE_OTP`, which the area implies
+([](../derived.md#otp)). ISSI's information row (0x68, 0x62, 0x64),
+Atmel's security register (0x77, 0x9b, 0x9a) and PMC's 0xb1 program have no
+operation here, and stay in the comment. A comment qualified to one model
+or revision of the entry ("(B version only)", "later 3x 512B", "06E 64B
+total") stays a note.
+
 A comment on an entry saying it "supports SFDP" gives it the `sfdp`
 capability and the [RDSFDP](../opcodes/RDSFDP.md) operation, whose `via`
 then holds the comment. A comment qualified to one model of a multi-part

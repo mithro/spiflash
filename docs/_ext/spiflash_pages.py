@@ -398,7 +398,7 @@ def _addressing(f: Flash) -> list[str]:
         (
             "The ways into 4-byte address mode the sources give, stated "
             "({sfyes}`✓`) or from their SFDP tables ({sfhollow}`○`, BFPT DW16), and "
-            "the operations each way is ([](../derived.md#four-byte-modes)).\n"
+            "the operations each way is ([](../derived.md#4-byte-addressing)).\n"
         ),
         list_table(["", "Operations", "Sources"], rows, "sf-table sf-registers"),
         "",

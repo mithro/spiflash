@@ -38,7 +38,9 @@ The fields are read as the driver uses them. For an SPI NOR entry,
   feature bits (`FEA_4BIT_READ`, `FEA_4BIT_PROG`) say so, and are listed only
   then;
 - `FEA_4BYTE_ADDR` sends 4-byte addresses, and `FEA_4BYTE_ADDR_MODE` enters
-  4-byte mode first ([EN4B](../opcodes/EN4B.md)).
+  4-byte mode first (`snor_enter_4byte_mode()` sends 0xb7, no write
+  enable): the record's way in, `en4b`, which gives
+  [EN4B](../opcodes/EN4B.md).
 
 A quad program of 0x38 or 0x3e has its address on four lines too
 ([PP_1_4_4](../opcodes/PP_1_4_4.md), [PP_1_4_4_4B](../opcodes/PP_1_4_4_4B.md))

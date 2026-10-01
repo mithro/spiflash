@@ -22,8 +22,9 @@ and its link goes to the file itself.
   with 0xd8 at every 64 KiB, whatever its real erase blocks (256 KiB on the
   M25P128 and S25FL128S, 32 KiB on the M25P10, boot sectors on the EN25B
   and A25L...P parts). They are IMSProg's defaults, not facts about the part,
-  so a SPI NOR record has them only as flags (`pageSize`, `blockSize`), with
-  no page size, sector size, erase layout or 64 KiB erase capability; the
+  so a SPI NOR record does not keep them (a template says nothing of a part;
+  the extractor stops at an entry with others), and has no page size,
+  sector size, erase layout or 64 KiB erase capability; the
   read, page program and 0xd8 erase it sends are its driver's defaults,
   which imply no capability. The SPI NAND entries' page and block sizes
   vary by part, and are taken (the block as its block erase's layout).
@@ -36,12 +37,18 @@ and its link goes to the file itself.
   MID DID DID" in their datasheet, and in {sfsrc}`linux`), and their records
   say so. Ids longer than three bytes are cut short (the ESMT F50L1G41LB's
   {sfid}`c8 01 7f`).
+- `chipVCC` is the supply IMSProg says to power the part at (3.3, 1.8, 2.5
+  or 5.0 V; mainwindow.cpp shows it and picks from it the picture of how to
+  wire the part, a 1.8 V one through an adapter): the record's `supply_mv`,
+  a programmer's setting, not a range. `addr4bit` is how
+  `snor_4byte_mode()` (spi_nor_flash.c) enters 4-byte addressing, the
+  record's `four_byte_modes`: `0x01` 0xb7 (`en4b`), `0x11` too, Winbond's
+  way, whose exit also clears the extended address register with 0xc5
+  (stated, beside 0xe9 out), `0x21` Spansion's bank register, written with
+  0x17 and read back with 0x16 (`brwr`); SPI NAND entries set it to values
+  the README does not explain, kept as a flag.
 - What a record has no field for is kept in its `flags`, under the names
-  IMSProg's code gives them: `chipVCC`, the nominal supply (3.3, 1.8, 2.5
-  or 5.0 V; not a range, so not the record's supply voltage), `addr4bit`,
-  how it enters 4-byte addressing (`0x01` with EN4B, `0x11` the Winbond way,
-  `0x21` Spansion's bank register; SPI NAND entries set it too, to values
-  the README does not explain), `algorithmCode`, which of its routines
+  IMSProg's code gives them: `addr4bit` where it is 0, `algorithmCode`, which of its routines
   reads the security registers (and, for SPI NAND, the status registers),
   `delay`, a factor on the bus speed, in thousandths, and for SPI NAND
   `ECCsize`. That is how much of each page's spare area its raw mode reads
@@ -53,8 +60,8 @@ and its link goes to the file itself.
 - The opcodes are what {upstream}`imsprog:IMSProg_programmer/spi_nor_flash.c`
   sends to a SPI NOR part: read, page program, the 0xd8 block erase (its
   erase is a loop of those; its chip-erase routine is never called), and,
-  where the entry's `addr4bit` asks for it, the commands entering 4-byte
-  addressing.
+  where the entry's `addr4bit` asks for it, the commands leaving 4-byte
+  addressing (those entering it are its ways in's).
 
 Some entries are wrong, and are left out rather than add a chip that does
 not exist, or a size only IMSProg gives; {repo}`tools/update_db.py` counts

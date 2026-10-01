@@ -151,7 +151,7 @@ EXPLAINED = {
     ("010219", "supply_mv"): (
         "The S25FL256S is a 2.7 V to 3.6 V part, as flashrom's S25FL256S......0 entry "
         'says; its "S25FL256S Large Sectors" and "Small Sectors" entries give 1.7 V to '
-        "2.0 V, the S25FS256S's (flashchips/spansion.c), so Dediprog's 3.3 V is outside "
+        "2.0 V, the S25FS256S's, so Dediprog's 3.3 V is outside "
         "a wrong range."
     ),
     ("1f4502", "supply_mv"): (
