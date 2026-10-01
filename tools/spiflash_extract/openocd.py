@@ -18,7 +18,7 @@ from spiflash.derive import ERASE_BY_OPCODE
 
 from . import cparse
 from .ops import Opcodes
-from .record import ERASE_FEATURES, Record, make
+from .record import Record, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -73,22 +73,16 @@ def extract(root: Path) -> list[Record]:
         _field(ops, notes, "pprog_cmd", pp, _PROGRAM)
         if m.group(1) == "FLASH_ID":
             erase, chip_erase, dev, page, sector, size = nums[3:]
-            features = set()
-            if size > 16 * 1024 * 1024:
-                features.add("4byte_addr")
-            if sector in ERASE_FEATURES:
-                features.add(ERASE_FEATURES[sector])
+            features: set[str] = set()
             _field(ops, notes, "erase_cmd", erase, ERASE_BY_OPCODE)
             _field(ops, notes, "chip_erase_cmd", chip_erase, ERASE_BY_OPCODE)
-            if qread in _QUAD:
-                features.add("quad_read")
             erasers = [{"opcode": erase, "blocks": [[sector, size // sector]]}] if sector else []
             if chip_erase:
                 erasers.append({"opcode": chip_erase, "blocks": [[size, 1]]})
         else:
             dev, size = nums[3:]
             features = {"no_erase"}
-            page = sector = 0
+            page = 0
             erasers = []
             notes.append("FRAM")
         opcodes = ops.to_json()
@@ -102,7 +96,6 @@ def extract(root: Path) -> list[Record]:
                 id=device_id_hex(dev),
                 size=size,
                 page_size=page or None,
-                sector_size=sector or None,
                 erasers=erasers or None,
                 features=features,
                 opcodes=opcodes,
@@ -124,7 +117,6 @@ _QREAD = {
     0x6C: "READ_1_1_4_4B",
     0xEC: "READ_1_4_4_4B",
 }
-_QUAD = {0x6B, 0xEB, 0x6C, 0xEC}
 _PROGRAM = {0x02: "PP_1_1_1", 0x12: "PP_1_1_1_4B"}
 
 

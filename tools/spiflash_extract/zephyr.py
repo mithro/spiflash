@@ -44,11 +44,11 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from spiflash.derive import ERASE_BY_OPCODE
+from spiflash.derive import ERASE_BY_OPCODE, ERASE_FEATURE
 
 from . import cparse, dts, sfdp
 from .ops import Opcodes
-from .record import ERASE_FEATURES, Record, make
+from .record import Record, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -381,8 +381,6 @@ class _Node:
             self.features.add("4byte_addr")
         erasers = []
         for opcode, block in bfp.erases:
-            if block in ERASE_FEATURES:
-                self.features.add(ERASE_FEATURES[block])
             erasers.append({"opcode": opcode, "blocks": [[block, bfp.size // block]]})
             if opcode in ERASE_BY_OPCODE:
                 self.ops.add(ERASE_BY_OPCODE[opcode], "sfdp-bfp: erase type", value=opcode)
@@ -435,8 +433,8 @@ class _Node:
             self.features.add("4byte_addr")
             self.ops.add("EN4B", "enter-4byte-command", value=command)
         erase = self.cell("erase-block-size")
-        if binding.type == "nor" and erase in ERASE_FEATURES:
-            self.features.add(ERASE_FEATURES[erase])
+        if binding.type == "nor" and erase in ERASE_FEATURE:
+            self.features.add(ERASE_FEATURE[erase].value)
 
     def flags(self, *, bfp: bool) -> list[str]:
         """The compatibles and the :data:`FLAGS` properties."""

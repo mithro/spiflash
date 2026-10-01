@@ -734,11 +734,21 @@ class OpcodeUse:
     :data:`OPERATIONS`, and what in the upstream implies it (a flag, a
     field, or the upstream's default). ``implied`` marks a use
     :mod:`spiflash.derive` adds from the entry's other fields (its erasers,
-    how it reads the id); it is never stored."""
+    how it reads the id); it is never stored.
+
+    ``assumed`` marks a driver default: an operation the upstream's driver
+    issues to every part (or every part of a class) whatever the entry says,
+    such as Linux's fast read or U-Boot's quad page program for every
+    ``SPI_NOR_QUAD_READ`` part, and the 4-byte form of one. It is stored (the
+    data's ``"assumed": true``), shown as a default, and implies no
+    capability (:func:`spiflash.derive.features`). An operation JESD216
+    guarantees on a part with SFDP tables is that part's own fact, not
+    assumed."""
 
     op: str
     via: str
     implied: bool = False
+    assumed: bool = False
 
     @property
     def opcode(self) -> int:

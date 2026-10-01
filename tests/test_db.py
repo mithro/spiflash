@@ -19,8 +19,10 @@ from spiflash import opcodes, vendors
 from spiflash.db import FORMAT, Database, SourceInfo
 from spiflash.enums import Feature, FlashType, IdFamily, IdMethod, OperationKind, Source
 from spiflash.model import (
+    Claim,
     EraseBlock,
     Eraser,
+    FeatureSource,
     Flash,
     Record,
     Voltage,
@@ -37,6 +39,8 @@ from test_sfdp import MX25L25635E, W25Q512JV
 
 
 def rec(**kw: object) -> Record:
+    """A record; ``sector_size=n`` gives it a 0xd8 eraser of ``n``-byte
+    blocks, which the sector size is derived from."""
     base: dict[str, object] = {
         "source": "linux",
         "file": "f.c",
@@ -49,7 +53,6 @@ def rec(**kw: object) -> Record:
         "id_method": "rdid",
         "size": 16 << 20,
         "page_size": 256,
-        "sector_size": 65536,
         "erasers": None,
         "features": [],
         "flags": [],
@@ -58,7 +61,12 @@ def rec(**kw: object) -> Record:
         "tested": None,
         "notes": [],
     }
+    sector = kw.pop("sector_size", None)
     base.update(kw)
+    if isinstance(sector, int):
+        size = base["size"]
+        assert isinstance(size, int)
+        base["erasers"] = [{"opcode": 0xD8, "blocks": [[sector, size // sector]]}]
     return Record.from_json(base)
 
 
@@ -660,8 +668,77 @@ def test_features_union_and_sources() -> None:
     )
     (f,) = db.flashes
     assert f.features == {"quad_read", "qpi"}
-    assert f.feature_sources("qpi") == ("flashrom",)
-    assert f.feature_sources("quad_read") == ("flashrom", "linux")
+    assert f.feature_sources("qpi") == (
+        FeatureSource("flashrom", implied=False, because="claimed"),
+    )
+    assert [s.source for s in f.feature_sources("quad_read")] == ["flashrom", "linux"]
+
+
+def test_feature_sources_mark_claimed_and_implied() -> None:
+    quad = {"op": "READ_1_1_4", "via": "SPI_NOR_QUAD_READ"}
+    db = Database(
+        [
+            rec(source="linux", opcodes=[quad]),
+            rec(source="flashrom", features=["quad_read"], via={"feature:quad_read": "QUAD"}),
+            # A claim in any of a source's records wins over an implication.
+            rec(source="u-boot", opcodes=[{**quad, "via": "SPI_NOR_QUAD_READ"}]),
+            rec(source="u-boot", features=["quad_read"], line=2),
+        ]
+    )
+    (f,) = db.flashes
+    assert f.feature_sources("quad_read") == (
+        FeatureSource("flashrom", implied=False, because="claimed: QUAD"),
+        FeatureSource("linux", implied=True, because="implied by READ_1_1_4 (SPI_NOR_QUAD_READ)"),
+        FeatureSource("u-boot", implied=False, because="claimed"),
+    )
+    doc = f.to_json()["feature_sources"]["quad_read"]
+    assert doc[1] == {
+        "source": "linux",
+        "implied": True,
+        "because": "implied by READ_1_1_4 (SPI_NOR_QUAD_READ)",
+    }
+
+
+def test_a_driver_default_implies_nothing() -> None:
+    db = Database(
+        [
+            rec(source="u-boot", opcodes=[{"op": "PP_1_1_4", "via": "default", "assumed": True}]),
+            rec(source="linux", opcodes=[{"op": "PP_1_1_4", "via": "SPI_NOR_QUAD_PP"}]),
+            rec(source="linux", line=2, opcodes=[{"op": "PP_1_1_4", "via": "x", "assumed": True}]),
+        ]
+    )
+    (f,) = db.flashes
+    assert [s.source for s in f.feature_sources("quad_pp")] == ["linux"]
+    pp = f.opcodes["PP_1_1_4"]
+    # Linux states it for the part, so is not also listed as assuming it.
+    assert pp.because == (
+        Claim("linux", "SPI_NOR_QUAD_PP"),
+        Claim("u-boot", "default", assumed=True),
+    )
+    assert pp.assumed_by == ("u-boot",)
+    assert next(o for o in f.to_json()["opcodes"] if o["op"] == "PP_1_1_4")["assumed_by"] == [
+        "u-boot"
+    ]
+
+
+def test_a_shipped_chip_has_claimed_and_implied_sources() -> None:
+    (f,) = spiflash.lookup("ef4018")
+    lock = {s.source: s for s in f.feature_sources("lock")}
+    assert lock["dediprog"] == FeatureSource(
+        "dediprog", implied=False, because="claimed: ProtectBlockMask=0x9C"
+    )
+    quad = {s.source: s for s in f.feature_sources("quad_read")}
+    assert quad["linux"] == FeatureSource(
+        "linux", implied=True, because="implied by READ_1_1_4 (SPI_NOR_QUAD_READ)"
+    )
+    erase = {s.source: s for s in f.feature_sources("erase_64k")}
+    assert erase["openocd"].because == "implied by eraser 0xd8 (256 x 65536)"
+    # U-Boot's quad page program for every SPI_NOR_QUAD_READ part, and its
+    # 4-byte form, are its driver's defaults: no chip has U-Boot as a
+    # source for quad_pp.
+    for chip in spiflash.flashes():
+        if "quad_pp" in chip.features:
+            assert "u-boot" not in [s.source for s in chip.feature_sources("quad_pp")]
 
 
 def test_records_without_an_id_are_kept_but_not_grouped() -> None:
@@ -814,7 +891,7 @@ def test_opcodes_of_a_shipped_chip() -> None:
     assert se.operation.kind == "erase"
     assert se.sources[0] == "flashrom"  # by source priority
     # OpenOCD's erase_cmd is an eraser, which implies the operation.
-    assert ("openocd", "eraser: 256 x 65536", True) in se.because
+    assert Claim("openocd", "eraser: 256 x 65536", implied=True) in se.because
     assert "openocd" in se.implied_by
     doc = f.to_json()["opcodes"]
     assert {
@@ -846,10 +923,10 @@ def test_opcodes_merge_across_records() -> None:
     )
     (f,) = db.flashes
     assert list(f.opcodes) == ["RDID", "SE"]
-    assert f.opcodes["SE"].because == (("linux", "default", False), ("openocd", "erase_cmd", False))
+    assert f.opcodes["SE"].because == (Claim("linux", "default"), Claim("openocd", "erase_cmd"))
     assert f.opcodes["SE"].sources == ("linux", "openocd")
     # Every record's rdid implies RDID; Linux states it too, which wins.
-    rdid_because = (("linux", "id", False), ("openocd", "id read (rdid)", True))
+    rdid_because = (Claim("linux", "id"), Claim("openocd", "id read (rdid)", implied=True))
     assert f.opcodes["RDID"].because == rdid_because
     assert f.opcodes["RDID"].implied_by == ("openocd",)
     rdid = next(o for o in f.to_json()["opcodes"] if o["op"] == "RDID")

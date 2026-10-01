@@ -32,9 +32,10 @@ program are taken: the wider ones are often a template's defaults (the
 single-I/O SST25LF040A lists quad read, 0x6b, and quad program, 0x32).
 ``BlockSizeInByte`` is a template's too: 64 KiB in nearly every entry, where
 the other sources give 0xd8 and 0xdc 32, 128 or 256 KiB, or boot blocks. So
-those two erases have no layout, and an SPI NOR record has a sector size only
-for 0x20 (``SectorSizeInByte``) and 0x52 (see :func:`_erasers`); an SPI NAND
-record's is its erase block, ``BlockSizeInByte``.
+those two erases have no layout: an SPI NOR record has a block eraser only
+for 0x20 (``SectorSizeInByte``) and 0x52 (see :func:`_erasers`), so a sector
+size only from its 0x52 blocks (:func:`spiflash.derive.sector_size`). An SPI
+NAND record's block erase is over its ``BlockSizeInByte`` blocks.
 
 Entries of some classes are not what their attributes say. The DataFlash
 (``Class="AT45DB..."``) entries carry a SPI NOR template (0xd8 erase, 256-byte
@@ -77,8 +78,10 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
 
+from spiflash import derive
+
 from .ops import Opcodes
-from .record import ERASE_FEATURES, Record, feature_via, make
+from .record import Record, feature_via, make
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -315,25 +318,20 @@ def _record(line: int, chip: dict[str, str]) -> Record:
     features: set[str] = set()
     claims: list[tuple[str, str]] = []
     erasers: list[dict[str, Any]] = []
-    sector: int | None = None
     dataflash = chip.get("Class", "").startswith("AT45DB")
     if typ == "nand":
-        sector = int(chip["BlockSizeInByte"])
-        size = _nand_size(chip, size, page, sector)
+        block = int(chip["BlockSizeInByte"])
+        size = _nand_size(chip, size, page, block)
+        erasers = [derive.block_eraser(0xD8, block, size).to_json()]
     elif not dataflash:
         words = _words(chip)
         for word in ("ReadCmd", "ProgramCmd"):
             for _, byte, op in _opcodes(chip, word, words[word]):
                 byte_program = op == "PP_1_1_1" and chip.get("Class") in _BYTE_PROGRAM
                 ops.add("BP" if byte_program else op, f"{word}={words[word]}", value=byte)
-        erasers, sector = _erasers(chip, ops, size)
-        if "READ_1_1_1_FAST" in ops or "READ_1_1_1_FAST_4B" in ops:
-            features.add("fast_read")
-        if any(op.endswith("_4B") for op in ops):
-            features.add("4byte_opcodes")
-        # Not AddrWidth, which is 4 for some 32 KiB parts.
-        if size > 16 * 1024 * 1024:
-            features.add("4byte_addr")
+        # Not AddrWidth, which is 4 for some 32 KiB parts: the size, and
+        # the operations, imply 4-byte addressing.
+        erasers = _erasers(chip, ops, size)
         # The status register bits to clear to unprotect the chip: BP0 to
         # BP4 are bits 2 to 6.
         if int(chip.get("ProtectBlockMask", "0"), 16) & 0x7C:
@@ -364,9 +362,8 @@ def _record(line: int, chip: dict[str, str]) -> Record:
         id_method=method,
         size=size,
         page_size=None if dataflash else page,
-        sector_size=sector,
         erasers=erasers or None,
-        features=features | _erase_features(erasers),
+        features=features,
         flags=flags,
         via=via,
         opcodes=ops.to_json(),
@@ -417,11 +414,8 @@ def _opcodes(chip: dict[str, str], word: str, text: str) -> Iterator[tuple[int, 
         yield slot, byte, table[byte]
 
 
-def _erasers(
-    chip: dict[str, str], ops: Opcodes, size: int
-) -> tuple[list[dict[str, Any]], int | None]:
-    """The erase layouts, and the sector size the block erase gives: chip
-    erase; 0x20 over the ``SectorSizeInByte`` sectors; 0x52 over the SST
+def _erasers(chip: dict[str, str], ops: Opcodes, size: int) -> list[dict[str, Any]]:
+    """The erase layouts: chip erase; 0x20 over the ``SectorSizeInByte`` sectors; 0x52 over the SST
     parts' 32 KiB blocks, or an AT25F's ``SectorSizeInByte`` where that is
     not the template's 4096; and die erase over ``DieSizeInKByte`` dies.
 
@@ -430,7 +424,6 @@ def _erasers(
     128 KiB (the MT35XU parts), 256 KiB (M25P128, S25FL512S) or boot blocks
     (the AMIC A25L..P parts)."""
     out: list[dict[str, Any]] = []
-    sector = None
     for slot, byte, op in _opcodes(chip, "EraseCmd", chip["EraseCmd"]):
         ops.add(op, f"EraseCmd={chip['EraseCmd']}", value=byte)
         sectors = int(chip.get("SectorSizeInByte", "0"))
@@ -454,15 +447,4 @@ def _erasers(
             msg = f"size {size} is not a whole number of {unit}-byte blocks"
             raise ValueError(msg)
         out.append({"opcode": byte, "blocks": [[unit, size // unit]]})
-        if slot == 1:
-            sector = unit
-    return out, sector
-
-
-def _erase_features(erasers: list[dict[str, Any]]) -> set[str]:
-    """What the block erases (not the chip or die erase) give."""
-    return {
-        ERASE_FEATURES[e["blocks"][0][0]]
-        for e in erasers
-        if e["opcode"] in (0x20, 0x52, 0xD8, 0xDC) and e["blocks"][0][0] in ERASE_FEATURES
-    }
+    return out

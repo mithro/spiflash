@@ -20,6 +20,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from spiflash import derive
+
 from . import cparse
 from .ops import Opcodes, add_4b_variants, add_spinor
 from .record import Record, feature_via, make
@@ -140,19 +142,16 @@ def _nor_record(
     size = cparse.evaluate(fields["size"], symbols) if "size" in fields else None
     if size == 0:
         size = None
-    if size is None and id_hex is not None:
-        # "non-legacy flash entries in flash_info will have a size of zero
-        # iff SFDP should be used" (struct flash_info, core.h)
-        features.add("sfdp")
-    if size is not None and size > 16 * 1024 * 1024:
-        features.add("4byte_addr")
-    sector = cparse.evaluate(fields.get("sector_size", "SZ_64K"), symbols)
     page = cparse.evaluate(fields.get("page_size", "256"), symbols)
-    if "no_erase" not in features and sector == 64 * 1024:
-        features.add("erase_64k")
+    # "non-legacy flash entries in flash_info will have a size of zero iff
+    # SFDP should be used" (struct flash_info, core.h): such a part's
+    # erasers come from its SFDP tables at run time (its RDSFDP says so).
     opcodes = _nor_opcodes(
         fields, symbols, features, has_id=id_hex is not None, legacy=size is not None
     )
+    erasers = []
+    if size is not None and "no_erase" not in features:
+        erasers = _nor_erasers(fields, symbols, size)
     return make(
         "linux",
         rel,
@@ -164,13 +163,34 @@ def _nor_record(
         id_method="rdid" if id_hex else None,
         size=size,
         page_size=page,
-        sector_size=sector,
+        erasers=erasers or None,
         features=features,
         flags=flags,
         via=feature_via(claims),
         opcodes=opcodes,
         notes=notes,
     )
+
+
+def _nor_erasers(
+    fields: dict[str, str], symbols: dict[str, str | int], size: int
+) -> list[dict[str, object]]:
+    """The erasers spi_nor_no_sfdp_init_params() (core.c) sets up for a
+    part with a size: 0x20 over 4 KiB sectors for ``SECT_4K``, and 0xd8 over
+    the entry's ``.sector_size``.
+
+    The sector size is ``SPI_NOR_DEFAULT_SECTOR_SIZE`` (64 KiB) where the
+    entry gives none, which is most of them. It is taken as the entry's
+    claim, not a driver default: Linux erases every such part with it, an
+    entry for a part with other blocks gives its own (``SZ_256K`` for the
+    S25FL512S), and U-Boot's ``INFO()`` table, which Linux's was, states the
+    64 KiB in every entry."""
+    out = []
+    if "SECT_4K" in cparse.flag_names(fields.get("no_sfdp_flags", "0")):
+        out.append(derive.block_eraser(0x20, 4096, size).to_json())
+    sector = cparse.evaluate(fields.get("sector_size", "SPI_NOR_DEFAULT_SECTOR_SIZE"), symbols)
+    out.append(derive.block_eraser(0xD8, sector, size).to_json())
+    return out
 
 
 # no_sfdp_flags -> the operation spi_nor_no_sfdp_init_params() sets up for it.
@@ -199,13 +219,19 @@ def _nor_opcodes(
     sector erase), chip erase unless a fixup opts out, and the 4-byte
     conversion for SPI_NOR_4B_OPCODES. A part whose size is left to SFDP
     (``legacy`` false) gets its read, program and erase set from its SFDP
-    tables at run time, so only the defaults and RDSFDP are listed."""
+    tables at run time, so only the defaults and RDSFDP are listed.
+
+    Read, fast read, page program and chip erase are driver defaults
+    (assumed): the kernel sets them up for every part, fast read wherever
+    the board's devicetree asks for it (``m25p,fast-read``), whatever the
+    entry says."""
     ops = Opcodes(symbols)
     if has_id:
         add_spinor(ops, "RDID", "JEDEC id match (spi_nor_match_id)")
-    add_spinor(ops, "READ_1_1_1", "default (spi_nor_init_default_params)")
-    add_spinor(ops, "READ_1_1_1_FAST", "default (spi_nor_init_default_params)")
-    add_spinor(ops, "PP_1_1_1", "default (spi_nor_init_default_params)")
+    default = "default (spi_nor_init_default_params)"
+    add_spinor(ops, "READ_1_1_1", default, assumed=True)
+    add_spinor(ops, "READ_1_1_1_FAST", f"{default}, m25p,fast-read", assumed=True)
+    add_spinor(ops, "PP_1_1_1", default, assumed=True)
     flags = cparse.flag_names(fields.get("flags", "0"))
     no_sfdp = cparse.flag_names(fields.get("no_sfdp_flags", "0"))
     fixup = cparse.flag_names(fields.get("fixup_flags", "0"))
@@ -218,9 +244,10 @@ def _nor_opcodes(
             if flag in _NO_SFDP_OPS:
                 add_spinor(ops, _NO_SFDP_OPS[flag], flag)
         if "no_erase" not in features:
-            add_spinor(ops, "SE", "default sector erase (spi_nor_no_sfdp_init_params)")
+            # The eraser gives it (_nor_erasers); added for its 4-byte form.
+            add_spinor(ops, "SE", "sector erase (spi_nor_no_sfdp_init_params)")
     if "no_erase" not in features:
-        add_spinor(ops, "CHIP_ERASE", "default (spi_nor_erase)")
+        add_spinor(ops, "CHIP_ERASE", "default (spi_nor_erase)", assumed=True)
     if "SPI_NOR_4B_OPCODES" in fixup:
         add_4b_variants(ops, "SPI_NOR_4B_OPCODES")
     return ops.to_json()
@@ -290,6 +317,7 @@ def extract_nand(root: Path) -> list[Record]:
             flags = cparse.flag_names(args[5]) if len(args) > 5 else []
             claims = [("quad_read", f) for f in flags if f == "SPINAND_HAS_QE_BIT"]
             notes = cparse.comments(raw[start:end])
+            size = page * ppb * bpl * luns * targets
             records.append(
                 make(
                     "linux",
@@ -300,9 +328,9 @@ def extract_nand(root: Path) -> list[Record]:
                     vendor=vendor,
                     id=bytes([mfr_id, *dev]).hex(),
                     id_method=f"rdid_{method}",
-                    size=page * ppb * bpl * luns * targets,
+                    size=size,
                     page_size=page,
-                    sector_size=page * ppb,
+                    erasers=[derive.block_eraser(0xD8, page * ppb, size).to_json()],
                     features=[feat for feat, _ in claims],
                     flags=flags,
                     via=feature_via(claims),

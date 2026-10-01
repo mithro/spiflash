@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from spiflash import derive
+
 from . import cparse
 from .ops import Opcodes, add_4b_variants, add_spinor
 from .record import Record, feature_via, make
@@ -118,12 +120,14 @@ def _record(
     flags = cparse.flag_names(flag_expr)
     claims = [(_FEATURES[f], f) for f in flags if f in _FEATURES]
     features = {feat for feat, _ in claims}
-    if "SPI_NOR_NO_FR" not in flags:
-        features.add("fast_read")
-    if "4byte_opcodes" in features or (size is not None and size > 16 * 1024 * 1024):
+    if "4byte_opcodes" in features:
         features.add("4byte_addr")
-    if sector == 64 * 1024 and "no_erase" not in features:
-        features.add("erase_64k")
+    erasers = []
+    if sector and size and "no_erase" not in features:
+        for flag, opcode in (("SECT_4K", 0x20), ("SECT_4K_PMC", 0xD7)):
+            if flag in flags:
+                erasers.append(derive.block_eraser(opcode, 4096, size).to_json())
+        erasers.append(derive.block_eraser(0xD8, sector, size).to_json())
     return make(
         "u-boot",
         IDS,
@@ -135,7 +139,7 @@ def _record(
         id_method="rdid" if id_hex else None,
         size=size,
         page_size=page,
-        sector_size=sector,
+        erasers=erasers or None,
         features=features,
         flags=flags,
         via=feature_via(claims),
@@ -147,7 +151,7 @@ def _record(
 # flags -> the operation drivers/mtd/spi/spi-nor-core.c sets up for it.
 _FLAG_OPS = {
     "SPI_NOR_DUAL_READ": ["READ_1_1_2"],
-    "SPI_NOR_QUAD_READ": ["READ_1_1_4", "PP_1_1_4"],  # spi_nor_init_params: PP_1_1_4 too
+    "SPI_NOR_QUAD_READ": ["READ_1_1_4"],
     "SPI_NOR_OCTAL_READ": ["READ_1_1_8"],
     "SECT_4K": ["BE_4K"],
     "SECT_4K_PMC": ["BE_4K_PMC"],
@@ -164,21 +168,31 @@ def _opcodes(
     fast read unless SPI_NOR_NO_FR, page program, the erase opcode (SECT_4K,
     SECT_4K_PMC, else sector erase), chip erase unless NO_CHIP_ERASE, the
     flag-implied operations above, and the 4-byte forms for
-    SPI_NOR_4B_OPCODES."""
+    SPI_NOR_4B_OPCODES.
+
+    Read, fast read, page program and chip erase are driver defaults
+    (assumed): U-Boot sets them up for every part an entry does not opt
+    out of. So is the quad page program spi_nor_init_params() adds for every
+    ``SPI_NOR_QUAD_READ`` part (it says nothing of the part's own quad
+    program), and the 4-byte form of each."""
     ops = Opcodes(symbols)
     if has_id:
         add_spinor(ops, "RDID", "JEDEC id match (spi_nor_read_id)")
-    add_spinor(ops, "READ_1_1_1", "default (spi_nor_init_params)")
+    add_spinor(ops, "READ_1_1_1", "default (spi_nor_init_params)", assumed=True)
     if "SPI_NOR_NO_FR" not in flags:
-        add_spinor(ops, "READ_1_1_1_FAST", "default unless SPI_NOR_NO_FR")
-    add_spinor(ops, "PP_1_1_1", "default (spi_nor_init_params)")
+        add_spinor(ops, "READ_1_1_1_FAST", "default unless SPI_NOR_NO_FR", assumed=True)
+    add_spinor(ops, "PP_1_1_1", "default (spi_nor_init_params)", assumed=True)
     for flag in flags:
         for op in _FLAG_OPS.get(flag, []):
             add_spinor(ops, op, flag)
+    if "SPI_NOR_QUAD_READ" in flags:
+        quad_pp = "SPI_NOR_QUAD_READ: default (spi_nor_init_params)"
+        add_spinor(ops, "PP_1_1_4", quad_pp, assumed=True)
     if "no_erase" not in features:
+        # The eraser gives it (_record); added for its 4-byte form.
         add_spinor(ops, "SE", "sector erase (the INFO sector size)")
         if "NO_CHIP_ERASE" not in flags:
-            add_spinor(ops, "CHIP_ERASE", "default unless NO_CHIP_ERASE")
+            add_spinor(ops, "CHIP_ERASE", "default unless NO_CHIP_ERASE", assumed=True)
     if "SPI_NOR_4B_OPCODES" in flags:
         add_4b_variants(ops, "SPI_NOR_4B_OPCODES")
     return ops.to_json()

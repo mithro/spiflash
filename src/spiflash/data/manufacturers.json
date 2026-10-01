@@ -1,4 +1,4 @@
-{"format": 4, "manufacturers": [
+{"format": 5, "manufacturers": [
 {"bank": 0, "id": 1, "name": "AMD"},
 {"bank": 0, "id": 2, "name": "AMI"},
 {"bank": 0, "id": 131, "name": "Fairchild"},

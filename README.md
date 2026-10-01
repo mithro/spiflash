@@ -143,7 +143,8 @@ chip.names                               # ('W25Q128', 'W25Q128JV', 'W25Q128FV',
 chip.size, chip.page_size, chip.sector_size   # (16777216, 256, 65536)
 chip.voltage                             # (2700, 3600), in mV
 "quad_read" in chip.features             # True
-chip.feature_sources("quad_read")        # ('flashprog', 'linux', 'u-boot', 'rockchip', 'openocd')
+[s.source for s in chip.feature_sources("quad_read")]  # ['flashprog', 'linux', 'u-boot', 'rockchip', 'openocd']
+chip.feature_sources("qpi")              # (FeatureSource(source='dediprog', implied=False, because='claimed: QPIEnable'),)
 chip.conflicts                           # {} -- or {"page_size": {256: (...), 512: (...)}}
 
 for r in chip.records:                   # every upstream entry, as extracted
@@ -157,12 +158,15 @@ A `Flash` is one chip id, and several parts can share one (a W25Q128BV, FV and
 JV all answer `ef4018`), so it lists every name the sources give. Its single
 values (`size`, `page_size`, `sector_size`, `voltage`, `manufacturer`) are what
 most sources agree on, ties going to flashrom, then flashprog, Linux, U-Boot, Dediprog,
-Rockchip, MediaTek, OpenOCD, openFPGALoader, IMSProg, QEMU and Zephyr; `values("size")` shows who says what. `features`
-is everything any source claims, from this list:
+Rockchip, MediaTek, OpenOCD, openFPGALoader, IMSProg, QEMU and Zephyr; `values("size")` shows who says what.
+`sector_size` is worked out from each entry's erase layouts (the 0xd8 block). `features`
+is everything any source claims, or implies by the operations, erase layouts, size or
+SFDP tables it gives (an operation its driver sends to every part implies nothing), from
+this list; `feature_sources()` says which sources claim it and which only imply it, and why:
 
 | feature | meaning |
 |---|---|
-| `erase_4k`, `erase_32k`, `erase_64k` | that erase size is supported (0x20, 0x52, 0xd8) |
+| `erase_4k`, `erase_32k`, `erase_64k` | an erase layout of that block size (usually 0x20, 0x52, 0xd8) |
 | `sfdp` | answers SFDP (JESD216) queries |
 | `fast_read`, `dual_read`, `quad_read`, `octal_read`, `octal_dtr_read` | read modes |
 | `quad_pp`, `octal_dtr_pp` | page program modes |
@@ -228,12 +232,14 @@ part name (`W25Q128*`), and `/.../` is a regular expression on the part names
 chip.supports("READ_1_1_4")              # True
 op = chip.opcodes["READ_1_4_4"]
 op.opcode, op.operation.description      # (235, 'Quad I/O fast read'): 0xeb
-op.because                               # (('flashprog', 'FEATURE_FAST_READ_QIO', False), ('openocd', 'qread_cmd', False))
+op.because                               # (('flashprog', 'FEATURE_FAST_READ_QIO', False, False), ('openocd', 'qread_cmd', False, False))
 ```
 
-Each of `op.because` is a `(source, via, implied)` claim: `implied` where the
+Each of `op.because` is a `(source, via, implied, assumed)` claim: `implied` where the
 source's entry does not list the operation, but it follows from what the
-entry does say (its erase layouts, the way it reads the id).
+entry does say (its erase layouts, the way it reads the id), and `assumed` where
+it is only the source's driver default, sent to every part whatever the entry says
+(Linux's fast read, U-Boot's quad page program for every quad-read part).
 
 Operations are named as [LiteSPI](https://github.com/litex-hub/litespi)'s
 `SpiNorFlashOpCodes` names them, so a list can be used there directly:

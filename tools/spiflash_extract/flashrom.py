@@ -38,7 +38,7 @@ from spiflash.derive import ERASE_BY_OPCODE
 
 from . import cparse
 from .ops import Opcodes
-from .record import ERASE_FEATURES, Record, feature_via, make
+from .record import Record, feature_via, make
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -208,31 +208,21 @@ def _record(
     claims = [(feat, flag) for flag in flags for rx, feat in _FEATURES if rx.fullmatch(flag)]
     features = {feat for feat, _ in claims}
     erasers = _erasers(f.get("block_erasers", "{}"), symbols)
-    for e in erasers:
-        if len(e["blocks"]) == 1 and e["opcode"] is not None:
-            feat = ERASE_FEATURES.get(e["blocks"][0][0])
-            if feat:
-                features.add(feat)
     # Only a comment about the entry itself: "the latter supports SFDP", or
     # "F model supports SFDP", is about another part of a multi-part entry.
-    # The RDSFDP operation's via holds the comment.
+    # The RDSFDP operation's via holds the comment (and implies ``sfdp``).
     sfdp = [n for n in notes if _SUPPORTS_SFDP.fullmatch(n)]
-    if sfdp:
-        features.add("sfdp")
-        notes = [n for n in notes if n not in sfdp]
+    notes = [n for n in notes if n not in sfdp]
     reg_bits = f.get("reg_bits", "")
     if re.search(r"\.bp\s*=", reg_bits):
         features.add("lock")
         claims.append(("lock", ".reg_bits .bp"))
     size = cparse.evaluate(f["total_size"], symbols) * 1024
-    if size > 16 * 1024 * 1024:
-        features.add("4byte_addr")
     voltage = None
     if "voltage" in f:
         limits = cparse.split_top(f["voltage"].strip()[1:-1])
         voltage = [cparse.evaluate(v, symbols) for v in limits]
     tested = " ".join(f.get("tested", "").split()) or None
-    uniform = [e["blocks"][0][0] for e in erasers if e["opcode"] == 0xD8 and len(e["blocks"]) == 1]
     return make(
         source,
         rel,
@@ -244,14 +234,13 @@ def _record(
         id_method=method,
         size=size,
         page_size=cparse.evaluate(f["page_size"], symbols) if "page_size" in f else None,
-        sector_size=uniform[0] if uniform else None,
         erasers=erasers or None,
         features=features,
         flags=flags,
         via=feature_via(claims),
         voltage=voltage,
         tested=tested,
-        opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp="sfdp" in features),
+        opcodes=_opcodes(f, method, flags, erasers, symbols, sfdp=bool(sfdp)),
         notes=notes,
     )
 

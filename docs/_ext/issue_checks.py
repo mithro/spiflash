@@ -152,13 +152,13 @@ def _values(flashes: Iterable[Flash]) -> Iterator[Issue]:
             # gathers every variant whose sources disagree.
             disagree: dict[int, Record] = {}
             for variant in f.variants:
-                answers = _answers((r.stored(attr), r) for r in variant)
+                answers = _answers((r.given(attr), r) for r in variant)
                 # One source alone giving two values is the next check's.
                 sources = {r.source for a in answers for r in a.records}
                 if len(answers) > 1 and len(sources) > 1:
                     disagree.update((id(r), r) for r in variant)
             if disagree:
-                answers = _answers((r.stored(attr), r) for r in disagree.values())
+                answers = _answers((r.given(attr), r) for r in disagree.values())
                 yield Issue(IssueKind.VALUE, f.key, (f,), answers, attribute=attr)
 
 
@@ -169,7 +169,7 @@ def _same_source(flashes: Iterable[Flash]) -> Iterator[Issue]:
             groups[(r.source, r.ext_id)].append(r)
         for (_source, _ext), records in sorted(groups.items(), key=lambda kv: kv[0][0].priority):
             for attr in ATTRIBUTES:
-                answers = _answers((r.stored(attr), r) for r in records)
+                answers = _answers((r.given(attr), r) for r in records)
                 if len(answers) > 1:
                     yield Issue(IssueKind.SAME_SOURCE, f.key, (f,), answers, attribute=attr)
 
