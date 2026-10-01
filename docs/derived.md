@@ -456,7 +456,10 @@ What SFDP tables give ({py:func}`spiflash.derive.sfdp_timings`):
   (DWORD 11), each with a maximum through DWORD 11's multiplier;
 - where the part can suspend, the most time an erase or program suspend
   takes, and the typical interval from a resume to the next suspend
-  (DWORD 12, as Macronix's MX25U25645G datasheet reproduces the table);
+  (DWORD 12, as Macronix's MX25U25645G datasheet reproduces the table).
+  JESD216 labels that interval typical, but vendors' AC tables often give
+  it (tRS) as a minimum (GigaDevice's GD25LB256E: 100 µs min), so the
+  table's typical is not the datasheet's bound;
 - where it has deep power-down, the most time from the release to the part
   being ready (DWORD 14), and the operations `DP` and `RDPD` (its exit
   opcode, unless 0xff, "no command"). SFDP gives no time to enter it.
@@ -490,14 +493,25 @@ maximum through a multiplier is compared exactly. The pages show every time
 as given. A record's minimum, typical and maximum are in order; where two
 sources' are not, that is a [data issue](issues/timing.md).
 
-{py:func}`~spiflash.sfdp_tools.encode` writes DWORDs 10, 11 and 14 only
-where the database holds exactly what they say: every typical time one the
-table can write, in the finest unit that holds it, and the maxima one
-multiplier of them (the chip erase's too, by the rule above).
+{py:func}`~spiflash.sfdp_tools.encode` writes DWORDs 10, 11, 12 and 14
+only where the database holds exactly what they say: every typical time one
+the table can write, in the finest unit that holds it, and the maxima one
+multiplier of them (the chip erase's too, by the rule above). A part whose
+suspend times are known is written as one that can suspend, the operations
+it prohibits while suspended and its suspend and resume opcodes (no
+operation here) listed as assumed; where a suspend time is known but cannot
+be written exactly, no DWORD 12 can say it, and the revision is lowered.
 
-A source's maximum clock ({py:attr}`Record.max_clock_hz
-<spiflash.model.Record.max_clock_hz>`) is {sfsrc}`dediprog`'s `Clock`, where
-it is one clock in MHz. It is a poor guide: against twelve datasheets it was
+Not decoded yet, and listed here so it is not lost: JESD216C's BFPT DWORD
+20, the maximum operation speed of each mode (Macronix's MX25UW6345G's
+table has it), whose encoding no source to hand quotes.
+
+The clock a source lists ({py:attr}`Record.listed_clock_hz
+<spiflash.model.Record.listed_clock_hz>`) is {sfsrc}`dediprog`'s `Clock`,
+where it is one clock in MHz: a catalogue figure whose meaning Dediprog does
+not give, and **not a safe maximum**. It is not compared, and a note says
+where it is not the clock the entry's own `Description` names (195 entries).
+Against twelve datasheets it was
 the part's fastest clock three times (GD25WB256E, MX66L1G45G, W25Q512JV),
 a slower clock seven times (the MX25U25645G's 104 MHz is its limit at one of
 its dummy cycle settings, 166 MHz its fastest), above it once (the

@@ -799,7 +799,7 @@ _ALL = [
         "RES",
         0xAB,
         OperationKind.ID,
-        "Release from deep power-down and read electronic signature",
+        "Read electronic signature",
         "1-0-1",
         0,
         24,

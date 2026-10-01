@@ -97,8 +97,10 @@ NOTES = {
         "id; with address 0x000001 most parts answer them the other way round."
     ),
     "RES": (
-        "Wakes the flash from deep power-down; after three dummy bytes it answers its "
-        "one-byte electronic signature ({sfsrc}`flashrom`'s RES1; RES2 parts answer two bytes). "
+        "After three dummy bytes the flash answers its one-byte electronic signature "
+        "({sfsrc}`flashrom`'s RES1; RES2 parts answer two bytes). The same opcode alone is "
+        "the release from deep power-down on many parts ([`RDPD`](RDPD.md)), so this "
+        "wakes them too. "
         "Older parts use this in place of the JEDEC id ([`RDID`](RDID.md))."
     ),
     "DP": (
