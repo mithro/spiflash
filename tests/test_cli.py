@@ -261,7 +261,9 @@ def test_every_failure_says_why(capsys: pytest.CaptureFixture[str]) -> None:
     # A method that is none is argparse's to refuse, naming them all.
     with pytest.raises(SystemExit):
         cli.main(["id", "14", "--method", "bogus"])
-    assert "jedec, rems, res1, res2, at25f, st95" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "invalid choice: 'bogus'" in err
+    assert all(m in err for m in ("jedec", "rems", "res1", "res2", "at25f", "st95"))
 
 
 def test_a_dump_is_chosen_by_number(capsys: pytest.CaptureFixture[str]) -> None:
@@ -274,7 +276,7 @@ def test_a_dump_is_chosen_by_number(capsys: pytest.CaptureFixture[str]) -> None:
 def test_a_closed_pipe_ends_it_quietly() -> None:
     # spiflash list | head: no BrokenPipeError traceback.
     with subprocess.Popen(
-        [sys.executable, "-m", "spiflash.cli", "list"],
+        [sys.executable, "-m", "spiflash.cli", "list", "--json"],  # megabytes: it must block
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     ) as p:
@@ -283,7 +285,8 @@ def test_a_closed_pipe_ends_it_quietly() -> None:
         p.stdout.readline()
         p.stdout.close()
         err = p.stderr.read()
-    assert p.returncode == 1
+    # 1 where the write failed; 0 where the pipe took it all before closing.
+    assert p.returncode in (0, 1)
     assert b"Traceback" not in err, err
 
 
