@@ -461,7 +461,8 @@ def _four_byte_dwords(part: _Part, reads: set[str], missing: list[str]) -> list[
 
 
 def to_entry(sfdp: Sfdp) -> dict[str, Any]:
-    """A record in the data's shape (``records.json``, this format) holding
+    """A record in the data's shape
+    (:repo:`records.json <src/spiflash/data/records.json>`, this format) holding
     what ``sfdp`` says as stored values, so a dump can be read as one more
     source: its size, page size and erasers, its operations with their dummy
     clocks (not the erases its erasers give), and the capabilities only
