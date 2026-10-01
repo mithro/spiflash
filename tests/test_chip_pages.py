@@ -84,6 +84,9 @@ def test_tables_a_source_copies_come_after_the_whole_dumps() -> None:
     sfdp = text[text.index("## SFDP") :]
     assert "copied without the SFDP header (sfdp-bfp)" in sfdp
     assert "`spiflash sfdp-diff c22817 c22817#2`" in sfdp
+    # Each set says whose board copied it, and how the two differ.
+    assert ", in `boards/ezurio/bl5340_dvk/bl5340_dvk_nrf5340_cpuapp_common.dtsi:308`" in sfdp
+    assert "The first two differ in BFPT DW12." in sfdp
     # The W25Q512JV: QEMU's whole dump.
     sfdp = nor_page("ef4020")
     assert "Dump of" in sfdp[sfdp.index("## SFDP") :]

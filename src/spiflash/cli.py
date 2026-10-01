@@ -98,10 +98,7 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
             lines.append(f"    {r.source:15} {r.name}{ext}  [{r.url}]")
     else:
         lines.append("    from: " + ", ".join(f.sources))
-    lines.extend(
-        f"    sfdp: {sfdp_summary(d.sfdp)}  [{d.source}: {', '.join(d.parts)}]"
-        for d in f.sfdp_dumps
-    )
+    lines.extend(f"    sfdp: {_dump_line(d)}" for d in f.sfdp_dumps)
     # The best datasheet, or all of them with -v.
     lines.extend(f"    datasheet: {d.url}" for d in f.datasheets[: None if verbose else 1])
     if opcodes:
@@ -111,9 +108,23 @@ def describe(f: Flash, *, verbose: bool = False, opcodes: bool = False) -> str:
 
 
 def sfdp_summary(s: Sfdp) -> str:
-    """One line on a chip's SFDP dump: its revision and the tables in it."""
+    """One line on a chip's SFDP dump: its revision and the tables in it;
+    for tables copied without their header, which tables and how long."""
+    if s.partial:
+        tables = ", ".join(f"{h.name} of {h.length} dwords" for h in s.headers)
+        return f"{tables}, without the SFDP header"
     tables = ", ".join(f"{h.name} {h.revision}" for h in s.headers)
     return f"{s.revision_name} ({tables})"
+
+
+def _dump_line(d: SfdpDump) -> str:
+    """A chip's SFDP dump, and whose: the records carrying it, each at its
+    upstream place where the dumps are tables copied by boards (a part's
+    several sets of Zephyr tables have the same part name)."""
+    if d.sfdp.partial:
+        where = ", ".join(r.url for r in d.records)
+        return f"{sfdp_summary(d.sfdp)}  [{d.source}: {', '.join(d.parts)} at {where}]"
+    return f"{sfdp_summary(d.sfdp)}  [{d.source}: {', '.join(d.parts)}]"
 
 
 class _SfdpShown(NamedTuple):
@@ -174,12 +185,24 @@ def _one_chip(db: Database, query: str) -> Flash:
     """The one SPI NOR chip ``query`` (an id or a part name) names (SFDP is
     SPI NOR's: ``c22019`` is not also the SPI NAND ``c220``); ``ValueError``
     listing them where it names none or several."""
-    found = [f for f in _resolve(db, query) if f.type is FlashType.NOR]
-    if len(found) != 1:
-        listed = ", ".join(f"{f.key} ({f.name})" for f in found) or "none"
-        msg = f"{query} names {len(found)} chips, not one: {listed}"
-        raise ValueError(msg)
-    return found[0]
+    named = _resolve(db, query)
+    found = [f for f in named if f.type is FlashType.NOR]
+    if len(found) == 1:
+        return found[0]
+    if found:
+        listed = ", ".join(f"{f.key} ({f.name})" for f in found)
+        msg = f"{query} names {len(found)} SPI NOR chips, not one: {listed}"
+    elif named:
+        listed = ", ".join(f"{f.key} ({f.name})" for f in named)
+        msg = f"{query} is SPI NAND ({listed}), and SFDP is SPI NOR's"
+    elif any(c in query for c in "*?["):
+        msg = (
+            f"{query} is a glob, which names no one chip here: give an id or a part "
+            f"name (spiflash find '{query}' lists the parts it matches)"
+        )
+    else:
+        msg = f"no chip {query}: give a JEDEC id or a part name"
+    raise ValueError(msg)
 
 
 def _sfdp_operand(db: Database, operand: str) -> tuple[str, Sfdp]:
@@ -351,7 +374,19 @@ def _parser() -> argparse.ArgumentParser:
         help="print what the tables say as a database entry (JSON, records.json's shape)",
     )
 
-    p = sub.add_parser("sfdp-encode", help="the SFDP tables the database describes for a chip")
+    p = sub.add_parser(
+        "sfdp-encode",
+        help="the SFDP tables the database describes for a chip",
+        description=(
+            "Write the SFDP area the database describes for a chip, in hex (or -o). "
+            "Nothing the database does not hold is written as fact. Some fields the "
+            "format needs are written even without --assume, and each is listed on "
+            "stderr as 'assumed:': DW1's status-register bits (3-4), a read's usual "
+            "dummy clocks where no source gives the part's, and every read's split "
+            "into 0 mode + N wait clocks. What cannot be filled is left out, lowering "
+            "the revision, and listed as 'missing:'."
+        ),
+    )
     p.add_argument("query", help="a JEDEC id or part name naming one chip")
     p.add_argument(
         "--revision", default="1.6", help="1.0, 1.5 or 1.6 (lowered to what can be filled)"
@@ -359,7 +394,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--assume",
         action="store_true",
-        help="fill what the database does not know with documented defaults",
+        help="write assumed values for DW10-16 (listed on stderr as 'assumed:') rather "
+        "than lowering the revision to 1.0",
     )
     p.add_argument("-o", "--output", type=Path, help="write the bytes here, not hex to stdout")
     p.add_argument("--json", action="store_true", help="print JSON")
@@ -432,7 +468,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             for d in shown:
                 if d.chip is not None and d.dump is not None:
                     print(header(d.chip))
-                    print(f"    from {d.dump.source}: {', '.join(d.dump.parts)}")
+                    where = ""
+                    if d.dump.sfdp.partial:  # a board's copy: say which board's
+                        where = " at " + ", ".join(r.url for r in d.dump.records)
+                    print(f"    from {d.dump.source}: {', '.join(d.dump.parts)}{where}")
                 print(d.sfdp.describe(verbose=args.verbose))
                 print()
             return 0

@@ -73,6 +73,7 @@ from spiflash.derive import ERASE_BY_OPCODE
 from spiflash.enums import Feature, FlashType, OperationKind, Source
 from spiflash.model import strip_continuation
 from spiflash.opcodes import OPERATIONS
+from spiflash.sfdp_tools import diff as sfdp_diff
 from spiflash.units import human_size, human_time
 
 if TYPE_CHECKING:
@@ -350,12 +351,26 @@ def _sfdp(f: Flash) -> list[str]:
         out.append(
             "The sources carry more than one set of tables for this id: "
             f"`spiflash sfdp-diff {f.key} {f.key}#2` compares the first two, field by "
-            "field and dword by dword ([](../usage.md)).\n"
+            f"field and dword by dword ([](../usage.md)). {_sfdp_differences(f)}\n"
         )
     for d in f.sfdp_dumps:
         out.append(list_table(["Parameter", "Value"], _sfdp_rows(d), "sf-table"))
         out.append("")
     return out
+
+
+def _sfdp_differences(f: Flash) -> str:
+    """What the chip's first two SFDP dumps differ in, in a sentence: the
+    decoded fields, else the dwords (two boards' copies of the MX25R6435F's
+    BFPT differ in DW12 alone)."""
+    d = sfdp_diff(f.sfdp_dumps[0].sfdp, f.sfdp_dumps[1].sfdp)
+    if not d:
+        return "The first two say the same."
+    parts = [f"{x.path}" for x in d.fields if not x.expected]
+    parts += [f"{t.name} (only in one)" for t in d.tables if t.a is None or t.b is None]
+    if not parts:
+        parts = [f"{x.name} DW{x.index}" for x in d.dwords]
+    return f"The first two differ in {esc(', '.join(parts))}."
 
 
 def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
@@ -367,7 +382,11 @@ def _sfdp_rows(d: SfdpDump) -> list[list[str]]:
         props = d.records[0].via.get("sfdp_tables", "")
         copied = f" ({esc(props)})" if props else ""
         rows = [
-            ["Tables of", f"{source_badge(d.source)} {esc(', '.join(d.parts))}"],
+            [
+                "Tables of",
+                f"{source_badge(d.source)} {esc(', '.join(d.parts))}, in "
+                + ", ".join(f"`{r.url}`" for r in d.records),
+            ],
             ["Revision", f"{names} only, copied without the SFDP header{copied}"],
         ]
     else:

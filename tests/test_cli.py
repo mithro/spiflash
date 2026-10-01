@@ -300,8 +300,15 @@ def test_sfdp_of_copied_tables(capsys: pytest.CaptureFixture[str]) -> None:
     assert code == 0
     assert out.count("SFDP parameter table without the SFDP header: BFPT") == 2
     assert "(not read: the part has no 4-byte mode)" in out
+    assert "    from zephyr: MX25R6435F at boards/ezurio/bl5340_dvk/" in out
     _, summary = run(capsys, "id", "c22817")
-    assert "    sfdp: unknown revision (BFPT ?)  [zephyr: MX25R6435F]" in summary
+    # The two sets are told apart by the boards copying them.
+    lines = [line for line in summary.splitlines() if line.startswith("    sfdp:")]
+    assert len(lines) == 2
+    assert lines[0].startswith(
+        "    sfdp: BFPT of 16 dwords, without the SFDP header  [zephyr: MX25R6435F at boards/"
+    )
+    assert lines[0] != lines[1]
 
 
 def test_sfdp_entry(capsys: pytest.CaptureFixture[str]) -> None:
@@ -335,8 +342,13 @@ def test_sfdp_encode(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None
     assert any(a.startswith("DW15: the quad enable requirement") for a in doc["assumed"])
     # A query naming several chips, or none, or a revision it cannot write.
     assert cli.main(["sfdp-encode", "W25Q512JV"]) == 2
-    assert "names 2 chips, not one: ef4020 (W25Q512JV), ef7020" in capsys.readouterr().err
+    assert "names 2 SPI NOR chips, not one: ef4020 (W25Q512JV), ef7020" in (capsys.readouterr().err)
     assert cli.main(["sfdp-encode", "nothing-like-it"]) == 2
+    assert "no chip nothing-like-it: give a JEDEC id or a part name" in capsys.readouterr().err
+    assert cli.main(["sfdp-encode", "efaa21"]) == 2  # the W25N01GV
+    assert "efaa21 is SPI NAND (efaa21 (W25N01GV" in capsys.readouterr().err
+    assert cli.main(["sfdp-encode", "W25Q512*"]) == 2
+    assert "W25Q512* is a glob, which names no one chip here" in capsys.readouterr().err
     assert cli.main(["sfdp-encode", "--revision", "1.8", "ef4020"]) == 2
     assert "not 1.8" in capsys.readouterr().err
     assert cli.main(["sfdp-encode", "--revision", "two", "ef4020"]) == 2
