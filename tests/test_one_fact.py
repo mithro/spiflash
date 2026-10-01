@@ -15,7 +15,7 @@ import pytest
 
 from spiflash import derive
 from spiflash.derive import ERASE_BY_OPCODE, ID_OPERATION
-from spiflash.enums import IdMethod
+from spiflash.enums import Feature, IdMethod
 from spiflash.model import Record
 from spiflash_extract import record
 
@@ -120,3 +120,100 @@ def test_the_data_is_the_stored_fields() -> None:
     for d in RECORDS:
         assert Record.from_json(d).to_json() == d, _where(d)
         assert list(Record.from_json(d).to_json()) == list(record.KEYS)
+
+
+# --- capabilities and the sector size are derived ----------------------------
+
+
+def test_no_claim_the_record_implies() -> None:
+    def twice(r: dict[str, Any]) -> set[str]:
+        return set(r["features"]) & derive.features(Record.from_json(r))
+
+    assert not [(_where(r), twice(r)) for r in RECORDS if twice(r)]
+
+
+def test_no_stored_sector_size() -> None:
+    assert not [_where(r) for r in RECORDS if "sector_size" in r]
+
+
+_EVERY_PART = "m25p80 decodes it for every part"
+
+#: Every driver default the data holds, as (source, operation, via): each a
+#: default its upstream's driver sends to every part (or every part of a
+#: class), whatever the entry says, or the 4-byte form of one. An operation
+#: is not marked assumed except here, so a per-part one cannot be silently.
+DEFAULTS = {
+    ("linux", "READ_1_1_1", "default (spi_nor_init_default_params)"),
+    ("linux", "READ_1_1_1_FAST", "default (spi_nor_init_default_params), m25p,fast-read"),
+    ("linux", "PP_1_1_1", "default (spi_nor_init_default_params)"),
+    ("linux", "CHIP_ERASE", "default (spi_nor_erase)"),
+    ("linux", "READ_1_1_1_4B", "SPI_NOR_4B_OPCODES"),
+    ("linux", "READ_1_1_1_FAST_4B", "SPI_NOR_4B_OPCODES"),
+    ("linux", "PP_1_1_1_4B", "SPI_NOR_4B_OPCODES"),
+    ("linux", "SE_4B", "SPI_NOR_4B_OPCODES"),  # of the default 64 KiB sector
+    ("u-boot", "READ_1_1_1", "default (spi_nor_init_params)"),
+    ("u-boot", "READ_1_1_1_FAST", "default unless SPI_NOR_NO_FR"),
+    ("u-boot", "PP_1_1_1", "default (spi_nor_init_params)"),
+    ("u-boot", "CHIP_ERASE", "default unless NO_CHIP_ERASE"),
+    ("u-boot", "PP_1_1_4", "SPI_NOR_QUAD_READ: default (spi_nor_init_params)"),
+    ("u-boot", "READ_1_1_1_4B", "SPI_NOR_4B_OPCODES"),
+    ("u-boot", "READ_1_1_1_FAST_4B", "SPI_NOR_4B_OPCODES"),
+    ("u-boot", "PP_1_1_1_4B", "SPI_NOR_4B_OPCODES"),
+    ("u-boot", "PP_1_1_4_4B", "SPI_NOR_4B_OPCODES"),
+    ("qemu", "READ_1_1_1", _EVERY_PART),
+    ("qemu", "READ_1_1_1_FAST", _EVERY_PART),
+    ("qemu", "PP_1_1_1", _EVERY_PART),
+    ("qemu", "CHIP_ERASE", f"BULK_ERASE: {_EVERY_PART}"),
+    ("qemu", "CHIP_ERASE_ALT", f"BULK_ERASE_60: {_EVERY_PART}"),
+    ("openfpgaloader", "READ_1_1_1", "every read"),
+    ("openfpgaloader", "PP_1_1_1", "every write"),
+    ("openfpgaloader", "READ_1_1_1_4B", "every read above 16 MiB"),
+    ("openfpgaloader", "PP_1_1_1_4B", "every write above 16 MiB"),
+    ("openfpgaloader", "BE_4K_4B", "subsector_erase = true, above 16 MiB"),
+    ("openfpgaloader", "SE_4B", "sector_erase = true, above 16 MiB"),
+    ("imsprog", "READ_1_1_1", "every read"),
+    ("imsprog", "PP_1_1_1", "every write, in 256-byte pages"),
+    ("imsprog", "SE", "every erase, at every 64 KiB"),
+}
+
+
+def test_only_the_known_driver_defaults_are_assumed() -> None:
+    found = {
+        (r["source"], o["op"], o["via"]) for r in RECORDS for o in r["opcodes"] if "assumed" in o
+    }
+    assert found == DEFAULTS
+    assert all(o["assumed"] is True for r in RECORDS for o in r["opcodes"] if "assumed" in o)
+
+
+def test_no_quad_program_from_u_boots_default() -> None:
+    # U-Boot adds PP_1_1_4 (and its 4-byte form) to every SPI_NOR_QUAD_READ
+    # part: its driver's default, not the part's.
+    uboot = [Record.from_json(r) for r in RECORDS if r["source"] == "u-boot"]
+    assert not [r.name for r in uboot if Feature.QUAD_PP in r.features]
+
+
+def test_no_spi_nand_eraser_implies_a_nor_erase() -> None:
+    erase = {Feature.ERASE_4K, Feature.ERASE_32K, Feature.ERASE_64K}
+
+    def found(r: dict[str, Any]) -> bool:
+        loaded = Record.from_json(r)
+        ops = {u.op for u in loaded.opcodes}
+        return bool(loaded.features & erase) or bool(ops & set(ERASE_BY_OPCODE.values()))
+
+    assert not [_where(r) for r in RECORDS if r["type"] == "nand" and found(r)]
+
+
+def test_a_spi_nand_eraser_is_its_block_erase() -> None:
+    def other(r: dict[str, Any]) -> list[int | None]:
+        return [e["opcode"] for e in r["erasers"] or () if e["opcode"] != 0xD8]
+
+    assert not [(_where(r), other(r)) for r in RECORDS if r["type"] == "nand" and other(r)]
+
+
+def test_no_eraser_for_a_part_that_needs_no_erase() -> None:
+    # No erase command, that is: flashrom's M95 EEPROMs have its erase
+    # routine (spi_block_erase_emulation), which writes the bytes.
+    def erases(r: dict[str, Any]) -> bool:
+        return any(e["opcode"] is not None for e in r["erasers"] or ())
+
+    assert not [_where(r) for r in RECORDS if "no_erase" in r["features"] and erases(r)]

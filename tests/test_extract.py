@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from spiflash.enums import Feature
 from spiflash.model import Record
 from spiflash_extract import (
     dediprog,
@@ -54,6 +55,22 @@ def ops(rec: record.Record) -> dict[str, tuple[int, str]]:
     """A record's opcodes as it loads, {op: (opcode, via)}: those it stores
     and those it derives."""
     return {u.op: (u.opcode, u.via) for u in Record.from_json(rec).opcodes}
+
+
+def features(rec: record.Record) -> list[str]:
+    """A record's capabilities as it loads: those it claims and those its
+    other fields imply."""
+    return sorted(Record.from_json(rec).features)
+
+
+def sector(rec: record.Record) -> int | None:
+    """A record's sector size as it loads, from its erasers."""
+    return Record.from_json(rec).sector_size
+
+
+def assumed(rec: record.Record) -> set[str]:
+    """The operations a record stores as its driver's defaults."""
+    return {o["op"] for o in rec["opcodes"] if o.get("assumed")}
 
 
 LINUX_CORE_H = fixture("linux/drivers/mtd/spi-nor/core.h")
@@ -110,26 +127,43 @@ def test_linux_nor(linux_tree: Path) -> None:
     assert w["ext_id"] is None
     assert w["vendor"] == "winbond"
     assert w["size"] == 16 << 20
-    assert w["page_size"] == 256
-    assert w["sector_size"] == 65536
-    assert w["features"] == ["dual_read", "erase_4k", "erase_64k", "lock", "quad_read"]
+    # No .page_size: the driver's 256 B default is not the part's.
+    assert w["page_size"] is None
+    # SECT_4K is an eraser. No .sector_size: the driver's default 64 KiB
+    # sector is an eraser too, but an assumed one, which gives no sector
+    # size and no erase_64k.
+    assert w["erasers"] == [
+        {"opcode": 0x20, "blocks": [[4096, 4096]]},
+        {"opcode": 0xD8, "blocks": [[65536, 256]], "assumed": True},
+    ]
+    assert sector(w) is None
+    assert features(w) == ["dual_read", "erase_4k", "lock", "quad_read"]
+    assert w["features"] == ["lock"]  # the rest are implied
     # core.c's defaults, plus what the no_sfdp_flags set up.
     assert ops(w) == {
         "RDID": (0x9F, "id read (rdid)"),
         "READ_1_1_1": (0x03, "default (spi_nor_init_default_params)"),
-        "READ_1_1_1_FAST": (0x0B, "default (spi_nor_init_default_params)"),
+        "READ_1_1_1_FAST": (0x0B, "default (spi_nor_init_default_params), m25p,fast-read"),
         "READ_1_1_2": (0x3B, "SPI_NOR_DUAL_READ"),
         "READ_1_1_4": (0x6B, "SPI_NOR_QUAD_READ"),
         "PP_1_1_1": (0x02, "default (spi_nor_init_default_params)"),
-        "BE_4K": (0x20, "SECT_4K"),
-        "SE": (0xD8, "default sector erase (spi_nor_no_sfdp_init_params)"),
+        "BE_4K": (0x20, "eraser: 4096 x 4096"),
+        "SE": (0xD8, "eraser: 256 x 65536, a driver default"),
         "CHIP_ERASE": (0xC7, "default (spi_nor_erase)"),
     }
+    se = next(u for u in Record.from_json(w).opcodes if u.op == "SE")
+    assert (se.implied, se.assumed) == (True, True)
+    # An entry's own .sector_size is its claim.
+    s0 = r["S25FL128S0"]
+    assert s0["erasers"] == [{"opcode": 0xD8, "blocks": [[256 << 10, 64]]}]
+    assert sector(s0) == 256 << 10
+    # The driver's defaults imply no capability: no fast_read.
+    assert assumed(w) == {"READ_1_1_1", "READ_1_1_1_FAST", "PP_1_1_1", "CHIP_ERASE"}
     # The id read is derived, not stored; then read, ...
     assert [o["op"] for o in w["opcodes"]][:2] == ["READ_1_1_1", "READ_1_1_1_FAST"]
     assert "SPI_NOR_HAS_TB" in w["flags"]
     # A claim no operation explains keeps its token in via, not in flags.
-    assert w["via"] == {"feature:lock": "SPI_NOR_HAS_LOCK"}
+    assert w["via"] == {"erasers:0x20": "SECT_4K", "feature:lock": "SPI_NOR_HAS_LOCK"}
     assert "SPI_NOR_HAS_LOCK" not in w["flags"]
     assert "SPI_NOR_QUAD_READ" not in w["flags"]  # READ_1_1_4 holds it
     assert w["notes"] == ["Flavors w/ and w/o SFDP."]
@@ -139,15 +173,19 @@ def test_linux_nor(linux_tree: Path) -> None:
     j = r["W25Q01JV"]
     assert j["id"] == "ef4021"
     assert j["size"] is None
-    assert "sfdp" in j["features"]
+    assert "sfdp" in features(j)  # its RDSFDP implies it
+    # Its erasers come from SFDP at run time: none, so no erase_64k.
+    assert (j["erasers"], sector(j)) == (None, None)
+    assert "erase_64k" not in features(j)
 
     assert "RDSFDP" in ops(j)
     assert "SE" not in ops(j)
     big = r["W25Q512JVQ"]
-    assert {"4byte_addr", "4byte_opcodes", "otp"} <= set(big["features"])
+    assert {"4byte_addr", "4byte_opcodes", "otp"} <= set(features(big))
     assert big["via"]["feature:otp"] == ".otp"
     assert ops(big)["READ_1_1_1_4B"] == (0x13, "SPI_NOR_4B_OPCODES")
     assert ops(big)["SE_4B"] == (0xDC, "SPI_NOR_4B_OPCODES")
+    assert "SE_4B" in assumed(big)  # the 4-byte form of the default sector erase
     assert ops(big)["PP_1_1_1_4B"] == (0x12, "SPI_NOR_4B_OPCODES")
 
     # Neither a name nor a comment: named by vendor and id.
@@ -162,7 +200,9 @@ def test_linux_nor(linux_tree: Path) -> None:
     assert n["id"] is None
     assert n["id_method"] is None
     assert "no_erase" in n["features"]
-    assert "erase_64k" not in n["features"]
+    # Never an eraser for a part that needs no erase.
+    assert (n["erasers"], sector(n)) == (None, None)
+    assert "erase_64k" not in features(n)
 
 
 def test_linux_nand(linux_tree: Path) -> None:
@@ -174,8 +214,11 @@ def test_linux_nand(linux_tree: Path) -> None:
     assert n["id_method"] == "rdid_opcode_dummy"
     assert n["size"] == 2048 * 64 * 1024
     assert n["page_size"] == 2048
-    assert n["sector_size"] == 2048 * 64
+    assert n["erasers"] == [{"opcode": 0xD8, "blocks": [[2048 * 64, 1024]]}]
+    assert sector(n) == 2048 * 64
     assert n["features"] == ["quad_read"]
+    assert features(n) == ["quad_read"]  # a SPI NAND eraser implies no erase_*
+    assert ops(n) == {}  # nor the SE of a SPI NOR part
     assert n["via"] == {"feature:quad_read": "SPINAND_HAS_QE_BIT"}
     assert n["flags"] == []
     assert n["notes"][0] == "3.3V"
@@ -224,7 +267,14 @@ def test_uboot(tmp_path: Path) -> None:
     assert w["vendor"] == "winbond"
     assert w["id"] == "ef4018"
     assert w["size"] == 16 << 20
-    assert w["features"] == ["dual_read", "erase_4k", "erase_64k", "fast_read"]
+    assert w["erasers"] == [
+        {"opcode": 0x20, "blocks": [[4096, 4096]]},
+        {"opcode": 0xD8, "blocks": [[65536, 256]]},
+    ]
+    # Fast read is U-Boot's default, so implies nothing.
+    assert features(w) == ["dual_read", "erase_4k", "erase_64k"]
+    assert w["features"] == []
+    assert assumed(w) == {"READ_1_1_1", "READ_1_1_1_FAST", "PP_1_1_1", "CHIP_ERASE"}
     assert set(ops(w)) == {
         "RDID",
         "READ_1_1_1",
@@ -235,24 +285,30 @@ def test_uboot(tmp_path: Path) -> None:
         "SE",
         "CHIP_ERASE",
     }
-    # SPI_NOR_QUAD_READ gives U-Boot's PP_1_1_4 too; 4B_OPCODES the 4-byte forms.
+    # SPI_NOR_QUAD_READ gives U-Boot's PP_1_1_4 too, for every such part:
+    # a default, as is its 4-byte form, so neither implies quad_pp.
     w512 = ops(r["W25Q512"])
-    assert w512["PP_1_1_4"] == (0x32, "SPI_NOR_QUAD_READ")
+    assert w512["PP_1_1_4"] == (0x32, "SPI_NOR_QUAD_READ: default (spi_nor_init_params)")
     assert w512["PP_1_1_4_4B"] == (0x34, "SPI_NOR_4B_OPCODES")
+    assert {"PP_1_1_4", "PP_1_1_4_4B", "READ_1_1_1_FAST_4B"} <= assumed(r["W25Q512"])
+    assert "READ_1_1_4_4B" not in assumed(r["W25Q512"])
+    assert "quad_pp" not in features(r["W25Q512"])
     assert "READ_1_1_1_FAST" not in ops(r["S25FL128S"])  # SPI_NOR_NO_FR
-    assert {"4byte_addr", "4byte_opcodes", "quad_read"} <= set(r["W25Q512"]["features"])
+    assert {"4byte_addr", "4byte_opcodes", "quad_read"} <= set(features(r["W25Q512"]))
     s = r["S25FL128S"]
     assert s["vendor"] == "spansion"
     assert s["ext_id"] == "4d0180"
-    assert "fast_read" not in s["features"]
+    assert "fast_read" not in features(s)
     assert r["S25SL12800"]["ext_id"] == "0300"
-    assert r["S25SL12800"]["sector_size"] == 256 * 1024
+    assert sector(r["S25SL12800"]) == 256 * 1024
     f = r["MB85RS256TY"]
     assert f["vendor"] == "fujitsu"
     assert f["id"] == "047f25"
     assert f["size"] == 32 * 1024
     assert f["page_size"] == 32 * 1024
     assert "no_erase" in f["features"]
+    # A sector the size of the chip, but no eraser: it needs no erase.
+    assert (f["erasers"], sector(f)) == (None, None)
     assert f["notes"] == ["Whole chip can be written at once"]
 
 
@@ -298,12 +354,12 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
     assert e["id_method"] == "rdid"
     assert e["size"] == 16 << 20
     assert e["page_size"] == 256
-    assert e["sector_size"] == 65536
+    assert sector(e) == 65536
     # FEATURE_QPI_38 & ~FEATURE_FAST_READ_QOUT: everything but the quad output
     # read. Each bit is an operation's via, or a claim's, so none is left.
     assert e["flags"] == []
     assert e["via"] == {"feature:lock": ".reg_bits .bp", "feature:otp": "FEATURE_OTP"}
-    assert e["features"] == [
+    assert features(e) == [
         "dual_read",
         "erase_4k",
         "erase_64k",
@@ -313,6 +369,8 @@ def test_flashrom_per_vendor(tmp_path: Path) -> None:
         "qpi",
         "sfdp",
     ]
+    # Its operations and erasers imply the rest.
+    assert e["features"] == ["lock", "otp"]
     assert e["erasers"][0] == {"opcode": 0x20, "blocks": [[4096, 4096]]}
     assert e["erasers"][3] == {
         "opcode": None,
@@ -360,7 +418,8 @@ def test_flashprog_single_file(tmp_path: Path) -> None:
     (e,) = flashrom.extract(tmp_path, "flashprog")
     assert e["source"] == "flashprog"
     assert e["id"] == "1c7018"
-    assert e["features"] == ["4byte_addr", "4byte_opcodes", "erase_64k"]
+    assert features(e) == ["4byte_addr", "4byte_opcodes", "erase_64k"]
+    assert e["features"] == []  # each is implied
     assert e["flags"] == []  # READ_1_1_1_4B, EWSR and WRSR hold them
 
 
@@ -369,7 +428,7 @@ def test_flashrom_sfdp_comment_qualified_to_one_model(tmp_path: Path, comment: s
     eon = FLASHROM_EON.replace("/* supports SFDP */", f"/* {comment} */")
     write(tmp_path, {**FLASHROM_HEADERS, "flashchips/eon.c": eon, "flashchips.c": ""})
     e = by_name(flashrom.extract(tmp_path, "flashrom"))["EN25QH128"]
-    assert "sfdp" not in e["features"]
+    assert "sfdp" not in features(e)
     assert "RDSFDP" not in ops(e)
     assert comment in e["notes"]
 
@@ -422,7 +481,7 @@ def test_openocd(tmp_path: Path) -> None:
     # A byte OpenOCD holds that is no known operation is noted, not guessed.
     s008 = r["S25FL008"]
     assert "OpenOCD's qread_cmd is 0x08, which is not a known operation" in s008["notes"]
-    assert "quad_read" not in s008["features"]
+    assert "quad_read" not in features(s008)
     assert set(ops(r["FM25V02"])) == {"RDID", "READ_1_1_1", "PP_1_1_1"}
     w = r["W25Q128FV/JV"]
     assert w["vendor"] == "win"
@@ -440,10 +499,13 @@ def test_openocd(tmp_path: Path) -> None:
         {"opcode": 0xD8, "blocks": [[65536, 256]]},
         {"opcode": 0xC7, "blocks": [[16 << 20, 1]]},
     ]
-    assert w["features"] == ["erase_64k", "quad_read"]
-    assert "4byte_addr" in r["IS25WP512M"]["features"]
+    assert features(w) == ["erase_64k", "quad_read"]
+    assert w["features"] == []
+    assert sector(w) == 65536
+    assert "4byte_addr" in features(r["IS25WP512M"])
     g = r["GD25Q512"]
-    assert g["features"] == ["erase_4k"]
+    assert features(g) == ["erase_4k"]
+    assert sector(g) is None  # a 0x20 eraser: no 0xd8, 0xdc or 0x52 block
     assert "CHIP_ERASE" not in ops(g)
     f = r["FM25V02"]
     assert f["id"] == "7f7f7f7f7f7fc22200"
@@ -486,9 +548,16 @@ def test_openfpgaloader(tmp_path: Path) -> None:
     assert s["id"] == "010219"
     assert s["vendor"] == "spansion"
     assert s["size"] == 32 << 20
-    assert s["features"] == ["4byte_addr", "erase_64k", "lock", "quad_read"]
-    assert s["via"] == {"feature:lock": "bp_len=3", "feature:quad_read": "quad_register=CONFR"}
+    assert s["features"] == ["lock", "quad_read"]
+    assert s["erasers"] == [{"opcode": 0xD8, "blocks": [[65536, 512]]}]
+    assert sector(s) == 65536
+    assert s["via"] == {
+        "erasers:0xd8": "sector_erase=true",
+        "feature:lock": "bp_len=3",
+        "feature:quad_read": "quad_register=CONFR",
+    }
     assert "quad_register=CONFR" not in s["flags"]
+    assert "sector_erase=true" not in s["flags"]
     assert s["notes"][0].startswith("https://www.mouser.fr/")
     # 32 MiB: the 4-byte forms too; no subsector_erase, so no BE_4K.
     assert set(ops(s)) == {
@@ -500,8 +569,18 @@ def test_openfpgaloader(tmp_path: Path) -> None:
         "SE",
         "SE_4B",
     }
-    assert ops(s)["SE"] == (0xD8, "sector_erase = true")
-    assert r["W25Q128"]["features"] == ["erase_4k", "erase_64k"]
+    assert ops(s)["SE"] == (0xD8, "eraser: 512 x 65536")
+    # Every read and write is its driver's, so implies nothing; the erases
+    # the entry allows are the part's, but their 4-byte forms the driver's
+    # (any address above 0xffffff, whatever the part).
+    assert assumed(s) == {"READ_1_1_1", "READ_1_1_1_4B", "PP_1_1_1", "PP_1_1_1_4B", "SE_4B"}
+    assert "4byte_opcodes" not in features(s)
+    assert features(s) == ["4byte_addr", "erase_64k", "lock", "quad_read"]
+    assert features(r["W25Q128"]) == ["erase_4k", "erase_64k"]
+    assert r["W25Q128"]["erasers"] == [
+        {"opcode": 0x20, "blocks": [[4096, 4096]]},
+        {"opcode": 0xD8, "blocks": [[65536, 256]]},
+    ]
 
 
 def test_openfpgaloader_no_map(tmp_path: Path) -> None:
@@ -519,14 +598,14 @@ def test_rockchip_nor() -> None:
     r = by_name(rockchip.extract_nor(ROCKCHIP))
     gd = r["GD25Q40B"]
     assert (gd["id"], gd["id_method"], gd["line"]) == ("c84013", "rdid", 16)
-    assert (gd["size"], gd["page_size"], gd["sector_size"]) == (512 << 10, 256, 64 << 10)
+    assert (gd["size"], gd["page_size"], sector(gd)) == (512 << 10, 256, 64 << 10)
     assert gd["erasers"] == [
         {"opcode": 0x20, "blocks": [[4096, 128]]},
         {"opcode": 0xD8, "blocks": [[65536, 8]]},
     ]
     # Feature 0x05: quad read, and the status registers written together;
     # prog_cmd_4 is there, but no FEA_4BIT_PROG to use it.
-    assert gd["features"] == ["erase_4k", "erase_64k", "quad_read"]
+    assert features(gd) == ["erase_4k", "erase_64k", "quad_read"]
     assert gd["flags"] == ["QE_bits=9", "write_status=snor_write_status1"]
     # READ_1_1_4's via, "read_cmd_4 (FEA_4BIT_READ)", holds the bit.
     assert gd["via"] == {}
@@ -549,7 +628,7 @@ def test_rockchip_nor() -> None:
         "BE_4K_4B",
         "SE_4B",
     }
-    assert {"4byte_addr", "4byte_opcodes", "quad_pp"} <= set(gd256["features"])
+    assert {"4byte_addr", "4byte_opcodes", "quad_pp"} <= set(features(gd256))
     assert gd256["notes"][0].startswith("prog_cmd_4 0x3e left out")
     # XM25QH(QU)256B: the QU answers another id, so only the QH is taken.
     xm = r["XM25QH256B"]
@@ -565,7 +644,7 @@ def test_rockchip_nor() -> None:
     assert ops(w)["EN4B"] == (0xB7, "FEA_4BYTE_ADDR_MODE")
     assert "FEA_4BYTE_ADDR_MODE" not in w["flags"]  # EN4B holds it
     assert {"READ_1_1_1_4B", "PP_1_1_1", "PP_1_1_4", "BE_4K", "SE"} <= set(ops(w))
-    assert "fast_read" in r["MX25U51245G"]["features"]  # 0x0c
+    assert "fast_read" in features(r["MX25U51245G"])  # 0x0c
 
 
 def test_rockchip_nand() -> None:
@@ -574,7 +653,7 @@ def test_rockchip_nand() -> None:
     assert all(x["type"] == "nand" and x["id_method"] == "rdid_opcode_addr" for x in recs)
     tc = r["TC58CVG0S0HXAIX"]
     assert tc["id"] == "98c2"  # a third byte of 0 is not compared
-    assert (tc["size"], tc["page_size"], tc["sector_size"]) == (128 << 20, 2048, 128 << 10)
+    assert (tc["size"], tc["page_size"], sector(tc)) == (128 << 20, 2048, 128 << 10)
     assert tc["features"] == []
     assert tc["flags"] == [
         "ecc_status=sfc_nand_get_ecc_status0",
@@ -583,7 +662,7 @@ def test_rockchip_nand() -> None:
         "meta={ 0x04, 0x08, 0xFF, 0xFF }",
     ]
     assert r["TC58CVG2S0HRAIJ"]["page_size"] == 4096
-    assert r["XT26G04A"]["sector_size"] == 128 * 2048
+    assert sector(r["XT26G04A"]) == 128 * 2048
     assert r["W25N01GV"]["id"] == "efaa21"
     assert "FEA_SOFT_QOP_BIT" in r["W25N01GV"]["flags"]
     assert r["W25N01GV"]["features"] == ["quad_pp", "quad_read"]
@@ -709,8 +788,8 @@ def test_imsprog() -> None:
     # The 256-byte page and 64 KiB block every NOR entry has are IMSProg's
     # defaults, not the part's (the S25FL256S erases 256 KiB blocks), so
     # they are flags: no page or sector size, no erase layout.
-    assert (s["page_size"], s["sector_size"], s["erasers"]) == (None, None, None)
-    assert s["features"] == ["4byte_addr"]
+    assert (s["page_size"], sector(s), s["erasers"]) == (None, None, None)
+    assert features(s) == ["4byte_addr"]
     # The 4-byte operations' via, "4-byte addressing (addr4bit=0x21)", holds it.
     assert "addr4bit=0x21" not in s["flags"]
     assert s["flags"] == [
@@ -737,7 +816,7 @@ def test_imsprog() -> None:
     # two-byte id repeats its first.
     g = r["GD5F1GQ5UEXXG"]
     assert (g["type"], g["id"], g["id_method"]) == ("nand", "c851", "rdid_opcode_dummy")
-    assert (g["size"], g["page_size"], g["sector_size"]) == (128 << 20, 2048, 128 << 10)
+    assert (g["size"], g["page_size"], sector(g)) == (128 << 20, 2048, 128 << 10)
     assert "ECCsize=128" in g["flags"]
     assert g["opcodes"] == []
     assert r["MX35LF1G24AD-Z41"]["id"] == "c21403"
@@ -886,6 +965,47 @@ def test_record_make_validates() -> None:
         record.make("linux", "f", 1, "n", size=1, via={"size": "t"}, notes=["t"])
 
 
+def test_record_make_drops_the_claims_the_record_implies() -> None:
+    r = record.make(
+        "linux",
+        "f",
+        1,
+        "n",
+        size=32 << 20,
+        erasers=[{"opcode": 0x20, "blocks": [[4096, 8192]]}],
+        features=["quad_read", "lock", "4byte_addr", "erase_4k", "fast_read"],
+        flags=["Q", "L", "X", "F"],
+        via=record.feature_via([("quad_read", "Q"), ("lock", "L"), ("4byte_addr", "X")]),
+        opcodes=[
+            {"op": "READ_1_1_4", "via": "Q"},
+            {"op": "READ_1_1_1_FAST", "via": "F", "assumed": True},
+        ],
+    )
+    # quad_read (READ_1_1_4), 4byte_addr (the size) and erase_4k (the
+    # eraser) are implied; a driver default implies nothing, so fast_read
+    # stays a claim.
+    assert r["features"] == ["fast_read", "lock"]
+    assert r["via"] == {"feature:lock": "L"}
+    # X explained only the dropped claim: nothing holds it, so it is a flag.
+    assert r["flags"] == ["X"]
+    assert {"quad_read", "lock", "4byte_addr", "erase_4k", "fast_read"} == set(features(r))
+
+
+def test_record_make_refuses_a_sector_size() -> None:
+    with pytest.raises(KeyError, match="derived from the erasers"):
+        record.make("linux", "f", 1, "n", sector_size=65536)
+
+
+def test_record_make_will_not_lose_a_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A rule that implies quad_read while make() drops the claim, and not
+    # after: the record would lose it, which make() refuses.
+    quad = frozenset({Feature.QUAD_READ})
+    calls = iter([quad, quad])
+    monkeypatch.setattr(record.derive, "features", lambda _: next(calls, frozenset()))
+    with pytest.raises(AssertionError, match=r"lost \['quad_read'\]"):
+        record.make("linux", "f", 1, "n", features=["quad_read"])
+
+
 def test_record_make_keeps_each_token_once() -> None:
     r = record.make(
         "flashrom",
@@ -1008,7 +1128,7 @@ def test_zephyr() -> None:
         {"opcode": 0x52, "blocks": [[32768, 256]]},
         {"opcode": 0xD8, "blocks": [[65536, 128]]},
     ]
-    assert m["features"] == [
+    assert features(m) == [
         "dual_read",
         "erase_32k",
         "erase_4k",
@@ -1045,7 +1165,7 @@ def test_zephyr() -> None:
     assert (i["vendor"], i["id"], i["size"]) == ("issi", "966018", 16 << 20)
     # bflb: no size; use-sfdp says the part answers SFDP.
     g = r["GD25LQ32D"]
-    assert (g["size"], g["features"]) == (None, ["erase_4k", "sfdp"])
+    assert (g["size"], features(g)) == (None, ["erase_4k", "sfdp"])
     assert "erase-block-size=4096" in g["flags"]
     assert set(ops(g)) == {"RDID", "RDSFDP"}
     # Two boards with the same node are one record, which names the other.
@@ -1079,7 +1199,7 @@ def test_zephyr_node_values(tmp_path: Path) -> None:
     )
     assert (r["name"], r["id"], r["ext_id"], r["page_size"]) == ("W25Q256JV", "ef4019", "00", 256)
     assert r["size"] is None  # size-in-bytes is nordic,qspi-nor's alone
-    assert r["features"] == ["4byte_addr", "4byte_opcodes", "fast_read", "lock"]
+    assert features(r) == ["4byte_addr", "4byte_opcodes", "fast_read", "lock"]
     assert set(ops(r)) == {"RDID", "READ_1_1_1_FAST", "RDFSR", "EN4B"}
     assert "has-lock=0x1c" in r["flags"]
     assert "dpd-wakeup-sequence=<30000>, <20>, <30000>" in r["flags"]
@@ -1118,13 +1238,13 @@ def test_zephyr_modes(tmp_path: Path) -> None:
         };""",
     )
     assert (n["size"], n["page_size"]) == (16 << 20, 512)
-    assert n["features"] == ["4byte_addr", "dual_read"]
+    assert features(n) == ["4byte_addr", "dual_read"]
     assert set(ops(n)) == {"RDID", "READ_1_1_2", "PP_1_1_1"}
-    assert s["features"] == ["fast_read", "quad_pp"]
+    assert features(s) == ["fast_read", "quad_pp"]
     assert o["vendor"] == "infineon"
-    assert o["features"] == ["4byte_addr", "octal_dtr_pp", "octal_dtr_read", "octal_read"]
+    assert features(o) == ["4byte_addr", "octal_dtr_pp", "octal_dtr_read", "octal_read"]
     assert ops(o)["EN4B"] == (0xB7, "enter-4byte-command")
-    assert q["features"] == ["erase_4k", "quad_read"]
+    assert features(q) == ["erase_4k", "quad_read"]
 
 
 def test_zephyr_sfdp_disagreements(tmp_path: Path) -> None:
@@ -1255,7 +1375,7 @@ def test_zephyr_size_from_sfdp(tmp_path: Path) -> None:
         f"sfdp-bfp = [{table}]; }};",
     )
     assert (r["size"], r["page_size"]) == (32 << 20, None)
-    assert r["features"] == ["4byte_addr", "erase_4k", "sfdp"]
+    assert features(r) == ["4byte_addr", "erase_4k", "sfdp"]
 
 
 # --- QEMU --------------------------------------------------------------------
@@ -1287,7 +1407,7 @@ def test_qemu(tmp_path: Path) -> None:
     a = r["AT25FS010"]
     assert a["vendor"] == "Atmel"  # the heading, without its "-- some are ..." remark
     assert a["line"] == 119
-    assert (a["id"], a["ext_id"], a["size"], a["page_size"], a["sector_size"]) == (
+    assert (a["id"], a["ext_id"], a["size"], a["page_size"], sector(a)) == (
         "1f6601",
         None,
         128 << 10,
@@ -1298,7 +1418,10 @@ def test_qemu(tmp_path: Path) -> None:
         {"opcode": 0x20, "blocks": [[4096, 32]]},
         {"opcode": 0xD8, "blocks": [[32 << 10, 4]]},
     ]
-    assert a["features"] == ["erase_4k", "fast_read"]
+    # Its 0xd8 sectors are 32 KiB; the fast read is the model's for every
+    # part, so implies nothing.
+    assert features(a) == ["erase_32k", "erase_4k"]
+    assert {"READ_1_1_1", "READ_1_1_1_FAST", "PP_1_1_1"} <= assumed(a)
     # The 4 KiB eraser gives BE_4K, so ER_4K, its token, is the eraser's via.
     assert a["flags"] == []
     assert a["via"] == {"erasers:0x20": "ER_4K"}
@@ -1310,8 +1433,8 @@ def test_qemu(tmp_path: Path) -> None:
         "PP_1_1_1": (0x02, "m25p80 decodes it for every part"),
         "BE_4K": (0x20, "eraser: 32 x 4096"),
         "SE": (0xD8, "eraser: 4 x 32768"),
-        "CHIP_ERASE": (0xC7, "BULK_ERASE"),
-        "CHIP_ERASE_ALT": (0x60, "BULK_ERASE_60"),
+        "CHIP_ERASE": (0xC7, "BULK_ERASE: m25p80 decodes it for every part"),
+        "CHIP_ERASE_ALT": (0x60, "BULK_ERASE_60: m25p80 decodes it for every part"),
     }
 
     # The EEPROMs: no id, a byte-sized "sector", the block comment is not a heading.
@@ -1320,9 +1443,9 @@ def test_qemu(tmp_path: Path) -> None:
     assert e["id"] is None
     assert e["id_method"] is None
     assert e["size"] == 128 << 10
-    assert e["sector_size"] is None
+    assert sector(e) is None
     assert e["erasers"] is None
-    assert e["features"] == ["fast_read", "no_erase"]
+    assert features(e) == ["no_erase"]  # fast read is the model's, for every part
     assert set(ops(e)) == {"READ_1_1_1", "READ_1_1_1_FAST", "PP_1_1_1"}
 
     # INFO6: a three-byte ext_id; a dump: the SFDP-derived reads and erases.
@@ -1332,16 +1455,27 @@ def test_qemu(tmp_path: Path) -> None:
     assert m["size"] == 32 << 20
     assert m["sfdp"] is not None
     assert m["sfdp"].startswith("53464450000101ff")
-    assert m["features"] == [
+    # The dump implies every one: none is stored.
+    assert features(m) == [
         "4byte_addr",
         "dual_read",
         "erase_32k",
         "erase_4k",
         "erase_64k",
-        "fast_read",
         "quad_read",
         "sfdp",
     ]
+    assert m["features"] == []
+    # SFDP gives no sign of fast read: the model's, for every part, is all.
+    fast = next(o for o in m["opcodes"] if o["op"] == "READ_1_1_1_FAST")
+    assert fast == {
+        "op": "READ_1_1_1_FAST",
+        "via": "m25p80 decodes it for every part",
+        "assumed": True,
+    }
+    # Read 0x03 a part with a BFPT has: its own.
+    read = next(o for o in m["opcodes"] if o["op"] == "READ_1_1_1")
+    assert "assumed" not in read
     assert ops(m)["RDSFDP"] == (0x5A, ".sfdp_read = m25p80_sfdp_mx25l25635e")
     assert ops(m)["READ_1_4_4"] == (0xEB, "SFDP BFPT 1-4-4 fast read: 2 mode + 4 wait clocks")
     assert ops(m)["BE_32K"] == (0x52, "eraser: 1024 x 32768")  # derived, not stored
@@ -1353,7 +1487,7 @@ def test_qemu(tmp_path: Path) -> None:
     assert n["vendor"] == "Micron"
     assert n["flags"] == []
     assert n["via"] == {"erasers:0x20": "ER_4K", "feature:lock": "HAS_SR_BP3_BIT6; HAS_SR_TB"}
-    assert "lock" in n["features"]
+    assert n["features"] == ["lock"]
     assert n["sfdp"] is not None
     assert r["S25SL032P"]["vendor"] == "Spansion"
     assert r["S25SL032P"]["ext_id"] == "4d00"
@@ -1367,15 +1501,15 @@ def test_qemu(tmp_path: Path) -> None:
     assert "die_cnt=2" in t["flags"]
     assert ops(t)["DIE_ERASE"] == (0xC4, "die_cnt = 2")
     assert ops(t)["BE_32K_4B"] == (0x5C, "SFDP 4BAIT erase type 3: 32768 B, 4-byte address")
-    assert t["sector_size"] == 128 << 10
-    assert "erase_64k" not in t["features"]
+    assert sector(t) == 128 << 10
+    assert "erase_64k" not in features(t)
     assert r["N25Q00"]["flags"] == ["die_cnt=4"]
     assert r["N25Q00"]["ext_id"] == "1000"
     assert r["N25Q00"]["sfdp"] is None
 
     w = r["W25Q512JV"]
     assert w["vendor"] == "Winbond"
-    assert {"4byte_opcodes", "qpi", "quad_pp", "sfdp"} <= set(w["features"])
+    assert {"4byte_opcodes", "qpi", "quad_pp", "sfdp"} <= set(features(w))
     assert ops(w)["READ_1_4_4_4B"] == (0xEC, "SFDP 4BAIT bit 5: fast read 1-4-4, 4-byte address")
     assert ops(w)["EN4B"][0] == 0xB7
     assert any(note.startswith("SFDP: 0xeb 4-4-4, no named operation") for note in w["notes"])
@@ -1384,7 +1518,8 @@ def test_qemu(tmp_path: Path) -> None:
     c = r["25CSM04"]
     assert c["vendor"] == "Microchip"
     assert (c["id"], c["ext_id"]) == ("29cc00", "0100")
-    assert c["features"] == ["erase_64k", "fast_read"]
+    # No fast read: the model decodes it for every part.
+    assert features(c) == ["erase_64k"]
 
 
 def test_qemu_sfdp_dumps(tmp_path: Path) -> None:
@@ -1466,12 +1601,12 @@ def test_dediprog(tmp_path: Path) -> None:
     assert (w["line"], w["vendor"], w["id"], w["id_method"]) == (37, "Winbond", "ef4018", "rdid")
     # 0xd8 has no layout, and gives no sector size: BlockSizeInByte is a
     # template's 64 KiB.
-    assert (w["size"], w["page_size"], w["sector_size"]) == (16 << 20, 256, None)
+    assert (w["size"], w["page_size"], sector(w)) == (16 << 20, 256, None)
     assert w["erasers"] == [{"opcode": 0xC7, "blocks": [[16 << 20, 1]]}]
     # Only the single-line read and program of the packed words.
     assert set(ops(w)) == {"RDID", "READ_1_1_1_FAST", "PP_1_1_1", "SE", "CHIP_ERASE"}
     assert ops(w)["READ_1_1_1_FAST"] == (0x0B, "ReadCmd=0x006B3B0B")
-    assert w["features"] == ["fast_read", "lock", "qpi"]
+    assert features(w) == ["fast_read", "lock", "qpi"]
     assert {"ProgramIOMethod=SPQD_RSWQW", "Voltage=3.3V"} <= set(w["flags"])
     assert w["via"] == {"feature:lock": "ProtectBlockMask=0x9C", "feature:qpi": "QPIEnable"}
     assert w["notes"][0].startswith("128 Mbit")
@@ -1499,21 +1634,22 @@ def test_dediprog(tmp_path: Path) -> None:
     assert "RDID" in ops(r["MT25TL256B ( for one die)"])
     # A 64 KiB block on a 32 KiB part is no layout, and no sector size.
     cd = r["IS25CD025"]
-    assert (cd["erasers"], cd["sector_size"]) == (
+    assert (cd["erasers"], sector(cd)) == (
         [{"opcode": 0xC7, "blocks": [[32 << 10, 1]]}],
         None,
     )
     # 0x20 erases the 4 KiB sectors; 4-byte opcodes above 16 MiB.
     en = r["EN35SXR256A"]
     assert {"opcode": 0x20, "blocks": [[4096, 8192]]} in en["erasers"]
-    assert en["sector_size"] == 4096
-    assert {"4byte_addr", "4byte_opcodes", "erase_4k"} <= set(en["features"])
+    assert sector(en) is None  # a 4 KiB eraser is no sector
+    assert {"4byte_addr", "4byte_opcodes", "erase_4k"} <= set(features(en))
     # SPI NAND: the dummy byte, where Dediprog reads one, is not the id.
     n = r["W25N01GVXXIG"]
     assert (n["type"], n["id"], n["id_method"]) == ("nand", "efaa21", "rdid_opcode_dummy")
-    assert (n["size"], n["page_size"], n["sector_size"]) == (128 << 20, 2048, 128 << 10)
+    assert (n["size"], n["page_size"], sector(n)) == (128 << 20, 2048, 128 << 10)
     assert [o["op"] for o in n["opcodes"]] == ["RDID"]
-    assert (n["erasers"], n["features"]) == (None, [])
+    # Its block erase is over BlockSizeInByte, which gives its sector size.
+    assert (n["erasers"], n["features"]) == ([{"opcode": 0xD8, "blocks": [[128 << 10, 1024]]}], [])
     assert (r["GD5F1GQ4UC"]["id"], r["GD5F1GQ4UC"]["id_method"]) == ("c8b148", "rdid_opcode")
     assert r["MK60N1GAL"]["id"] == "a791"  # 0xA791, read as three bytes
     assert len(recs) == 29
@@ -1523,7 +1659,7 @@ def test_dediprog_classes(tmp_path: Path) -> None:
     r = by_name(dediprog.extract(dediprog_tree(tmp_path)))
     # DataFlash: its SPI NOR template is not taken, only its id and size.
     at45 = r["AT45DB642D"]
-    assert (at45["id"], at45["size"], at45["page_size"], at45["sector_size"]) == (
+    assert (at45["id"], at45["size"], at45["page_size"], sector(at45)) == (
         "1f2800",
         8 << 20,
         None,
@@ -1536,14 +1672,14 @@ def test_dediprog_classes(tmp_path: Path) -> None:
     assert "PP_1_1_1" not in ops(r["25VF040B"])
     sst = r["25LF040A"]
     assert {"opcode": 0x52, "blocks": [[32 << 10, 16]]} in sst["erasers"]
-    assert (sst["sector_size"], sst["features"]) == (32 << 10, ["erase_32k", "fast_read", "lock"])
+    assert (sector(sst), features(sst)) == (32 << 10, ["erase_32k", "fast_read", "lock"])
     # On an AT25F, 0x52 erases SectorSizeInByte, where that is not the
     # template's 4096 (the AT25F2048's 0x52 erases 64 KiB).
     at25f = r["AT25F1024A"]
     assert {"opcode": 0x52, "blocks": [[32 << 10, 4]]} in at25f["erasers"]
-    assert at25f["sector_size"] == 32 << 10
+    assert sector(at25f) == 32 << 10
     at25f2048 = r["AT25F2048"]
-    assert (at25f2048["erasers"], at25f2048["sector_size"]) == (
+    assert (at25f2048["erasers"], sector(at25f2048)) == (
         [{"opcode": 0x62, "blocks": [[256 << 10, 1]]}],
         None,
     )
@@ -1655,7 +1791,7 @@ def test_mediatek() -> None:
     w = r["W25N01GV"]
     assert (w["file"], w["line"], w["type"], w["vendor"]) == (mediatek.IDS, 56, "nand", None)
     assert (w["id"], w["id_method"]) == ("efaa21", "rdid_opcode_dummy")
-    assert (w["size"], w["page_size"], w["sector_size"]) == (128 << 20, 2048, 128 << 10)
+    assert (w["size"], w["page_size"], sector(w)) == (128 << 20, 2048, 128 << 10)
     assert w["features"] == ["dual_read", "quad_pp", "quad_read"]
     assert w["flags"] == [
         "cap_pl=snand_cap_program_load_x4",
@@ -1675,7 +1811,7 @@ def test_mediatek() -> None:
     # Planes are not counted again: a two-plane part's blocks are all its
     # blocks.
     t = r["MT29F2G01AAAED"]
-    assert (t["size"], t["sector_size"]) == (256 << 20, 128 << 10)
+    assert (t["size"], sector(t)) == (256 << 20, 128 << 10)
     assert "planes_per_die=2" in t["flags"]
     # Read from cache on one, two or four lines; program load on one only.
     assert t["features"] == ["dual_read", "quad_read"]
@@ -1688,7 +1824,7 @@ def test_mediatek() -> None:
     assert (g["id"], g["id_method"]) == ("c810", "rdid_opcode_addr")
     # A memory organisation written out: 128 pages per block.
     a = r["EM73C044SNA"]
-    assert (a["size"], a["sector_size"]) == (128 << 20, 256 << 10)
+    assert (a["size"], sector(a)) == (128 << 20, 256 << 10)
     # The driver takes the first entry an id matches.
     assert r["IS37SML01G1"]["notes"][0] == (
         "never used: the driver matches the entry on line 85 first"

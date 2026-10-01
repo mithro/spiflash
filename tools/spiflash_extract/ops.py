@@ -26,11 +26,24 @@ class Opcodes:
     def __init__(self, symbols: Mapping[str, str | int] | None = None) -> None:
         self.symbols = symbols or {}
         self._ops: dict[str, tuple[int, list[str]]] = {}
+        # The vias that are the driver's default, not the entry's.
+        self._defaults: set[tuple[str, str]] = set()
 
-    def add(self, op: str, via: str, *symbols: str, value: int | None = None) -> None:
+    def add(
+        self,
+        op: str,
+        via: str,
+        *symbols: str,
+        value: int | None = None,
+        assumed: bool = False,
+    ) -> None:
         """Record ``op``, implied by ``via``. Its opcode is ``value``, or the
         first of ``symbols`` the upstream's headers define, or failing both
-        the table's; a value that differs from the table's raises."""
+        the table's; a value that differs from the table's raises.
+        ``assumed``: ``via`` is a driver default, issued to every part
+        whatever its entry says; the operation is assumed
+        (:attr:`spiflash.opcodes.OpcodeUse.assumed`) unless another via,
+        one of the entry's own, gives it too."""
         if op not in OPERATIONS:
             msg = f"unknown operation {op}"
             raise KeyError(msg)
@@ -48,6 +61,13 @@ class Opcodes:
         _, vias = self._ops.setdefault(op, (value, []))
         if via not in vias:
             vias.append(via)
+        if assumed:
+            self._defaults.add((op, via))
+
+    def assumed(self, op: str) -> bool:
+        """Whether ``op`` is only the driver's default: every via giving it
+        is one."""
+        return all((op, v) in self._defaults for v in self._ops[op][1])
 
     def __contains__(self, op: str) -> bool:
         return op in self._ops
@@ -61,7 +81,7 @@ class Opcodes:
 
     def to_json(self) -> list[dict[str, Any]]:
         return [
-            {"op": op, "via": "; ".join(vias)}
+            {"op": op, "via": "; ".join(vias), **({"assumed": True} if self.assumed(op) else {})}
             for op, (value, vias) in sorted(self._ops.items(), key=lambda kv: sort_key(kv[0]))
         ]
 
@@ -125,12 +145,13 @@ SPINOR_OP = {
 }
 
 
-def add_spinor(ops: Opcodes, op: str, via: str) -> None:
+def add_spinor(ops: Opcodes, op: str, via: str, *, assumed: bool = False) -> None:
     """Add a Linux/U-Boot operation, its value from the SPINOR_OP_* header."""
-    ops.add(op, via, SPINOR_OP[op])
+    ops.add(op, via, SPINOR_OP[op], assumed=assumed)
 
 
 def add_4b_variants(ops: Opcodes, via: str) -> None:
-    """Add the 4-byte-address form of every operation that has one."""
+    """Add the 4-byte-address form of every operation that has one. The
+    form of a driver default is a driver default too."""
     for op in [o for o in ops if o in TO_4B]:
-        add_spinor(ops, TO_4B[op], via)
+        add_spinor(ops, TO_4B[op], via, assumed=ops.assumed(op))

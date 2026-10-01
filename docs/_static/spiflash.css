@@ -42,6 +42,11 @@ article :is(p, ul, ol, dl, blockquote):not(td *, th *) { max-width: 46em; }
 h1 + p .sf-id { font-size: 1em; }
 
 .sf-yes { color: var(--sf-yes); font-weight: 700; }
+/* Implied by what the entry gives, not claimed: a hollow mark. */
+.sf-hollow { color: var(--sf-yes); }
+/* Only a driver's default: the mark greyed. */
+.sf-default { color: var(--sf-muted); }
+.sf-matrix [title] { cursor: help; }
 
 /* Source labels: one colour each, so a column of them reads at a glance. */
 /* Every label is 1.1 times the height of the text around it: its own font

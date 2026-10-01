@@ -39,6 +39,8 @@ import re
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
+from spiflash import derive
+
 from . import cparse
 from .record import Record, make
 
@@ -168,7 +170,7 @@ def _fields(
         "id_method": ID_METHODS[id_args[0]],
         "size": page * ppb * blocks * dies,
         "page_size": page,
-        "sector_size": page * ppb,
+        "erasers": [derive.block_eraser(0xD8, page * ppb, page * ppb * blocks * dies).to_json()],
         "features": features,
         "flags": [
             f"sparesize={oob}",

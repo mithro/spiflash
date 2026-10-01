@@ -587,10 +587,14 @@ class Sfdp:
     def operations(self, *, implied: bool = True) -> Iterator[SfdpOperation]:
         """Every operation the tables describe, in table order.
 
-        With ``implied`` (the default) the three operations JESD216 takes
-        for granted and never lists (read 0x03, fast read 0x0b and page
-        program 0x02: Linux enables them for every part) come first, and
-        ``RDSFDP`` itself. Names are looked up in
+        With ``implied`` (the default) the read 0x03 that a part with a
+        BFPT supports though the table does not list it comes first, and
+        ``RDSFDP`` itself. The tables give no sign of fast read 0x0b or page
+        program 0x02 (Zephyr's ``jesd216_bfp_read_support()``: "SFDP does
+        not provide an indication of support for 1-1-1 Fast Read (0Bh)";
+        Linux's ``spi_nor_parse_4bait()``: "4BAIT is the only SFDP table
+        that indicates page program support"), so they are not yielded:
+        :mod:`spiflash.derive` documents the rule. Names are looked up in
         :data:`spiflash.opcodes.OPERATIONS`; an operation that has none
         (a 3-byte-address 4-4-4 read, a DTR read) is still yielded."""
         bfpt = self.bfpt
@@ -598,19 +602,14 @@ class Sfdp:
             return
         abytes = self._bfpt_address_bytes()
         if implied:
-            for opcode, proto, kind, dummy in (
-                (0x03, "1-1-1", OperationKind.READ, 0),
-                (0x0B, "1-1-1", OperationKind.READ, 8),
-                (0x02, "1-1-1", OperationKind.PROGRAM, 0),
-            ):
-                yield SfdpOperation(
-                    _BY_SHAPE.get((kind, opcode, proto)),
-                    opcode,
-                    proto,
-                    abytes,
-                    dummy,
-                    "implied: JESD216 does not list it, every part has it",
-                )
+            yield SfdpOperation(
+                _BY_SHAPE.get((OperationKind.READ, 0x03, "1-1-1")),
+                0x03,
+                "1-1-1",
+                abytes,
+                0,
+                "implied: a part with a BFPT supports read 0x03",
+            )
             yield SfdpOperation("RDSFDP", 0x5A, "1-1-1", 3, 8, "the table itself")
         for r in bfpt.reads:
             yield SfdpOperation(
@@ -702,7 +701,7 @@ class Sfdp:
         bfpt = self.bfpt
         if bfpt is None:
             return frozenset(out)
-        out.add(Feature.FAST_READ)
+        # No fast_read: SFDP gives no sign of 1-1-1 fast read (0x0b).
         for e in bfpt.erase_types:
             if e.size == 4096:
                 out.add(Feature.ERASE_4K)

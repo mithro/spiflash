@@ -76,7 +76,10 @@ class SourceInfo:
 #: 2: records' ``opcodes`` became a list of {op, opcode, via}.
 #: 4: ``opcodes`` lose ``opcode``; erase and id operations are derived;
 #: ``via``; consumed flags and notes removed.
-FORMAT = 4
+#: 5: ``sector_size`` dropped (derived from the erasers, which Linux, U-Boot,
+#: openFPGALoader and the SPI NAND records now give); implied capability
+#: claims dropped; ``opcodes`` gain ``assumed`` for driver defaults.
+FORMAT = 5
 
 
 def _read(name: str) -> dict[str, Any]:

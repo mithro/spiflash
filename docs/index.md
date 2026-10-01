@@ -137,6 +137,7 @@ commits ([more on each source](sources/index.md)):
 vendors/index
 chips/index
 opcodes
+derived
 issues/index
 jep106/index
 sources/index

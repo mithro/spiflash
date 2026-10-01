@@ -73,11 +73,12 @@ read and quad page program). For the same reason the 0xd8 and 0xdc erases
 have no layout. `BlockSizeInByte` is 64 KiB in nearly every entry, where the
 other sources give those erases 32 KiB (M25P05, EN25F10, SST25VF010A),
 128 KiB (MT35XU01G), 256 KiB (M25P128, S25FL512S) or boot blocks (AMIC's
-A25L..P). An SPI NOR record has a sector size only for 0x20
+A25L..P). An SPI NOR record has an erase layout only for 0x20
 (`SectorSizeInByte`) and 0x52: 32 KiB on the SST parts, and
 `SectorSizeInByte` on the AT25F parts where it is not the template's 4 KiB
-(0x52 erases 64 KiB on the AT25F2048). An SPI NAND record's sector size is
-its erase block, `BlockSizeInByte`, as {sfsrc}`linux` gives it.
+(0x52 erases 64 KiB on the AT25F2048); so a sector size only from its 0x52
+blocks. An SPI NAND record's block erase is over its erase block,
+`BlockSizeInByte`, as {sfsrc}`linux` gives it.
 
 Some classes of part are not what their attributes say:
 

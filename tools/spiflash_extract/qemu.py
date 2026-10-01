@@ -159,11 +159,6 @@ def _record(
     eeprom = "EEPROM" in flags
     claims = [(_FEATURES[f], f) for f in flags if f in _FEATURES]
     features = {feat for feat, _ in claims}
-    features.add("fast_read")
-    if sector == 64 * 1024 and not eeprom:
-        features.add("erase_64k")
-    if size > 16 * 1024 * 1024:
-        features.add("4byte_addr")
     if die_cnt:
         flags.append(f"die_cnt={die_cnt}")
 
@@ -181,13 +176,13 @@ def _record(
     ops = Opcodes(commands)
     if id_hex:
         ops.add("RDID", "JEDEC_READ: the entry's id bytes", "JEDEC_READ")
-    ops.add("READ_1_1_1", _EVERY_PART, "READ")
-    ops.add("READ_1_1_1_FAST", _EVERY_PART, "FAST_READ")
-    ops.add("PP_1_1_1", _EVERY_PART, "PP")
+    ops.add("READ_1_1_1", _EVERY_PART, "READ", assumed=True)
+    ops.add("READ_1_1_1_FAST", _EVERY_PART, "FAST_READ", assumed=True)
+    ops.add("PP_1_1_1", _EVERY_PART, "PP", assumed=True)
     if not eeprom:
         ops.add("SE", "ERASE_SECTOR: the entry's sector size", "ERASE_SECTOR")
-        ops.add("CHIP_ERASE", "BULK_ERASE", "BULK_ERASE")
-        ops.add("CHIP_ERASE_ALT", "BULK_ERASE_60", "BULK_ERASE_60")
+        ops.add("CHIP_ERASE", f"BULK_ERASE: {_EVERY_PART}", "BULK_ERASE", assumed=True)
+        ops.add("CHIP_ERASE_ALT", f"BULK_ERASE_60: {_EVERY_PART}", "BULK_ERASE_60", assumed=True)
         if "ER_4K" in flags:
             ops.add("BE_4K", "ER_4K", "ERASE_4K")
         if "ER_32K" in flags:
@@ -204,9 +199,12 @@ def _record(
             raise ValueError(msg)
         dump = dumps[reader]
         tables = sfdp_tables.parse(dump)
-        features |= {f.value for f in tables.features()}
         ops.add("RDSFDP", f".sfdp_read = {reader}", "RDSFDP")
-        for use in tables.operations(implied=False):
+        # JESD216's read, fast read and page program, which every part with
+        # the tables has, are the part's own, not the model's default.
+        for use in tables.operations():
+            if use.name == "RDSFDP":
+                continue
             if use.name is not None:
                 ops.add(use.name, f"SFDP {use.via}", value=use.opcode)
             else:
@@ -230,7 +228,6 @@ def _record(
         id_method="rdid" if id_hex else None,
         size=size,
         page_size=page,
-        sector_size=None if eeprom else sector,
         erasers=erasers or None,
         features=features,
         flags=flags,

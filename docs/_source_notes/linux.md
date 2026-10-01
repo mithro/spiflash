@@ -20,4 +20,21 @@ bytes of it: it has the most recent parts, and extended ids (the bytes after
 the JEDEC id) that separate variants answering the same id. For chips without
 SFDP it carries capability flags (`SECT_4K`, `SPI_NOR_QUAD_READ`, ...). Parts
 it reads entirely from SFDP have no size in the table: their records have
-`size: null` and the `sfdp` feature.
+`size: null`, no erase layouts, and the [RDSFDP](../opcodes/RDSFDP.md)
+operation (so the `sfdp` capability).
+
+A part with a size is erased with 0xd8 over its `.sector_size` blocks, and
+with 0x20 over 4 KiB sectors for `SECT_4K` (`spi_nor_no_sfdp_init_params()`):
+its records give those as erase layouts, from which its sector size and its
+erase capabilities follow. Most entries give no `.sector_size`, and the
+kernel takes `SPI_NOR_DEFAULT_SECTOR_SIZE`, 64 KiB, whatever the part: that
+0xd8 layout is kept as a driver default (`"assumed": true`), which gives no
+sector size and no `erase_64k`, and the same goes for the 256-byte
+`SPI_NOR_DEFAULT_PAGE_SIZE`, so an entry without `.page_size` has none. The
+default is wrong for some parts: the SST26VF016B and SST26VF064B erase
+non-uniform blocks with 0xd8, and the AT45DB081D is a DataFlash. An entry's
+own `.sector_size` (`SZ_256K` for the S25FL512S) and `SECT_4K` are its
+claims. The read, fast read (a board's devicetree choice, `m25p,fast-read`),
+page program, chip erase and default sector erase it sets up for every part
+are its driver's defaults, as are their 4-byte forms: they imply no
+capability.

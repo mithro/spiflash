@@ -37,6 +37,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING
 
+from spiflash import derive
+
 from .ops import Opcodes
 from .record import Record, make
 
@@ -217,13 +219,15 @@ def _nand(e: bytes, where: str) -> dict[str, object]:
             msg = f"{where}: third id byte repeats the first, from a maker not known for 2-byte ids"
             raise ValueError(msg)
         ident = ident[:2]  # a two-byte id, wrapped round
+    size = int.from_bytes(e[0x34:0x38], "little")
+    block = int.from_bytes(e[0x3F:0x41], "big") * 1024
     return {
         "type": "nand",
         "id": ident.hex(),
         "id_method": "rdid_opcode" if ident.hex() in NO_DUMMY else "rdid_opcode_dummy",
-        "size": int.from_bytes(e[0x34:0x38], "little"),
+        "size": size,
         "page_size": int.from_bytes(e[0x38:0x3A], "little"),
-        "sector_size": int.from_bytes(e[0x3F:0x41], "big") * 1024,
+        "erasers": [derive.block_eraser(0xD8, block, size).to_json()],
         "flags": [*_flags(e), f"ECCsize={e[0x42] * 64}"],
     }
 
@@ -233,12 +237,13 @@ def _opcodes(addr4: int) -> list[dict[str, object]]:
     a SPI NOR part: read-id, read, page program and the 0xd8 block erase
     (its erase loops over that; it never sends a chip erase), and above
     16 MiB the 3-byte opcodes in 4-byte address mode, entered the way the
-    entry's 0x3e byte says."""
+    entry's 0x3e byte says. The read, program and erase are its defaults
+    (assumed), sent to every part whatever its entry says."""
     ops = Opcodes()
     ops.add("RDID", "JEDEC id match")
-    ops.add("READ_1_1_1", "every read")
-    ops.add("PP_1_1_1", "every write, in 256-byte pages")
-    ops.add("SE", "every erase, at every 64 KiB")
+    ops.add("READ_1_1_1", "every read", assumed=True)
+    ops.add("PP_1_1_1", "every write, in 256-byte pages", assumed=True)
+    ops.add("SE", "every erase, at every 64 KiB", assumed=True)
     for op in ADDR4[addr4]:
         ops.add(op, f"4-byte addressing (addr4bit=0x{addr4:02x})")
     return ops.to_json()

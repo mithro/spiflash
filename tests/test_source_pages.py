@@ -47,7 +47,11 @@ def test_linux_page() -> None:
     linux = [r for r in db.records if r.source == "linux"]
     assert f"{len(linux)} entries" in page
     assert "SPI NAND" in page
-    assert "It gives no erase layouts, supply voltage, test status or SFDP dump." in page
+    assert "It gives no supply voltage, test status or SFDP dump." in page
+    # Its claims and what its operations and erasers imply are counted apart.
+    assert "Capabilities it claims" in page
+    assert "Capabilities it implies" in page
+    assert "[`READ_1_1_1_FAST`](../opcodes/READ_1_1_1_FAST.md)" in page  # a driver default
     assert "](../issues/source-linux.md)" in page
     # Its entries: linked to their chips and their lines upstream; no
     # column for a value it never gives.

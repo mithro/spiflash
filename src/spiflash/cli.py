@@ -42,7 +42,9 @@ def opcode_table(f: Flash, *, verbose: bool = False) -> list[str]:
         if verbose:
             lines.append(head)
             lines.extend(
-                f"          {c.source:15} {c.via}" + (" (implied)" if c.implied else "")
+                f"          {c.source:15} {c.via}"
+                + (" (implied)" if c.implied else "")
+                + (" (driver default)" if c.assumed else "")
                 for c in o.because
             )
         else:

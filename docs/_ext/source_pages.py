@@ -236,16 +236,30 @@ def _taken(source: Source, records: list[Record], chips: list[Flash]) -> list[st
             ", ".join(vendor_link(v) for v in vendors),
         ],
     ]
-    features = Counter(feat for r in records for feat in r.features)
-    if features:
+    claimed = Counter(feat for r in records for feat in r.feature_claims)
+    implied = Counter(feat for r in records for feat in r.features - r.feature_claims)
+    for title, features in (
+        ("Capabilities it claims", claimed),
+        ("Capabilities it implies", implied),
+    ):
+        if features:
+            rows.append(
+                [
+                    title,
+                    ", ".join(
+                        f"{feature_badges({feat})} {n:,}"
+                        for feat, n in features.most_common()
+                        if feature_badges({feat})
+                    ),
+                ]
+            )
+    defaults = Counter(u.op for r in records for u in r.opcode_claims if u.assumed)
+    if defaults:
         rows.append(
             [
-                "Capabilities it sets",
-                ", ".join(
-                    f"{feature_badges({feat})} {n:,}"
-                    for feat, n in features.most_common()
-                    if feature_badges({feat})
-                ),
+                "Driver defaults",
+                ", ".join(f"[`{op}`](../opcodes/{op}.md) {n:,}" for op, n in defaults.most_common())
+                + " (sent to every part whatever its entry says: they imply no capability)",
             ]
         )
     tested = Counter(r.tested for r in records if r.tested)
@@ -377,11 +391,31 @@ def _fields() -> list[str]:
             "the bytes the part answers to read-id, or to a legacy id command",
         ],
         ["Extended id", "id bytes after the JEDEC id, which tell variants apart"],
-        ["Size, Page size, Sector size", "the part's capacity, page and erase sector"],
+        ["Size, Page size", "the part's capacity and program page"],
+        [
+            "Sector size",
+            (
+                "the block its erase layouts erase with 0xd8 (else 0xdc, else 0x52): "
+                "worked out from them, not stored ([](../derived.md))"
+            ),
+        ],
         ["Erase layouts", "each erase opcode with the blocks it erases"],
         ["Supply voltage", "the minimum and maximum supply"],
-        ["Opcodes", "the SPI operations the upstream uses on the part ([](../opcodes.md))"],
-        ["Capabilities", "what the part can do, normalised across the sources"],
+        [
+            "Opcodes",
+            (
+                "the SPI operations the upstream uses on the part ([](../opcodes.md)); "
+                "a driver default, sent to every part whatever the entry says, is marked so"
+            ),
+        ],
+        [
+            "Capabilities",
+            (
+                "what the part can do, normalised across the sources: what the entry claims, "
+                "and what its operations (not its driver's defaults), erase layouts, size and "
+                "SFDP tables imply ([](../derived.md))"
+            ),
+        ],
         [
             "Upstream flags",
             (

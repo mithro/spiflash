@@ -30,6 +30,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from spiflash import derive
 from spiflash.model import part_names
 
 from . import cparse
@@ -215,9 +216,6 @@ def _nor_record(values: list[int], symbols: dict[str, str | int]) -> dict[str, A
         ops.add("EN4B", "FEA_4BYTE_ADDR_MODE", "CMD_ENTER_4BYTE_MODE")
 
     size = SECTOR << density
-    features = {"erase_4k"}
-    if block * SECTOR == 64 * 1024:
-        features.add("erase_64k")
     claims = [
         (feat, bit)
         for bit, feat in (
@@ -227,21 +225,15 @@ def _nor_record(values: list[int], symbols: dict[str, str | int]) -> dict[str, A
         )
         if bit in bits
     ]
-    features.update(feat for feat, _ in claims)
-    if any(op.endswith("_4B") for op in ops):
-        features.add("4byte_opcodes")
-    if any(op.startswith("READ_1_1_1_FAST") for op in ops):
-        features.add("fast_read")
     return {
         "id": f"{chip_id:06x}",
         "size": size,
         "page_size": cparse.evaluate("NOR_PAGE_SIZE", symbols),
-        "sector_size": block * SECTOR,
         "erasers": [
             {"opcode": sec_erase, "blocks": [[4096, size // 4096]]},
             {"opcode": blk_erase, "blocks": [[block * SECTOR, size // (block * SECTOR)]]},
         ],
-        "features": features,
+        "features": {feat for feat, _ in claims},
         "flags": [*bits, f"write_status={_WRITE_STATUS[feature & mask]}", f"QE_bits={qe_bits}"],
         "via": feature_via(claims),
         "opcodes": ops.to_json(),
@@ -315,7 +307,7 @@ def _nand_record(
         "id_method": "rdid_opcode_addr",
         "size": size,
         "page_size": page,
-        "sector_size": page * ppb,
+        "erasers": [derive.block_eraser(0xD8, page * ppb, size).to_json()],
         "features": {feat for feat, _ in claims},
         "via": feature_via(claims),
         "flags": [

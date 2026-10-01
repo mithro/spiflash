@@ -58,7 +58,7 @@ For an SPI NAND entry, `sfc_nand_init()` in sfc_nand.c:
   extended id: the GD5F1GQ5REYIG (`c8 41`, then `c8`) and the F50L2G41KA
   (`c8 41`, then `7f`);
 - the page is `sec_per_page` sectors of 512 bytes, the erase block
-  `page_per_blk` pages, and the size `plane_per_die` times `blk_per_plane`
+  `page_per_blk` pages (its block erase's layout), and the size `plane_per_die` times `blk_per_plane`
   blocks, which `density` agrees with in every entry;
 - `FEA_4BIT_READ` and `FEA_4BIT_PROG` are quad read (0x6b) and quad program
   load (0x32). SPI NAND records have no opcodes, as {sfsrc}`linux`'s have

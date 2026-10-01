@@ -33,13 +33,19 @@ Fields (``None`` / empty when the upstream does not say):
     Bytes; ``None`` where the upstream reads it from SFDP.
 ``page_size``
     The program page, in bytes.
-``sector_size``
-    The erase unit the upstream uses by default, in bytes.
 ``erasers``
-    ``[{"opcode": 0x20, "blocks": [[4096, 4096]]}, ...]``.
+    ``[{"opcode": 0x20, "blocks": [[4096, 4096]]}, ...]``. An upstream that
+    gives an erase block size without a layout (Linux's and U-Boot's sector
+    size, openFPGALoader's ``sector_erase``, a SPI NAND block) gives the
+    eraser it describes (:func:`spiflash.derive.block_eraser`): the record's
+    sector size is derived from its erasers
+    (:func:`spiflash.derive.sector_size`), never stored.
 ``features``
     Normalised capability names: :class:`spiflash.enums.Feature` values,
-    the ones the entry states (a record's ``feature_claims``).
+    the ones the entry states (a record's ``feature_claims``) and nothing
+    else implies: :func:`spiflash.derive.features` gives those from the
+    operations, erasers, size and SFDP tables, and :func:`make` drops a
+    claim it gives.
 ``flags``
     The upstream's raw flag and feature names that no field holds: a token
     a ``via`` holds (the record's, or an operation's) is left out.
@@ -61,7 +67,10 @@ Fields (``None`` / empty when the upstream does not say):
     ``[{"op": "READ_1_1_4", "via": "SPI_NOR_QUAD_READ"}, ...]``, ``op`` a name
     in ``spiflash.opcodes.OPERATIONS`` (which gives the opcode) and ``via``
     the upstream flag, field or default behind it. Those
-    :func:`spiflash.derive.opcodes` gives are not stored.
+    :func:`spiflash.derive.opcodes` gives are not stored. A driver default
+    (an operation the upstream's driver issues to every part, or every part
+    of a class, whatever the entry says) has ``"assumed": true``, and
+    implies no capability.
 ``sfdp``
     Hex of the part's SFDP (JESD216) area, where the upstream carries a
     dump of it (QEMU's flash model does); :mod:`spiflash.sfdp` decodes it.
@@ -84,13 +93,6 @@ from spiflash.opcodes import OPERATIONS
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-# The feature a uniform erase block of each size gives.
-ERASE_FEATURES = {
-    4096: Feature.ERASE_4K.value,
-    32 * 1024: Feature.ERASE_32K.value,
-    64 * 1024: Feature.ERASE_64K.value,
-}
-
 Record = dict[str, Any]
 
 KEYS = (
@@ -105,7 +107,6 @@ KEYS = (
     "id_method",
     "size",
     "page_size",
-    "sector_size",
     "erasers",
     "features",
     "flags",
@@ -229,9 +230,14 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     (:func:`holds`). A feature claim's ``via`` keeps only the tokens no
     operation's ``via`` holds: the operation is the claim's provenance. Each
     token is under one ``via`` key, and no note repeats one. The name's
-    part numbers are upper case (:func:`part_case`). The operations
-    :func:`spiflash.derive.opcodes` gives are dropped, as the record
-    derives them at load."""
+    part numbers are upper case (:func:`part_case`). The capability claims
+    :func:`spiflash.derive.features` gives, with their ``via`` keys, and the
+    operations :func:`spiflash.derive.opcodes` gives are dropped, as the
+    record derives them at load. A sector size is refused: give the eraser
+    (:func:`spiflash.derive.block_eraser`)."""
+    if "sector_size" in fields:
+        msg = "sector_size is derived from the erasers: give the eraser instead"
+        raise KeyError(msg)
     unknown = set(fields) - set(KEYS)
     if unknown:
         msg = f"unknown record fields: {sorted(unknown)}"
@@ -259,6 +265,8 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     rec.update(fields)
     rec["features"] = sorted(set(rec["features"]))
     check_via(rec)
+    claimed = set(rec["features"])
+    _drop_implied(rec)
     ops = [o["via"] for o in rec["opcodes"]]
     via: dict[str, list[str]] = {}
     for key, value in rec["via"].items():
@@ -273,7 +281,21 @@ def make(source: str, file: str, line: int, name: str, **fields: Any) -> Record:
     rec["via"] = {key: "; ".join(via[key]) for key in sorted(via)}
     check_via(rec)
     _check_once(rec)
+    lost = claimed - Model.from_json(rec).features
+    if lost:
+        msg = f"{rec['source']} {rec['name']}: dropping implied claims lost {sorted(lost)}"
+        raise AssertionError(msg)
     return rec
+
+
+def _drop_implied(rec: Record) -> None:
+    """Drop the capability claims ``rec``'s other fields imply
+    (:func:`spiflash.derive.features`), and their ``via`` keys: a token only
+    such a key held stays a flag, unless something else holds it."""
+    implied = derive.features(Model.from_json(rec))
+    rec["features"] = [f for f in rec["features"] if f not in implied]
+    dropped = {f"feature:{f}" for f in implied}
+    rec["via"] = {k: v for k, v in rec["via"].items() if k not in dropped}
 
 
 def _drop_derived(rec: Record, held: set[str], via: dict[str, list[str]]) -> None:

@@ -1,6 +1,13 @@
 #define USE_CLSR	BIT(0)
 static const struct flash_info spansion_nor_parts[] = {
 	{
+		.id = SNOR_ID(0x01, 0x20, 0x18, 0x4d, 0x00, 0x80),
+		.name = "s25fl128s0",
+		.size = SZ_16M,
+		.sector_size = SZ_256K,
+		.no_sfdp_flags = SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ,
+		.mfr_flags = USE_CLSR,
+	}, {
 		.id = SNOR_ID(0x01, 0x20, 0x18, 0x4d, 0x01, 0x80),
 		.name = "s25fl128s1",
 		.size = SZ_16M,

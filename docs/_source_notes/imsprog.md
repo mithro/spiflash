@@ -23,8 +23,10 @@ and its link goes to the file itself.
   M25P128 and S25FL128S, 32 KiB on the M25P10, boot sectors on the EN25B
   and A25L...P parts). They are IMSProg's defaults, not facts about the part,
   so a SPI NOR record has them only as flags (`pageSize`, `blockSize`), with
-  no page size, sector size, erase layout or 64 KiB erase capability. The
-  SPI NAND entries' page and block sizes vary by part, and are taken.
+  no page size, sector size, erase layout or 64 KiB erase capability; the
+  read, page program and 0xd8 erase it sends are its driver's defaults,
+  which imply no capability. The SPI NAND entries' page and block sizes
+  vary by part, and are taken (the block as its block erase's layout).
 - A SPI NAND id is read after a dummy byte. A part with a two-byte id sends
   its manufacturer byte again as the third, which IMSProg keeps. For the
   makers whose SPI NAND ids are two bytes (XTX, Micron and ESMT, Zetta,

@@ -83,16 +83,17 @@ def test_remote_head_missing_branch(upstream: fetch.Upstream) -> None:
 
 
 def test_data_files_share_the_format() -> None:
-    assert update_db.FORMAT == db.FORMAT == 4
+    assert update_db.FORMAT == db.FORMAT == 5
     for name in ("records.json", "manufacturers.json", "sources.json", "datasheets.json"):
         assert json.loads((update_db.DATA / name).read_text())["format"] == db.FORMAT, name
 
 
 def test_make_refuses_to_lose_an_operation(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A rule that gives SE while make() drops the stored one, and not after:
+    # A rule that gives SE while make() drops the implied claims and the
+    # stored operation, and not after:
     # the record would lose SE, which make() refuses.
     se = (OpcodeUse("SE", "eraser", implied=True),)
-    calls = iter([se, se])
+    calls = iter([se, se, se])
     monkeypatch.setattr(record.derive, "opcodes", lambda _: next(calls, ()))
     with pytest.raises(AssertionError, match=r"lost \['SE'\]"):
         record.make("linux", "f", 1, "n", opcodes=[{"op": "SE", "via": "x"}])
