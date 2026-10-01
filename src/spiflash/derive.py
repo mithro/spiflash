@@ -339,6 +339,19 @@ def sfdp_features(sfdp: Sfdp) -> frozenset[Feature]:
     return frozenset(_implied(alone))
 
 
+def sfdp_claims(sfdp: Sfdp) -> dict[Feature, str]:
+    """What SFDP tables imply that their operations, erasers and size alone
+    do not (:data:`SFDP_FEATURES`, and ``4byte_addr`` from the BFPT's
+    address bytes or DW16), each with why: the capabilities a record must
+    claim to say what the tables say without carrying them
+    (:func:`spiflash.sfdp_tools.to_entry`)."""
+    facts = sfdp.facts()
+    alone = _Given(nor=True, ops=facts.opcodes, erasers=facts.erasers, size=facts.size, facts=facts)
+    bare = alone._replace(facts=None)
+    without = _implied(bare)
+    return {f: why for f, why in _implied(alone).items() if f not in without}
+
+
 def feature_reasons(record: Record) -> dict[Feature, str]:
     """Each capability ``record`` has, and why: ``"claimed: QPIEnable"``
     for one it states (:attr:`~spiflash.model.Record.feature_claims`, with
