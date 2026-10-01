@@ -44,14 +44,17 @@ debian/changelog
 # Project-local scratch
 tmp/
 
-# Claude Code local config and subagent-driven-development scratch
+# Claude Code's local config and its worktrees (/.claude/worktrees/), and the
+# superpowers plugin's scratch (.superpowers/sdd/, which also ignores itself)
 /.claude/
 /.superpowers/
 
-# Git worktrees for branches in flight
+# Git worktrees for branches in flight, where the superpowers plugin's
+# using-git-worktrees skill puts them
 /.worktrees/
 
-# The Sphinx site's generated pages (docs/_ext/spiflash_pages.py) and build.
+# The site's generated pages (docs/_ext/spiflash_pages.py writes them), the
+# API pages sphinx.ext.autosummary writes, and sphinx-build's output.
 /docs/chips/
 /docs/vendors/
 /docs/opcodes/
