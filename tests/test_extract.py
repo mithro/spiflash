@@ -273,9 +273,10 @@ def test_linux_nand(linux_tree: Path) -> None:
     assert (n["oob_size"], n["planes"], n["dies"], n["max_bad_blocks"]) == (64, 1, 1, 20)
     assert n["ecc"] == {"strength_bits": 1, "step_bytes": 512}
     assert n["die_select_bit"] is None
-    # No SPINAND_HAS_QE_BIT, and quad variants: spinand_init_quad_enable()
-    # clears bit 0 of the configuration register and reads on four lines.
-    assert n["quad_enable"] == "none"
+    # No SPINAND_HAS_QE_BIT: spinand_init_quad_enable() clears bit 0 of
+    # the configuration register on every such part, a driver default that
+    # says nothing of the part's bit.
+    assert n["quad_enable"] is None
     assert n["features"] == []
     # Its op variants, the core's defaults, its read-id and block erase:
     # SPI NAND's own operations, so no erase_* and no SE.
@@ -311,7 +312,7 @@ def test_linux_nand(linux_tree: Path) -> None:
         "NAND_GET_FEATURE",
         "NAND_SET_FEATURE",
     }
-    assert n["via"] == {"quad_enable": "no SPINAND_HAS_QE_BIT: spinand_init_quad_enable(false)"}
+    assert n["via"] == {}
     assert n["flags"] == []
     assert n["notes"] == ["3.3V"]  # no "1 bit(s) per cell, 64 B OOB per page"
     # The double transfer rate variants have no operation; of an
@@ -341,9 +342,8 @@ def test_linux_nand_dies(linux_tree: Path) -> None:
     assert m["die_select_bit"] == {"register": "nand-d0", "bit": 6}
     assert m["via"]["die_select_bit"] == "SPINAND_SELECT_TARGET(micron_select_target)"
     assert "NAND_DIE_SELECT" not in {o["op"] for o in m["opcodes"]}
-    # Without SPINAND_HAS_QE_BIT, a part with a quad variant reads on four
-    # lines setting nothing (spinand_init_quad_enable(false)).
-    assert m["quad_enable"] == "none"
+    # Without SPINAND_HAS_QE_BIT, nothing of a QE bit.
+    assert m["quad_enable"] is None
 
 
 def test_linux_nand_manufacturer_per_table(tmp_path: Path) -> None:
@@ -1265,8 +1265,10 @@ def test_imsprog() -> None:
     g = r["GD5F1GQ5UEXXG"]
     assert (g["type"], g["id"], g["id_method"]) == ("nand", "c851", "rdid_opcode_dummy")
     assert (g["size"], g["page_size"], sector(g)) == (128 << 20, 2048, 128 << 10)
-    assert g["oob_size"] == 128  # ECCsize, the spare area of a page
-    assert not [f for f in g["flags"] if f.startswith("ECCsize")]
+    # ECCsize is how much spare its raw mode reads, a setting in 64-byte
+    # steps, not the part's spare area: a flag.
+    assert g["oob_size"] is None
+    assert "ECCsize=128" in g["flags"]
     assert g["opcodes"] == []
     assert r["MX35LF1G24AD-Z41"]["id"] == "c21403"
     assert r["F35SQA002G"]["id"] == "cd7272"
@@ -2425,21 +2427,22 @@ def test_mediatek() -> None:
     # operation, with the dummy clocks its SNAND_OP gives; they imply the
     # capabilities, so none is claimed, and the caps are their via.
     assert w["features"] == []
-    assert features(w) == ["dual_read", "fast_read", "quad_pp", "quad_read"]
+    # The one-line read (0x0b) and load (0x02) every table has are the
+    # driver's defaults, so imply no fast_read.
+    assert features(w) == ["dual_read", "quad_pp", "quad_read"]
     assert w["flags"] == []
     assert w["notes"] == []
     stated = {o["op"]: (o["via"], o["dummy_clocks"]) for o in w["opcodes"] if "assumed" not in o}
     rd, pl = "cap_rd=snand_cap_read_from_cache_quad", "cap_pl=snand_cap_program_load_x4"
     assert stated == {
-        "NAND_READ_CACHE_1_1_1_FAST": (rd, 8),  # the driver's 1-1-1 read is 0x0b
         "NAND_READ_CACHE_1_1_2": (rd, 8),
         "NAND_READ_CACHE_1_2_2": (rd, 4),
         "NAND_READ_CACHE_1_1_4": (rd, 8),
         "NAND_READ_CACHE_1_4_4": (rd, 4),
-        "NAND_PROGRAM_LOAD_1_1_1": (pl, 0),
         "NAND_PROGRAM_LOAD_1_1_4": (pl, 0),
     }
-    assert assumed(w) == set(mediatek.DEFAULTS)
+    defaults = {"NAND_READ_CACHE_1_1_1_FAST", "NAND_PROGRAM_LOAD_1_1_1"}
+    assert assumed(w) == set(mediatek.DEFAULTS) | defaults
     # The size is the main area of every die; the spare area is not in it.
     m = r["W25M02GV"]
     assert m["size"] == 256 << 20
@@ -2455,7 +2458,7 @@ def test_mediatek() -> None:
     assert (t["size"], sector(t)) == (256 << 20, 128 << 10)
     assert t["planes"] == 2
     # Read from cache on one, two or four lines; program load on one only.
-    assert features(t) == ["dual_read", "fast_read", "quad_read"]
+    assert features(t) == ["dual_read", "quad_read"]
     assert "NAND_PROGRAM_LOAD_1_1_4" not in ops(t)
     d = r["MT29F4G01ADAGD"]
     assert d["size"] == 512 << 20

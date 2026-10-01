@@ -20,7 +20,7 @@ from spiflash.derive import ERASE_BY_OPCODE, ID_OPERATION
 from spiflash.enums import Feature, IdMethod, OperationKind
 from spiflash.model import EraseBlock, Record
 from spiflash.opcodes import OPERATIONS
-from spiflash.registers import RegisterBit
+from spiflash.registers import Register, RegisterBit
 from spiflash_extract import record
 
 
@@ -194,6 +194,9 @@ DEFAULTS = {
     ("mediatek", "NAND_PROGRAM_EXECUTE", "every part (SNAND_CMD_PROGRAM_EXECUTE)"),
     ("mediatek", "NAND_GET_FEATURE", "every part (SNAND_CMD_GET_FEATURE)"),
     ("mediatek", "NAND_SET_FEATURE", "every part (SNAND_CMD_SET_FEATURE)"),
+    # The one-line read and load every SNAND_IO_CAP table has.
+    ("mediatek", "NAND_READ_CACHE_1_1_1_FAST", "every snand_cap_read_from_cache* table"),
+    ("mediatek", "NAND_PROGRAM_LOAD_1_1_1", "every snand_cap_program_load* table"),
     ("rockchip", "NAND_READ_CACHE_1_1_1", "every part: page_read_cmd = 0x03"),
     ("rockchip", "NAND_PROGRAM_LOAD_1_1_1", "every part: page_prog_cmd = 0x02"),
     ("rockchip", "NAND_PAGE_READ", "every part (sfc_nand_read)"),
@@ -370,9 +373,6 @@ QUAD_ENABLE_FROM = {
     ("openfpgaloader", "quad_register="),
     ("linux", ".fixups = &"),
     ("linux", "SPINAND_HAS_QE_BIT"),
-    # A part with quad op variants and no SPINAND_HAS_QE_BIT: the driver
-    # clears the bit and reads on four lines.
-    ("linux", "no SPINAND_HAS_QE_BIT"),
 }
 
 
@@ -538,11 +538,9 @@ def test_dummy_clocks_only_where_a_source_states_them() -> None:
     [
         # Each a field now, or the operations' via.
         ("mediatek", r"(sparesize|planes_per_die|ndies|select_die|read_from_cache|program_load)="),
-        ("mediatek", r"cap_(rd|pl)=.*"),
         ("rockchip", r"max_ecc_bits=.*"),
         ("rockchip", r"FEA_4BIT_(READ|PROG)"),
         ("qemu", r"die_cnt=.*"),
-        ("imsprog", r"ECCsize=.*"),
     ],
 )
 def test_no_flag_a_field_holds(source: str, pattern: str) -> None:
@@ -554,3 +552,50 @@ def test_no_flag_a_field_holds(source: str, pattern: str) -> None:
 def test_no_geometry_note() -> None:
     notes = [n for r in RECORDS if r["type"] == "nand" for n in r["notes"]]
     assert not [n for n in notes if re.search(r"plane\(s\) of|bit\(s\) per cell|B OOB", n)]
+
+
+def test_no_quad_enable_from_the_spi_nand_cores_default() -> None:
+    # Linux's SPI NAND core clears the QE bit on every part without
+    # SPINAND_HAS_QE_BIT: the core's default, which says nothing of the
+    # part (the XT26G01D has a QE bit quad reads need, and no flag).
+    linux = [d for d in RECORDS if d["source"] == "linux" and d["type"] == "nand"]
+    assert not [_where(d) for d in linux if d["quad_enable"] == "none"]
+    (xtx,) = spiflash.lookup("0b31")
+    assert xtx.quad_enable == RegisterBit(Register.NAND_CONFIG, 0)
+
+
+def test_oob_size_is_the_parameter_pages() -> None:
+    # Linux's oobsize for these is another view of the spare area (with the
+    # on-die ECC on, or with the parity area): a note, not the field.
+    for part, chip, spare in (
+        ("MX35LF2GE4AD", "c22603", 128),
+        ("MX35LF4GE4AD", "c23703", 256),
+        ("W25N01KV", "efae21", 64),
+    ):
+        (d,) = [d for d in RECORDS if d["source"] == "linux" and d["name"] == part]
+        assert d["oob_size"] is None
+        assert any("parameter page" in n for n in d["notes"])
+        (f,) = spiflash.lookup(chip, flash_type="nand")
+        assert f.oob_size == spare
+        assert "oob_size" not in f.conflicts
+
+
+def test_operations_are_told_apart_by_their_shape() -> None:
+    # 0xc2 is NAND_DIE_SELECT and NAND_PROGRAM_LOAD_1_8_8, 0x13 a SPI NOR
+    # read and SPI NAND's page read, 0x9f three SPI NAND read-ids: an
+    # operation is its opcode and its shape.
+    def shape(op: str) -> tuple[object, ...]:
+        o = OPERATIONS[op]
+        return (
+            o.flash_type,
+            o.opcode,
+            o.protocol,
+            o.address_bytes,
+            o.dummy_clocks,
+            o.data,
+            o.data_bytes,
+        )
+
+    shapes = [shape(op) for op in OPERATIONS]
+    assert len(set(shapes)) == len(shapes)
+    assert shape("NAND_DIE_SELECT") != shape("NAND_PROGRAM_LOAD_1_8_8")
