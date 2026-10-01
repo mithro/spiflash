@@ -37,7 +37,7 @@ license = "GPL-2.0-only"
 url = "https://github.com/u-boot/u-boot"
 branch = "main"
 commit = "a06e89ab05eaa2b8344d521319399333cd760ae5"
-paths = ["drivers/mtd/spi/spi-nor-ids.c", "drivers/mtd/spi/sf_internal.h", "include/linux/mtd/spi-nor.h"]
+paths = ["drivers/mtd/spi/spi-nor-ids.c", "drivers/mtd/spi/sf_internal.h", "drivers/mtd/spi/spi-nor-core.c", "include/linux/mtd/spi-nor.h"]
 license = "GPL-2.0-or-later"
 
 [dediprog]
