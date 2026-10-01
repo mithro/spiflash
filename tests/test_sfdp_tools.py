@@ -177,6 +177,15 @@ def test_facts_carry_each_reads_dummy_clocks() -> None:
     assert "READ_1_1_1_FAST" not in clocks
 
 
+def test_facts_carry_dw15s_qpi_sequences() -> None:
+    # The W25Q512JV's DW15: "set QE, then 0x38" in, 0xff out; the
+    # operations, as DW14 gives DP and RDPD.
+    ops = {u.op: u.via for u in parse(W25Q512JV).facts().opcodes}
+    assert ops["EQPI_38"] == "SFDP BFPT DW15 enter 4-4-4: set QE, then 0x38"
+    assert ops["RSTQIO_FF"] == "SFDP BFPT DW15 exit 4-4-4: 0xff"
+    assert "EQPI_35" not in ops
+
+
 def test_a_records_features_are_derived_once() -> None:
     # Sfdp.features() is the record's rules on the tables alone.
     for r in spiflash.records():
