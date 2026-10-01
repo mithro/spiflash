@@ -399,6 +399,11 @@ class Database:
         for n, f in found:
             longest[f.type] = max(longest.get(f.type, 0), n)
         best = [(n, f) for n, f in found if n == longest[f.type]]
+        # A one-byte id is a maker's catch-all (Linux's MACRONIX-C2, "any
+        # Macronix part: read its SFDP"), not an answer when a longer id of
+        # either type fits: c22603 is the SPI NAND MX35LF2GE4AD alone.
+        if any(n > 1 for n, _ in best):
+            best = [(n, f) for n, f in best if n > 1]
         chips = [
             f for n, f in sorted(best, key=lambda nf: (nf[1].type is not FlashType.NOR, -nf[0]))
         ]

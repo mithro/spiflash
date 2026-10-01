@@ -253,6 +253,8 @@ def test_only_the_longest_id_of_each_type() -> None:
     assert "MX25L12835F" in found[0].names
     # Linux's one-byte Macronix catch-all is still there for an unknown part.
     assert [f.id_hex for f in spiflash.lookup("c2ffff", flash_type="nor")] == ["c2"]
+    # But not beside a longer SPI NAND id that fits.
+    assert [(f.type, f.id_hex) for f in spiflash.lookup("c22603")] == [("nand", "c22603")]
 
 
 def test_openocd_names_get_their_prefix_back() -> None:
